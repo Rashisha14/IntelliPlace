@@ -188,5 +188,3 @@ const UsersTable = ({ type, data, onSearch, loading }) => {
     </motion.div>
   );
 };
-
-export default UsersTable;

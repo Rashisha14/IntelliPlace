@@ -260,10 +260,6 @@ router.post('/login/admin', async (req, res) => {
         user: {
           id: admin.id,
           username: admin.username,
-          name: 'Admin',
-          userType: 'admin',
-        },
-        token,
       });
     }
 
