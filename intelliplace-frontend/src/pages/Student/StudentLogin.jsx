@@ -3,7 +3,6 @@ import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Mail, Lock, GraduationCap, ArrowLeft, Eye, EyeOff, User, BookOpen, Target, Zap } from 'lucide-react';
 import { login } from '../../utils/auth';
-import Navbar from '../../components/Navbar';
 
 const StudentLogin = () => {
   const navigate = useNavigate();
@@ -43,7 +42,7 @@ const StudentLogin = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 overflow-hidden flex flex-col">
-      <Navbar />
+      
       
       {/* Background Elements */}
       <div className="absolute inset-0 overflow-hidden">

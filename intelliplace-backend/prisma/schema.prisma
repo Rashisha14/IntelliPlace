@@ -59,6 +59,7 @@ model Job {
   companyId   Int          @map("company_id")
   applications Application[]
   interviews   Interview[]
+  notifications Notification[]
   status      String        @default("OPEN") // OPEN, CLOSED, DRAFT
   createdAt   DateTime     @default(now()) @map("created_at")
   updatedAt   DateTime     @updatedAt @map("updated_at")
@@ -78,8 +79,11 @@ model Application {
   backlog   Int?      @map("backlog")
   cvUrl     String?   @map("cv_url")
   cvData    Bytes?    @map("cv_data")
+  // Reason provided by company when shortlisting/rejecting (human-readable)
+  decisionReason String? @map("decision_reason")
   status    String    @default("PENDING") // PENDING, REVIEWING, REJECTED, SHORTLISTED, OFFERED, HIRED
   interview Interview?
+  notifications Notification[]
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
 
@@ -113,6 +117,12 @@ model Notification {
   title     String
   message   String
   read      Boolean  @default(false)
+  // Optional relation to a job (if notification is about a job)
+  job       Job?     @relation(fields: [jobId], references: [id])
+  jobId     Int?     @map("job_id")
+  // Optional relation to an application (if notification targets a specific application)
+  application   Application? @relation(fields: [applicationId], references: [id])
+  applicationId Int?     @map("application_id")
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

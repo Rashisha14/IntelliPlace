@@ -201,7 +201,22 @@ router.post('/:jobId/shortlist', authenticateToken, authorizeCompany, async (req
 
       const newStatus = (passesCgpa && passesBacklog) ? 'SHORTLISTED' : 'REJECTED';
 
-      await prisma.application.update({ where: { id: app.id }, data: { status: newStatus } });
+      // Build a human-readable decision reason
+      let decisionReason = '';
+      if (newStatus === 'SHORTLISTED') {
+        decisionReason = 'Shortlisted — meets CGPA and backlog requirements';
+      } else {
+        const reasons = [];
+        if (!passesCgpa) {
+          reasons.push(`CGPA ${appCgpa === null ? 'N/A' : appCgpa} < required ${job.minCgpa}`);
+        }
+        if (!passesBacklog) {
+          reasons.push(`Active backlogs ${appBacklog} not allowed`);
+        }
+        decisionReason = `Rejected — ${reasons.join('; ')}`;
+      }
+
+      await prisma.application.update({ where: { id: app.id }, data: { status: newStatus, decisionReason } });
 
       // Create notification for student
       try {
@@ -209,7 +224,9 @@ router.post('/:jobId/shortlist', authenticateToken, authorizeCompany, async (req
           data: {
             studentId: app.studentId,
             title: `Application ${newStatus}`,
-            message: `Your application for ${job.title} has been ${newStatus.toLowerCase()}.`,
+            message: `Your application for ${job.title} has been ${newStatus.toLowerCase()}. ${decisionReason}`,
+            jobId: jobId,
+            applicationId: app.id
           }
         });
       } catch (nerr) {

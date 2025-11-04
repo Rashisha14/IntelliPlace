@@ -112,20 +112,20 @@ const StudentDashboard = () => {
         >
           <h2 className="text-2xl font-bold text-gray-800 mb-6">Quick Actions</h2>
           <div className="grid md:grid-cols-3 gap-4">
-            <button className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-red-500 hover:bg-red-50 transition-all text-left">
+            <button onClick={() => navigate('/')} className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-red-500 hover:bg-red-50 transition-all text-left">
               <FileText className="w-8 h-8 text-gray-400 mb-2" />
               <h3 className="font-semibold text-gray-800">Browse Jobs</h3>
               <p className="text-sm text-gray-600">Explore available opportunities</p>
             </button>
-            <button className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-red-600 hover:bg-red-50 transition-all text-left">
+            <button onClick={() => navigate('/student/applications')} className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-red-600 hover:bg-red-50 transition-all text-left">
               <Briefcase className="w-8 h-8 text-gray-400 mb-2" />
               <h3 className="font-semibold text-gray-800">My Applications</h3>
               <p className="text-sm text-gray-600">View and track applications</p>
             </button>
-            <button className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-green-500 hover:bg-green-50 transition-all text-left">
+            <button onClick={() => navigate('/student/notifications')} className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-green-500 hover:bg-green-50 transition-all text-left">
               <FileText className="w-8 h-8 text-gray-400 mb-2" />
-              <h3 className="font-semibold text-gray-800">Update Profile</h3>
-              <p className="text-sm text-gray-600">Edit your profile information</p>
+              <h3 className="font-semibold text-gray-800">Notifications</h3>
+              <p className="text-sm text-gray-600">View recent messages & updates</p>
             </button>
           </div>
         </motion.div>
