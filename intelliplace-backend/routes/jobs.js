@@ -124,6 +124,11 @@ router.post('/:jobId/apply', authenticateToken, authorizeStudent, upload.single(
     const job = await prisma.job.findUnique({ where: { id: jobId } });
     if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
 
+    // Disallow applications if job is not OPEN
+    if (job.status !== 'OPEN') {
+      return res.status(400).json({ success: false, message: 'Applications for this job are closed' });
+    }
+
     // Check existing application
     const existing = await prisma.application.findFirst({ where: { studentId, jobId } });
     if (existing) return res.status(400).json({ success: false, message: 'Already applied to this job' });
@@ -155,6 +160,69 @@ router.post('/:jobId/apply', authenticateToken, authorizeStudent, upload.single(
   } catch (error) {
     console.error('Error applying to job:', error);
     res.status(500).json({ success: false, message: 'Server error applying to job' });
+  }
+});
+
+// Company: shortlist applicants for a job based on job criteria and close applications
+router.post('/:jobId/shortlist', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+
+    // Close the job to stop new applications
+    await prisma.job.update({ where: { id: jobId }, data: { status: 'CLOSED' } });
+
+    // Fetch applications with student info
+    const applications = await prisma.application.findMany({ where: { jobId }, include: { student: true } });
+
+    let shortlisted = 0;
+    let rejected = 0;
+
+    for (const app of applications) {
+      const student = app.student;
+
+      // Determine CGPA to evaluate: application-level overrides profile
+      const appCgpa = typeof app.cgpa === 'number' ? app.cgpa : (student?.cgpa ?? null);
+      const appBacklog = typeof app.backlog === 'number' ? app.backlog : (student?.backlog ?? 0);
+
+      let passesCgpa = true;
+      if (typeof job.minCgpa === 'number') {
+        passesCgpa = (typeof appCgpa === 'number') ? (appCgpa >= job.minCgpa) : false;
+      }
+
+      let passesBacklog = true;
+      if (job.allowBacklog === false || job.allowBacklog === null || job.allowBacklog === undefined) {
+        // If allowBacklog is falsy, require zero backlogs
+        passesBacklog = (appBacklog === 0);
+      }
+
+      const newStatus = (passesCgpa && passesBacklog) ? 'SHORTLISTED' : 'REJECTED';
+
+      await prisma.application.update({ where: { id: app.id }, data: { status: newStatus } });
+
+      // Create notification for student
+      try {
+        await prisma.notification.create({
+          data: {
+            studentId: app.studentId,
+            title: `Application ${newStatus}`,
+            message: `Your application for ${job.title} has been ${newStatus.toLowerCase()}.`,
+          }
+        });
+      } catch (nerr) {
+        console.error('Failed to create notification:', nerr);
+      }
+
+      if (newStatus === 'SHORTLISTED') shortlisted++; else rejected++;
+    }
+
+    res.json({ success: true, message: 'Shortlisting complete', data: { shortlisted, rejected } });
+  } catch (error) {
+    console.error('Error shortlisting applications:', error);
+    res.status(500).json({ success: false, message: 'Server error shortlisting applications' });
   }
 });
 

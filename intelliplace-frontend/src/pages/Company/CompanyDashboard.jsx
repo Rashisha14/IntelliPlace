@@ -60,6 +60,7 @@ const CompanyDashboard = () => {
   const [jobs, setJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [selectedJobId, setSelectedJobId] = useState(null);
+  const [selectedJobStatus, setSelectedJobStatus] = useState(null);
   const [isPostJobOpen, setIsPostJobOpen] = useState(false);
   const [lastFetch, setLastFetch] = useState(0); // Track last fetch time
 
@@ -129,7 +130,7 @@ const CompanyDashboard = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1 }}
               whileHover={{ scale: 1.05 }}
-              className="bg-white rounded-xl shadow-lg p-6 border border-gray-200"
+              className="card"
             >
               <div className="flex items-center justify-between mb-4">
                 <div className={`w-12 h-12 bg-gradient-to-br ${stat.color} rounded-lg flex items-center justify-center`}>
@@ -153,11 +154,13 @@ const CompanyDashboard = () => {
           <div className="grid md:grid-cols-3 gap-4">
             <button 
               onClick={() => setIsPostJobOpen(true)}
-              className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-red-600 hover:bg-red-50 transition-all text-left group"
+              className="btn btn-primary text-left"
             >
-              <Plus className="w-8 h-8 text-gray-400 group-hover:text-red-600 mb-2" />
-              <h3 className="font-semibold text-gray-800">Post New Job</h3>
-              <p className="text-sm text-gray-600">Create a new job posting</p>
+              <Plus className="w-6 h-6 text-white mr-2" />
+              <div className="text-left">
+                <h3 className="font-semibold text-white">Post New Job</h3>
+                <p className="text-sm text-white/90">Create a new job posting</p>
+              </div>
             </button>
             <button 
               onClick={() => {
@@ -236,9 +239,16 @@ const CompanyDashboard = () => {
                   <div className="flex flex-col h-full">
                     <div className="flex-grow">
                       <div className="flex items-start justify-between gap-4">
-                        <h3 className="text-lg font-semibold text-gray-800 group-hover:text-red-600 transition-colors">
-                          {job.title}
-                        </h3>
+                        <div className="flex items-center gap-3">
+                          <h3 className="text-lg font-semibold text-gray-800 group-hover:text-red-600 transition-colors">
+                            {job.title}
+                          </h3>
+                          <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                            job.status === 'OPEN' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                          }`}>
+                            {job.status}
+                          </span>
+                        </div>
                         <span className={`px-3 py-1 text-xs font-medium rounded-full ${
                           job.type === 'FULL_TIME' ? 'bg-green-100 text-green-800' :
                           job.type === 'PART_TIME' ? 'bg-blue-100 text-blue-800' :
@@ -288,7 +298,7 @@ const CompanyDashboard = () => {
                         Posted {new Date(job.createdAt).toLocaleDateString()}
                       </div>
                       <button
-                        onClick={() => setSelectedJobId(job.id)}
+                        onClick={() => { setSelectedJobId(job.id); setSelectedJobStatus(job.status); }}
                         className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
                       >
                         <Users className="w-4 h-4" />
@@ -300,7 +310,7 @@ const CompanyDashboard = () => {
               ))}
             </div>
           )}
-          {selectedJobId && <ApplicationsList jobId={selectedJobId} onClose={() => setSelectedJobId(null)} />}
+          {selectedJobId && <ApplicationsList jobId={selectedJobId} initialJobStatus={selectedJobStatus} onClose={() => setSelectedJobId(null)} />}
         </motion.div>
       </div>
     </div>

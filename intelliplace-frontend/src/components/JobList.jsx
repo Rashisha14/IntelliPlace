@@ -114,14 +114,14 @@ const JobList = () => {
         <div className="grid grid-cols-1 gap-6">
           {jobs.map(job => {
             const isApplied = appliedJobs.has(job.id);
-            return (
+              return (
               <motion.div
                 key={job.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={`p-6 bg-white rounded-xl shadow-sm border ${
-                  isApplied ? 'border-green-500 bg-green-50/30' : 'border-gray-200 hover:border-red-200 hover:shadow-md'
-                } transition-all duration-200`}
+                className={`card ${
+                  isApplied ? 'border-green-500 bg-green-50/30' : 'hover:shadow-md'
+                }`}
               >
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
                   <div className="flex-grow">
@@ -194,14 +194,14 @@ const JobList = () => {
                     {isApplied ? (
                       <button
                         disabled
-                        className="w-full px-4 py-2.5 rounded-lg font-medium bg-green-100 text-green-700 cursor-not-allowed"
+                        className="btn bg-green-100 text-green-700 disabled:opacity-60 cursor-not-allowed w-full"
                       >
                         Applied ✓
                       </button>
                     ) : (
                       <button 
                         onClick={() => openApply(job)}
-                        className="w-full px-4 py-2.5 rounded-lg font-medium bg-red-600 text-white hover:bg-red-700 transition-colors"
+                        className="btn btn-primary w-full"
                       >
                         Apply Now
                       </button>
@@ -262,7 +262,7 @@ const JobList = () => {
                     value={applyState.cgpa}
                     onChange={handleApplyChange}
                     placeholder="Enter your CGPA"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                    className="input"
                   />
                 </div>
 
@@ -277,7 +277,7 @@ const JobList = () => {
                     value={applyState.backlog}
                     onChange={handleApplyChange}
                     placeholder="Number of active backlogs"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                    className="input"
                   />
                 </div>
 
@@ -285,7 +285,7 @@ const JobList = () => {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Upload CV/Resume
                   </label>
-                  <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-red-500 transition-colors">
+                      <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-lg hover:border-red-500 transition-colors bg-white">
                     <div className="space-y-2 text-center">
                       <Download className="mx-auto h-12 w-12 text-gray-400" />
                       <div className="flex text-sm text-gray-600">

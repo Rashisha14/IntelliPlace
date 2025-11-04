@@ -2,6 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Design tokens and reusable UI utility classes */
+:root {
+  --brand-500: #ef4444; /* red-600-ish */
+  --brand-600: #dc2626;
+  --muted-600: #6b7280;
+  --bg-card: #ffffff;
+  --glass: rgba(255,255,255,0.6);
+  --success-500: #10b981;
+}
+
+@layer components {
+  .card {
+    @apply bg-white border border-gray-200 rounded-xl shadow-sm p-6;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors;
+  }
+
+  .btn-primary {
+    @apply btn bg-[var(--brand-500)] text-white hover:bg-[var(--brand-600)];
+  }
+
+  .btn-ghost {
+    @apply btn bg-white border border-gray-200 text-gray-700 hover:bg-gray-50;
+  }
+
+  .btn-warning {
+    @apply btn bg-amber-500 text-white hover:bg-amber-600;
+  }
+
+  .input {
+    @apply w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--brand-500)] focus:border-[var(--brand-500)];
+  }
+
+  .tag {
+    @apply px-3 py-1 text-sm bg-gray-100 text-gray-800 rounded-full;
+  }
+}
+
 /* Hide scrollbars globally */
 * {
   scrollbar-width: none; /* Firefox */

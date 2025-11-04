@@ -75,7 +75,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
                 onChange={handleChange}
                 placeholder="e.g. Senior Software Engineer"
                 required
-                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                className="input"
               />
             </div>
 
@@ -88,7 +88,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
                 placeholder="Describe the role, responsibilities, and requirements"
                 required
                 rows="4"
-                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                className="input h-28"
               />
             </div>
 
@@ -99,7 +99,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
                   name="type"
                   value={form.type}
                   onChange={handleChange}
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  className="input"
                 >
                   <option value="FULL_TIME">Full Time</option>
                   <option value="PART_TIME">Part Time</option>
@@ -115,7 +115,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
                   value={form.location}
                   onChange={handleChange}
                   placeholder="e.g. New York, Remote"
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  className="input"
                 />
               </div>
             </div>
@@ -128,7 +128,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
                   value={form.salary}
                   onChange={handleChange}
                   placeholder="e.g. $80,000 - $100,000"
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  className="input"
                 />
               </div>
 
@@ -139,7 +139,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
                   value={form.requiredSkills}
                   onChange={handleChange}
                   placeholder="e.g. React, Node.js, SQL"
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  className="input"
                 />
               </div>
             </div>
@@ -167,7 +167,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
                     name="allowBacklog"
                     checked={form.allowBacklog}
                     onChange={handleChange}
-                    className="w-4 h-4 text-red-600 focus:ring-red-500 rounded"
+                    className="w-4 h-4 text-[var(--brand-500)] focus:ring-[var(--brand-500)] rounded"
                   />
                   <span className="text-sm text-gray-700">Allow Backlog</span>
                 </label>
@@ -179,14 +179,14 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
             <button
               type="button"
               onClick={onClose}
-              className="px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors"
+              className="btn btn-ghost"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="btn btn-primary"
             >
               {loading ? 'Posting...' : 'Post Job'}
             </button>

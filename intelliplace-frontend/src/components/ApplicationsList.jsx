@@ -1,36 +1,40 @@
 import { useState, useEffect } from 'react';
 import { FileCheck, Download, Mail, Phone } from 'lucide-react';
 
-const ApplicationsList = ({ jobId, onClose }) => {
+const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    const fetchApplications = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/applicants`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`
-          }
-        });
-        const json = await res.json();
-        if (res.ok) {
-          setApplications(json.data.applications || []);
-        } else {
-          setError(json.message || 'Failed to fetch applications');
+  // Fetch applications for a job
+  const fetchApplications = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/applicants`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
+      });
+      const json = await res.json();
+      if (res.ok) {
+        setApplications(json.data.applications || []);
+      } else {
+        setError(json.message || 'Failed to fetch applications');
       }
-    };
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    if (jobId) fetchApplications();
-  }, [jobId]);
+  useEffect(() => { if (jobId) fetchApplications(); }, [jobId]);
+
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionMessage, setActionMessage] = useState(null);
+  const [jobStatus, setJobStatus] = useState(initialJobStatus || 'OPEN');
+  const [confirming, setConfirming] = useState(false);
 
   const [previewCV, setPreviewCV] = useState(null);
   
@@ -75,7 +79,7 @@ const ApplicationsList = ({ jobId, onClose }) => {
         // For non-PDF files, download directly
         const a = document.createElement('a');
         a.href = url;
-        a.download = filename || `CV_${application.student.name.replace(/\\s+/g, '_')}.pdf`;
+        a.download = cvId || `CV_${application.student.name.replace(/\\s+/g, '_')}`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -91,13 +95,71 @@ const ApplicationsList = ({ jobId, onClose }) => {
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
         <div className="p-6 border-b">
-          <div className="flex justify-between items-center">
-            <h2 className="text-2xl font-semibold text-gray-800">Applications</h2>
-            <button onClick={onClose} className="text-gray-500 hover:text-gray-700">×</button>
-          </div>
+            <div className="flex justify-between items-center gap-4">
+              <h2 className="text-2xl font-semibold text-gray-800">Applications</h2>
+              <div className="ml-auto flex items-center gap-3">
+                {jobStatus === 'OPEN' && !confirming && (
+                  <button
+                    onClick={() => setConfirming(true)}
+                    className="btn btn-warning"
+                    disabled={actionLoading}
+                  >
+                    Shortlist & Close
+                  </button>
+                )}
+                {confirming && jobStatus === 'OPEN' && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-700">Are you sure?</span>
+                    <button
+                      onClick={async () => {
+                        setActionLoading(true);
+                        setActionMessage(null);
+                        try {
+                          const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/shortlist`, {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+                          });
+                          const json = await res.json();
+                          if (res.ok) {
+                            setActionMessage({ type: 'success', text: json.message || 'Shortlisting complete' });
+                            await fetchApplications();
+                            setJobStatus('CLOSED');
+                          } else {
+                            setActionMessage({ type: 'error', text: json.message || 'Shortlisting failed' });
+                          }
+                        } catch (err) {
+                          setActionMessage({ type: 'error', text: err.message });
+                        } finally {
+                          setActionLoading(false);
+                          setConfirming(false);
+                        }
+                      }}
+                      className="btn btn-primary"
+                      disabled={actionLoading}
+                    >
+                      {actionLoading ? 'Processing...' : 'Confirm'}
+                    </button>
+                    <button
+                      onClick={() => setConfirming(false)}
+                      className="btn btn-ghost"
+                      disabled={actionLoading}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+                <button onClick={onClose} className="text-gray-500 hover:text-gray-700">×</button>
+              </div>
+            </div>
         </div>
 
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
+          {actionMessage && (
+            <div className={`p-3 mb-4 rounded ${actionMessage.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+              {actionMessage.text}
+            </div>
+          )}
+
           {loading ? (
             <div className="text-center py-12">
               <p className="text-gray-600">Loading applications...</p>
