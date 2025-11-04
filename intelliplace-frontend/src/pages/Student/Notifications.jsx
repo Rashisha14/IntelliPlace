@@ -8,6 +8,7 @@ const Notifications = () => {
   const user = getCurrentUser();
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [reasons, setReasons] = useState({});
 
   useEffect(() => {
     const currentUser = getCurrentUser();
@@ -114,6 +115,33 @@ const Notifications = () => {
                 <div>
                   <div className="font-semibold text-gray-800">{n.title}</div>
                   <div className="text-sm text-gray-600 mt-1">{n.message}</div>
+                  {/* show decision reason when available */}
+                  { (n.decisionReason || reasons[n.id]) && (
+                    <div className={`mt-2 text-sm italic ${((n.decisionReason || reasons[n.id])||'').toLowerCase().includes('reject') ? 'text-red-700' : 'text-gray-700'}`}>Reason: {n.decisionReason || reasons[n.id]}</div>
+                  ) }
+                  { !n.decisionReason && n.applicationId && !reasons[n.id] && (
+                    <div className="mt-2">
+                      <button
+                        onClick={async () => {
+                          try {
+                            const res = await fetch(`http://localhost:5000/api/applications/${n.applicationId}`, {
+                              headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+                            });
+                            const json = await res.json();
+                            if (!res.ok) throw new Error(json.message || 'Failed to fetch application');
+                            const app = json.data.application;
+                            setReasons(prev => ({ ...prev, [n.id]: app?.decisionReason || 'No reason provided' }));
+                          } catch (err) {
+                            console.error('Failed to fetch application reason', err);
+                            setReasons(prev => ({ ...prev, [n.id]: 'Failed to load reason' }));
+                          }
+                        }}
+                        className="text-sm text-blue-600 underline"
+                      >
+                        Show reason
+                      </button>
+                    </div>
+                  ) }
                   <div className="text-xs text-gray-400 mt-2">{new Date(n.createdAt).toLocaleString()}</div>
                 </div>
                 <div className="flex flex-col items-end ml-4">

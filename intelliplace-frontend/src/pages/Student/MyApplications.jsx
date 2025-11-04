@@ -77,7 +77,11 @@ const MyApplications = () => {
                 <div>
                   <div className="text-lg font-semibold text-gray-900">{app.job?.title}</div>
                   <div className="text-sm text-gray-600">{app.job?.company?.companyName}</div>
-                  <div className="mt-2 text-sm text-gray-700">Status: <span className="font-medium">{app.status}</span></div>
+                  <div className="mt-2 text-sm text-gray-700">Status: <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-sm font-medium ${
+                    app.status && app.status.toLowerCase().includes('reject') ? 'bg-red-100 text-red-800 border border-red-200' :
+                    app.status && (app.status.toLowerCase().includes('shortlist') || app.status.toLowerCase().includes('hire') || app.status.toLowerCase().includes('accept')) ? 'bg-green-100 text-green-800 border border-green-200' :
+                    'bg-gray-100 text-gray-800'
+                  }`}>{app.status}</span></div>
                   {app.decisionReason && (
                     <div className="mt-1 text-sm text-gray-600 italic">Reason: {app.decisionReason}</div>
                   )}

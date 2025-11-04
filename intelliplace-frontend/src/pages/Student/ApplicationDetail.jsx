@@ -79,7 +79,13 @@ const ApplicationDetail = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               <div>
                 <div className="text-sm text-gray-600">Status</div>
-                <div className="font-medium">{application.status}</div>
+                  <div>
+                    <span className={`inline-flex items-center px-3 py-1 rounded-md text-sm font-medium ${
+                      application.status && application.status.toLowerCase().includes('reject') ? 'bg-red-100 text-red-800 border border-red-200' :
+                      application.status && (application.status.toLowerCase().includes('shortlist') || application.status.toLowerCase().includes('hire') || application.status.toLowerCase().includes('accept')) ? 'bg-green-100 text-green-800 border border-green-200' :
+                      'bg-gray-100 text-gray-800'
+                    }`}>{application.status}</span>
+                  </div>
               </div>
               <div>
                 <div className="text-sm text-gray-600">Applied At</div>

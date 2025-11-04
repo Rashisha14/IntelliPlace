@@ -272,7 +272,14 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                   </div>
                   <div className="mt-4">
                     <p className="text-sm text-gray-600">Applied {new Date(app.createdAt).toLocaleString()}</p>
-                    <p className="text-sm font-medium text-gray-800 mt-1">Status: {app.status}</p>
+                    <p className="text-sm font-medium text-gray-800 mt-1">Status: <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                      app.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
+                      app.status === 'REVIEWING' ? 'bg-blue-100 text-blue-800' :
+                      app.status === 'SHORTLISTED' ? 'bg-green-100 text-green-800' :
+                      app.status === 'REJECTED' ? 'bg-red-100 text-red-800' :
+                      app.status === 'HIRED' ? 'bg-purple-100 text-purple-800' :
+                      'bg-gray-100 text-gray-800'
+                    }`}>{app.status}</span></p>
                   </div>
                 </div>
               ))}
