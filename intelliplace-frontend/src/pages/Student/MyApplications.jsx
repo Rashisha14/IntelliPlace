@@ -36,7 +36,6 @@ const MyApplications = () => {
 
   const viewCV = async (cvUrl) => {
     if (!cvUrl) return;
-    // cvUrl is like /uploads/cvs/filename -> extract filename
     const parts = cvUrl.split('/');
     const filename = parts[parts.length - 1];
 
@@ -63,7 +62,7 @@ const MyApplications = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
       <Navbar />
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <h1 className="text-2xl font-bold mb-4">My Applications</h1>
 
         {loading ? (
@@ -71,41 +70,74 @@ const MyApplications = () => {
         ) : (
           <div className="space-y-4">
             {applications.length === 0 && (
-              <div className="p-6 bg-white rounded-lg shadow border">You haven't applied to any jobs yet.</div>
+              <div className="p-6 bg-white rounded-lg shadow border text-center text-gray-600">
+                You haven't applied to any jobs yet.
+              </div>
             )}
 
             {applications.map(app => (
-              <div key={app.id} className="p-4 bg-white rounded-lg border flex items-start justify-between">
-                <div>
-                  <div className="text-lg font-semibold text-gray-900">{app.job?.title}</div>
-                  <div className="text-sm text-gray-600">{app.job?.company?.companyName}</div>
-                  <div className="mt-2 text-sm text-gray-700">Status: <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-sm font-medium ${
-                    app.status && app.status.toLowerCase().includes('reject') ? 'bg-red-100 text-red-800 border border-red-200' :
-                    app.status && (app.status.toLowerCase().includes('shortlist') || app.status.toLowerCase().includes('hire') || app.status.toLowerCase().includes('accept')) ? 'bg-green-100 text-green-800 border border-green-200' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>{app.status}</span></div>
-                  {app.decisionReason && (
-                    <div className="mt-1 text-sm text-gray-600 italic">Reason: {app.decisionReason}</div>
-                  )}
-                  {app.cgpa !== null && <div className="text-sm text-gray-500">Applied CGPA: {app.cgpa}</div>}
-                </div>
-                <div className="flex flex-col items-end gap-2">
-                  {app.cvUrl ? (
-                    <button onClick={() => viewCV(app.cvUrl)} className="px-3 py-1 bg-red-600 text-white rounded-md text-sm">View CV</button>
-                  ) : (
-                    <div className="text-xs text-gray-500">No CV</div>
-                  )}
-                  <div className="flex gap-2">
-                    <button onClick={() => navigate(`/jobs/${app.jobId}`)} className="px-3 py-1 border rounded-md text-sm">Open Job</button>
-                    <button onClick={() => navigate(`/student/applications/${app.id}`)} className="px-3 py-1 bg-gray-100 rounded-md text-sm">View Details</button>
+              <div key={app.id} className="p-6 bg-white rounded-lg border shadow-sm">
+                <div className="flex justify-between items-start flex-wrap gap-2">
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">{app.job?.title}</h2>
+                    <p className="text-sm text-gray-600">{app.job?.company?.companyName}</p>
+                    <p className="text-sm text-gray-500 mt-1">
+                      Applied On: {new Date(app.createdAt).toLocaleString()}
+                    </p>
+                    {app.cgpa !== null && (
+                      <p className="text-sm text-gray-500">Applied CGPA: {app.cgpa}</p>
+                    )}
                   </div>
+
+                  <div>
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-sm font-medium ${
+                      app.status && app.status.toLowerCase().includes('reject') ? 'bg-red-100 text-red-800 border border-red-200' :
+                      app.status && (app.status.toLowerCase().includes('shortlist') || app.status.toLowerCase().includes('hire') || app.status.toLowerCase().includes('accept')) ? 'bg-green-100 text-green-800 border border-green-200' :
+                      'bg-gray-100 text-gray-800'
+                    }`}>
+                      {app.status}
+                    </span>
+                  </div>
+                </div>
+
+                {app.decisionReason && (
+                  <div className="mt-2 text-sm italic text-gray-700">
+                    <strong>Reason:</strong> {app.decisionReason}
+                  </div>
+                )}
+
+                <div className="mt-4 flex gap-3 flex-wrap">
+                  {app.cvUrl ? (
+                    <button
+                      onClick={() => viewCV(app.cvUrl)}
+                      className="px-3 py-1 bg-red-600 text-white rounded-md text-sm hover:bg-red-700"
+                    >
+                      View CV
+                    </button>
+                  ) : (
+                    <span className="text-xs text-gray-500">No CV uploaded</span>
+                  )}
+
+                  <button
+                    onClick={() => navigate(`/jobs/${app.jobId}`)}
+                    className="px-3 py-1 border rounded-md text-sm hover:bg-gray-50"
+                  >
+                    Open Job
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         )}
       </div>
-      <CvPreviewModal preview={preview} onClose={() => setPreview(null)} />
+
+      <CvPreviewModal
+        preview={preview}
+        onClose={() => {
+          if (preview?.url) window.URL.revokeObjectURL(preview.url);
+          setPreview(null);
+        }}
+      />
     </div>
   );
 };
