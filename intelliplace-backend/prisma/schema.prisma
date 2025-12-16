@@ -52,6 +52,7 @@ model Job {
   salary               String?
   requiredSkills       String?        @map("required_skills")
   minCgpa              Float?         @map("min_cgpa")
+  includeCgpaInShortlisting Boolean?  @default(true) @map("include_cgpa_in_shortlisting")
   allowBacklog         Boolean?       @map("allow_backlog")
   maxBacklog           Int?           @map("max_backlog")
   jobDescriptionFileUrl String?        @map("job_description_file_url")

@@ -23,6 +23,7 @@ const JobList = () => {
   const [message, setMessage] = useState(null);
   const [appliedJobs, setAppliedJobs] = useState(new Set());
   const [previewJobDesc, setPreviewJobDesc] = useState(null);
+  const [eligibilityError, setEligibilityError] = useState(null);
 
   const fetchJobs = async () => {
     setLoading(true);
@@ -51,16 +52,82 @@ const JobList = () => {
 
   useEffect(() => { fetchJobs(); }, []);
 
+  const checkEligibility = (job, cgpa, backlog) => {
+    if (!job) return { eligible: true, error: null };
+
+    const appCgpa = cgpa ? parseFloat(cgpa) : null;
+    const appBacklog = backlog !== '' && backlog !== null && backlog !== undefined 
+      ? parseInt(backlog, 10) 
+      : null;
+
+    // Check if values are provided (only CGPA if company wants to include it)
+    if (job.includeCgpaInShortlisting !== false) {
+      if (appCgpa === null || isNaN(appCgpa)) {
+        return { eligible: false, error: 'Please enter your CGPA' };
+      }
+    }
+
+    if (appBacklog === null || isNaN(appBacklog)) {
+      return { eligible: false, error: 'Please enter your backlog count (enter 0 if you have no backlogs)' };
+    }
+
+    const reasons = [];
+
+    // Check CGPA requirement (only if company wants to include it in shortlisting)
+    if (job.includeCgpaInShortlisting !== false && typeof job.minCgpa === 'number') {
+      if (appCgpa < job.minCgpa) {
+        reasons.push(`CGPA ${appCgpa} < required ${job.minCgpa}`);
+      }
+    }
+
+    // Check backlog requirement
+    if (job.allowBacklog === false || job.allowBacklog === null || job.allowBacklog === undefined) {
+      // If allowBacklog is falsy, require zero backlogs
+      if (appBacklog !== 0) {
+        reasons.push(`Active backlogs ${appBacklog} not allowed (zero backlogs required)`);
+      }
+    } else if (job.allowBacklog === true) {
+      // If allowBacklog is true, check maxBacklog limit if specified
+      if (typeof job.maxBacklog === 'number') {
+        if (appBacklog > job.maxBacklog) {
+          reasons.push(`Active backlogs ${appBacklog} exceeds maximum allowed ${job.maxBacklog}`);
+        }
+      }
+    }
+
+    if (reasons.length > 0) {
+      return { 
+        eligible: false, 
+        error: `You do not meet the eligibility criteria: ${reasons.join('; ')}` 
+      };
+    }
+
+    return { eligible: true, error: null };
+  };
+
   const openApply = (job) => {
     setSelectedJob(job);
     setApplyState({ cgpa: '', backlog: '', cv: null });
     setMessage(null);
+    setEligibilityError(null);
   }
 
   const handleApplyChange = (e) => {
     const { name, value, files } = e.target;
-    if (name === 'cv') setApplyState(s => ({ ...s, cv: files[0] }));
-    else setApplyState(s => ({ ...s, [name]: value }));
+    let newState;
+    if (name === 'cv') {
+      newState = { ...applyState, cv: files[0] };
+    } else {
+      newState = { ...applyState, [name]: value };
+    }
+    
+    setApplyState(newState);
+
+    // Check eligibility in real-time when CGPA or backlog changes
+    if (selectedJob && (name === 'cgpa' || name === 'backlog')) {
+      const eligibility = checkEligibility(selectedJob, newState.cgpa, newState.backlog);
+      setEligibilityError(eligibility.error);
+    }
   }
 
   const handleJobDescriptionFile = async (job) => {
@@ -100,6 +167,15 @@ const JobList = () => {
     if (!selectedJob) return;
     setMessage(null);
 
+    // Check eligibility first
+    const eligibility = checkEligibility(selectedJob, applyState.cgpa, applyState.backlog);
+    if (!eligibility.eligible) {
+      setEligibilityError(eligibility.error);
+      setMessage({ type: 'error', text: eligibility.error });
+      return;
+    }
+    setEligibilityError(null);
+
     // Validate file size (10MB limit)
     if (applyState.cv && applyState.cv.size > 10 * 1024 * 1024) {
       setMessage({ type: 'error', text: 'CV file size must be less than 10MB' });
@@ -119,8 +195,10 @@ const JobList = () => {
     const token = localStorage.getItem('token');
     const form = new FormData();
     if (applyState.cv) form.append('cv', applyState.cv);
+    // Send CGPA (backend will validate if required)
     if (applyState.cgpa) form.append('cgpa', applyState.cgpa);
-    if (applyState.backlog) form.append('backlog', applyState.backlog);
+    // Always send backlog (required field)
+    form.append('backlog', applyState.backlog);
 
     try {
       const res = await fetch(`http://localhost:5000/api/jobs/${selectedJob.id}/apply`, {
@@ -134,10 +212,14 @@ const JobList = () => {
         setSelectedJob(null);
         fetchJobs(); // Refresh jobs list to update applied status
       } else {
-        setMessage({ type: 'error', text: json.message || 'Failed to apply' });
+        // Show detailed error message from backend
+        const errorMsg = json.details 
+          ? `${json.message}: ${json.details}`
+          : json.message || 'Failed to apply';
+        setMessage({ type: 'error', text: errorMsg });
       }
     } catch (err) {
-      setMessage({ type: 'error', text: err.message });
+      setMessage({ type: 'error', text: err.message || 'Network error. Please try again.' });
     }
   }
 
@@ -335,26 +417,56 @@ const JobList = () => {
               )}
 
               <form onSubmit={submitApplication} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Your CGPA
-                  </label>
-                  <input
-                    name="cgpa"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="10"
-                    value={applyState.cgpa}
-                    onChange={handleApplyChange}
-                    placeholder="Enter your CGPA"
-                    className="input"
-                  />
-                </div>
+                {selectedJob.includeCgpaInShortlisting !== false && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Your CGPA <span className="text-red-500">*</span>
+                      {selectedJob.minCgpa && (
+                        <span className="text-xs text-gray-500 ml-2">(Required: {selectedJob.minCgpa}+)</span>
+                      )}
+                    </label>
+                    <input
+                      name="cgpa"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="10"
+                      value={applyState.cgpa}
+                      onChange={handleApplyChange}
+                      placeholder="Enter your CGPA"
+                      required
+                      className="input"
+                    />
+                  </div>
+                )}
+                {selectedJob.includeCgpaInShortlisting === false && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Your CGPA <span className="text-xs text-gray-500 ml-2">(Optional - not used for shortlisting)</span>
+                    </label>
+                    <input
+                      name="cgpa"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="10"
+                      value={applyState.cgpa}
+                      onChange={handleApplyChange}
+                      placeholder="Enter your CGPA (optional)"
+                      className="input"
+                    />
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Active Backlogs
+                    Active Backlogs <span className="text-red-500">*</span>
+                    {selectedJob.allowBacklog === false && (
+                      <span className="text-xs text-red-600 ml-2">(No backlogs allowed)</span>
+                    )}
+                    {selectedJob.allowBacklog === true && selectedJob.maxBacklog && (
+                      <span className="text-xs text-gray-500 ml-2">(Max allowed: {selectedJob.maxBacklog})</span>
+                    )}
                   </label>
                   <input
                     name="backlog"
@@ -363,9 +475,27 @@ const JobList = () => {
                     value={applyState.backlog}
                     onChange={handleApplyChange}
                     placeholder="Number of active backlogs"
+                    required
                     className="input"
                   />
                 </div>
+
+                {/* Eligibility Status */}
+                {eligibilityError ? (
+                  <div className="p-3 rounded-lg bg-red-50 border border-red-200">
+                    <p className="text-sm text-red-700 font-medium">⚠️ Eligibility Check Failed</p>
+                    <p className="text-xs text-red-600 mt-1">{eligibilityError}</p>
+                  </div>
+                ) : (
+                  selectedJob && 
+                  (selectedJob.includeCgpaInShortlisting === false || applyState.cgpa) && 
+                  applyState.backlog !== '' && 
+                  checkEligibility(selectedJob, applyState.cgpa || '', applyState.backlog).eligible ? (
+                    <div className="p-3 rounded-lg bg-green-50 border border-green-200">
+                      <p className="text-sm text-green-700 font-medium">✓ You meet the eligibility criteria</p>
+                    </div>
+                  ) : null
+                )}
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -410,7 +540,24 @@ const JobList = () => {
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700"
+                    disabled={
+                      eligibilityError !== null || 
+                      (selectedJob?.includeCgpaInShortlisting !== false && !applyState.cgpa) || 
+                      applyState.backlog === ''
+                    }
+                    className={`px-4 py-2 text-sm font-medium rounded-lg ${
+                      eligibilityError !== null || 
+                      (selectedJob?.includeCgpaInShortlisting !== false && !applyState.cgpa) || 
+                      applyState.backlog === ''
+                        ? 'bg-gray-400 text-gray-200 cursor-not-allowed'
+                        : 'bg-red-600 text-white hover:bg-red-700'
+                    }`}
+                    title={
+                      eligibilityError || 
+                      ((selectedJob?.includeCgpaInShortlisting !== false && !applyState.cgpa) || applyState.backlog === '' 
+                        ? 'Please fill in all required fields' 
+                        : '')
+                    }
                   >
                     Submit Application
                   </button>

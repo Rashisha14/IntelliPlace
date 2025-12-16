@@ -4,7 +4,7 @@ import { X, Download } from 'lucide-react';
 
 const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
   if (!isOpen) return null;
-  const [form, setForm] = useState({ title: '', description: '', type: 'FULL_TIME', location: '', salary: '', requiredSkills: '', minCgpa: '', allowBacklog: false, maxBacklog: '' });
+  const [form, setForm] = useState({ title: '', description: '', type: 'FULL_TIME', location: '', salary: '', requiredSkills: '', minCgpa: '', includeCgpaInShortlisting: true, allowBacklog: false, maxBacklog: '' });
   const [jobDescriptionFile, setJobDescriptionFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null);
@@ -23,14 +23,12 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
     setLoading(true);
     setMessage(null);
 
-    // Validate file size (10MB limit)
     if (jobDescriptionFile && jobDescriptionFile.size > 10 * 1024 * 1024) {
       setMessage({ type: 'error', text: 'Job description file size must be less than 10MB' });
       setLoading(false);
       return;
     }
 
-    // Validate file type
     if (jobDescriptionFile) {
       const allowedTypes = ['.pdf', '.doc', '.docx'];
       const ext = jobDescriptionFile.name.toLowerCase().slice(jobDescriptionFile.name.lastIndexOf('.'));
@@ -41,10 +39,23 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
       }
     }
 
+    if (form.allowBacklog) {
+      if (!form.maxBacklog || form.maxBacklog === '') {
+        setMessage({ type: 'error', text: 'Maximum backlogs allowed is required when "Allow Backlog" is selected' });
+        setLoading(false);
+        return;
+      }
+      const maxBacklogNum = parseInt(form.maxBacklog, 10);
+      if (isNaN(maxBacklogNum) || maxBacklogNum < 1) {
+        setMessage({ type: 'error', text: 'Maximum backlogs allowed must be at least 1' });
+        setLoading(false);
+        return;
+      }
+    }
+
     try {
       const token = localStorage.getItem('token');
       
-      // Use FormData if file is present, otherwise use JSON
       if (jobDescriptionFile) {
         const formData = new FormData();
         formData.append('title', form.title);
@@ -57,6 +68,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
           formData.append('requiredSkills', JSON.stringify(skills));
         }
         if (form.minCgpa) formData.append('minCgpa', form.minCgpa);
+        formData.append('includeCgpaInShortlisting', form.includeCgpaInShortlisting);
         formData.append('allowBacklog', form.allowBacklog);
         if (form.maxBacklog) formData.append('maxBacklog', form.maxBacklog);
         formData.append('jobDescriptionFile', jobDescriptionFile);
@@ -69,7 +81,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
         const data = await res.json();
         if (res.ok) {
           setMessage({ type: 'success', text: 'Job created successfully' });
-          setForm({ title: '', description: '', type: 'FULL_TIME', location: '', salary: '', requiredSkills: '', minCgpa: '', allowBacklog: false, maxBacklog: '' });
+          setForm({ title: '', description: '', type: 'FULL_TIME', location: '', salary: '', requiredSkills: '', minCgpa: '', includeCgpaInShortlisting: true, allowBacklog: false, maxBacklog: '' });
           setJobDescriptionFile(null);
           onCreated && onCreated();
         } else {
@@ -88,7 +100,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
         const data = await res.json();
         if (res.ok) {
           setMessage({ type: 'success', text: 'Job created successfully' });
-          setForm({ title: '', description: '', type: 'FULL_TIME', location: '', salary: '', requiredSkills: '', minCgpa: '', allowBacklog: false, maxBacklog: '' });
+          setForm({ title: '', description: '', type: 'FULL_TIME', location: '', salary: '', requiredSkills: '', minCgpa: '', includeCgpaInShortlisting: true, allowBacklog: false, maxBacklog: '' });
           setJobDescriptionFile(null);
           onCreated && onCreated();
         } else {
@@ -108,7 +120,6 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
         exit={{ opacity: 0, scale: 0.95 }}
         className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
       >
-        {/* Fixed Header */}
         <div className="flex items-center justify-between p-6 border-b flex-shrink-0">
           <h3 className="text-2xl font-semibold text-gray-800">Post New Job</h3>
           <button
@@ -119,7 +130,6 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
           </button>
         </div>
         
-        {/* Scrollable Content Area */}
         <form onSubmit={handleSubmit} className="flex-1 flex flex-col overflow-hidden">
           {message && (
             <div className={`p-4 flex-shrink-0 ${message.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
@@ -218,8 +228,21 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
                   value={form.minCgpa}
                   onChange={handleChange}
                   placeholder="e.g. 7.5"
-                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  disabled={!form.includeCgpaInShortlisting}
+                  className={`w-full p-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500 ${
+                    !form.includeCgpaInShortlisting ? 'bg-gray-100 cursor-not-allowed' : ''
+                  }`}
                 />
+                <label className="flex items-center gap-2 cursor-pointer mt-2">
+                  <input
+                    type="checkbox"
+                    name="includeCgpaInShortlisting"
+                    checked={form.includeCgpaInShortlisting}
+                    onChange={handleChange}
+                    className="w-4 h-4 text-[var(--brand-500)] focus:ring-[var(--brand-500)] rounded"
+                  />
+                  <span className="text-xs text-gray-600">Include CGPA in shortlisting</span>
+                </label>
               </div>
 
               <div>
@@ -237,16 +260,20 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
                   </label>
                   {form.allowBacklog && (
                     <div className="mt-2">
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Maximum Backlogs Allowed</label>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">
+                        Maximum Backlogs Allowed <span className="text-red-500">*</span>
+                      </label>
                       <input
                         name="maxBacklog"
                         type="number"
-                        min="0"
+                        min="1"
                         value={form.maxBacklog}
                         onChange={handleChange}
                         placeholder="e.g. 2"
+                        required
                         className="w-full p-2 text-sm border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                       />
+                      <p className="text-xs text-gray-500 mt-1">Must be at least 1</p>
                     </div>
                   )}
                 </div>
@@ -288,7 +315,6 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
             </div>
           </div>
 
-          {/* Fixed Footer Buttons */}
           <div className="flex justify-end items-center gap-3 p-6 pt-4 border-t flex-shrink-0 bg-white">
             <button
               type="button"
@@ -312,3 +338,5 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
 }
 
 export default CompanyPostJob;
+
+

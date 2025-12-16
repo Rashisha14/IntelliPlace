@@ -51,7 +51,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     const lower = cvUrl.toLowerCase();
     const isPDF = lower.includes('.pdf') || lower.startsWith('https://') || lower.startsWith('http://');
 
-    // If it's likely a PDF, open in preview modal
+    
     if (isPDF) {
       setPreviewCV({
         url: cvUrl,
@@ -59,7 +59,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
         studentName: application.student.name,
       });
     } else {
-      // Otherwise just open in a new tab
+
       window.open(cvUrl, '_blank', 'noopener,noreferrer');
     }
   };
@@ -77,7 +77,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                   className="btn btn-warning"
                   disabled={actionLoading}
                 >
-                  Shortlist & Close
+                 
                 </button>
               )}
               {confirming && jobStatus === 'OPEN' && (
@@ -331,7 +331,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
         </div>
       </div>
 
-      {/* CV Preview Modal (now just uses Supabase URL directly) */}
+      
       {previewCV && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-4xl h-[80vh] flex flex-col">

@@ -13,7 +13,6 @@ const __dirname = path.dirname(__filename);
 
 const router = express.Router();
 
-// Use in-memory storage – we'll upload buffer to Supabase
 const storage = multer.memoryStorage();
 
 const upload = multer({
@@ -28,11 +27,11 @@ const upload = multer({
     }
   },
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB
+    fileSize: 10 * 1024 * 1024
   }
 });
 
-// Helper role checks
+
 const authorizeCompany = (req, res, next) => {
   if (!req.user || req.user.userType !== 'company') return res.status(403).json({ success: false, message: 'Company access required' });
   next();
@@ -43,12 +42,12 @@ const authorizeStudent = (req, res, next) => {
   next();
 };
 
-// Create a new job (company only) - supports both JSON and multipart/form-data
+
 router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescriptionFile'), async (req, res) => {
   try {
     const companyId = req.user.id;
     
-    // Verify company exists
+   
     const company = await prisma.company.findUnique({
       where: { id: companyId }
     });
@@ -57,11 +56,11 @@ router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescript
       return res.status(404).json({ success: false, message: 'Company not found. Please log in again.' });
     }
     
-    // Handle both JSON and form-data
-    let title, description, location, type, salary, requiredSkills, minCgpa, allowBacklog, maxBacklog;
+   
+    let title, description, location, type, salary, requiredSkills, minCgpa, includeCgpaInShortlisting, allowBacklog, maxBacklog;
     
     if (req.file) {
-      // Multipart form-data
+  
       title = req.body.title;
       description = req.body.description;
       location = req.body.location || null;
@@ -69,23 +68,34 @@ router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescript
       salary = req.body.salary || null;
       requiredSkills = req.body.requiredSkills;
       minCgpa = req.body.minCgpa;
+      includeCgpaInShortlisting = req.body.includeCgpaInShortlisting;
       allowBacklog = req.body.allowBacklog;
       maxBacklog = req.body.maxBacklog;
     } else {
-      // JSON
-      ({ title, description, location, type, salary, requiredSkills, minCgpa, allowBacklog, maxBacklog } = req.body);
+      
+      ({ title, description, location, type, salary, requiredSkills, minCgpa, includeCgpaInShortlisting, allowBacklog, maxBacklog } = req.body);
     }
 
     if (!title || !description || !type) return res.status(400).json({ success: false, message: 'Title, description and type are required' });
 
-    // Handle job description file upload if present
+    const allowBacklogBool = allowBacklog === 'true' || allowBacklog === true;
+    if (allowBacklogBool) {
+      if (!maxBacklog || maxBacklog === '') {
+        return res.status(400).json({ success: false, message: 'Maximum backlogs allowed is required when "Allow Backlog" is selected' });
+      }
+      const maxBacklogNum = parseInt(maxBacklog, 10);
+      if (isNaN(maxBacklogNum) || maxBacklogNum < 1) {
+        return res.status(400).json({ success: false, message: 'Maximum backlogs allowed must be at least 1' });
+      }
+    }
+
     let jobDescriptionFileUrl = null;
     if (req.file) {
       const ext = path.extname(req.file.originalname).toLowerCase();
-      const filePath = `job-descriptions/${companyId}-${Date.now()}${ext}`; // path inside bucket
+      const filePath = `job-descriptions/${companyId}-${Date.now()}${ext}`;
 
       const { error: uploadError } = await supabase.storage
-        .from('job-descriptions')              // bucket name
+        .from('job-descriptions')
         .upload(filePath, req.file.buffer, {
           contentType: req.file.mimetype,
           upsert: false,
@@ -96,7 +106,7 @@ router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescript
         return res.status(500).json({ success: false, message: 'Error uploading job description file' });
       }
 
-      // Get a public URL (if bucket is public)
+  
       const { data: publicData } = supabase.storage
         .from('job-descriptions')
         .getPublicUrl(filePath);
@@ -104,7 +114,7 @@ router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescript
       jobDescriptionFileUrl = publicData.publicUrl;
     }
 
-    // Parse requiredSkills if it's a string (from form-data)
+  
     let parsedSkills = null;
     if (requiredSkills) {
       if (typeof requiredSkills === 'string') {
@@ -127,8 +137,9 @@ router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescript
         salary: salary || null,
         requiredSkills: parsedSkills ? (Array.isArray(parsedSkills) ? parsedSkills.join(',') : String(parsedSkills)) : null,
         minCgpa: minCgpa ? parseFloat(minCgpa) : null,
-        allowBacklog: allowBacklog === 'true' || allowBacklog === true ? true : false,
-        maxBacklog: maxBacklog ? parseInt(maxBacklog) : null,
+        includeCgpaInShortlisting: includeCgpaInShortlisting === 'false' || includeCgpaInShortlisting === false ? false : true,
+        allowBacklog: allowBacklogBool,
+        maxBacklog: allowBacklogBool && maxBacklog ? parseInt(maxBacklog, 10) : null,
         jobDescriptionFileUrl: jobDescriptionFileUrl || null,
         companyId: companyId
       }
@@ -138,7 +149,7 @@ router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescript
   } catch (error) {
     console.error('Error creating job:', error);
     
-    // Handle Prisma foreign key constraint errors
+   
     if (error.code === 'P2003') {
       return res.status(400).json({ 
         success: false, 
@@ -150,7 +161,7 @@ router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescript
   }
 });
 
-// List jobs (public) with simple filters
+
 router.get('/', async (req, res) => {
   try {
     const { search, page = 1, limit = 10 } = req.query;
@@ -174,37 +185,102 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Student apply to a job with optional CV upload
+
 router.post('/:jobId/apply', authenticateToken, authorizeStudent, upload.single('cv'), async (req, res) => {
   try {
     const studentId = req.user.id;
     const jobId = parseInt(req.params.jobId);
     const file = req.file;
 
-    // Applicant-provided fields (optional)
+    
     const { skills, cgpa, backlog } = req.body;
 
-    // Verify job exists
+    
     const job = await prisma.job.findUnique({ where: { id: jobId } });
     if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
 
-    // Disallow applications if job is not OPEN
+    
     if (job.status !== 'OPEN') {
       return res.status(400).json({ success: false, message: 'Applications for this job are closed' });
     }
 
-    // Check existing application
+    
     const existing = await prisma.application.findFirst({ where: { studentId, jobId } });
     if (existing) return res.status(400).json({ success: false, message: 'Already applied to this job' });
 
     
+    const appCgpa = cgpa ? parseFloat(cgpa) : null;
+    const appBacklog = backlog !== undefined && backlog !== null && backlog !== '' 
+      ? parseInt(backlog, 10) 
+      : null;
+
+    
+    let passesCgpa = true;
+    if (job.includeCgpaInShortlisting !== false && typeof job.minCgpa === 'number') {
+      if (appCgpa === null || isNaN(appCgpa)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'CGPA is required for this application. Please provide your CGPA in the form.' 
+        });
+      }
+      passesCgpa = appCgpa >= job.minCgpa;
+    }
+
+    
+    let passesBacklog = true;
+    if (job.allowBacklog === false || job.allowBacklog === null || job.allowBacklog === undefined) {
+     
+      if (appBacklog === null || isNaN(appBacklog)) {
+        return res.status(400).json({ 
+          success: false, 
+          message: 'Backlog count is required for this application. Please provide your backlog count in the form.' 
+        });
+      }
+      passesBacklog = (appBacklog === 0);
+    } else if (job.allowBacklog === true) {
+      
+      if (typeof job.maxBacklog === 'number') {
+        if (appBacklog === null || isNaN(appBacklog)) {
+          return res.status(400).json({ 
+            success: false, 
+            message: 'Backlog count is required for this application. Please provide your backlog count in the form.' 
+          });
+        }
+        passesBacklog = (appBacklog <= job.maxBacklog);
+      } else {
+        passesBacklog = true;
+      }
+    }
+
+    if (!passesCgpa || !passesBacklog) {
+      const reasons = [];
+      if (!passesCgpa) {
+        reasons.push(`CGPA ${appCgpa} < required ${job.minCgpa}`);
+      }
+      if (!passesBacklog) {
+        if (job.allowBacklog === false || job.allowBacklog === null || job.allowBacklog === undefined) {
+          reasons.push(`Active backlogs ${appBacklog} not allowed (zero backlogs required)`);
+        } else if (job.allowBacklog === true && typeof job.maxBacklog === 'number') {
+          reasons.push(`Active backlogs ${appBacklog} exceeds maximum allowed ${job.maxBacklog}`);
+        } else {
+          reasons.push(`Active backlogs ${appBacklog} not allowed`);
+        }
+      }
+
+      return res.status(400).json({
+        success: false,
+        message: 'You do not meet the eligibility criteria for this job',
+        details: reasons.join('; ')
+      });
+    }
+
     let cvUrl = null;
     if (file) {
       const ext = path.extname(file.originalname).toLowerCase();
-      const filePath = `cvs/${studentId}-${Date.now()}${ext}`; // path inside bucket
+      const filePath = `cvs/${studentId}-${Date.now()}${ext}`; 
 
       const { error: uploadError } = await supabase.storage
-        .from('Resume')              // bucket name
+        .from('Resume')              
         .upload(filePath, file.buffer, {
           contentType: file.mimetype,
           upsert: false,
@@ -215,14 +291,12 @@ router.post('/:jobId/apply', authenticateToken, authorizeStudent, upload.single(
         return res.status(500).json({ success: false, message: 'Error uploading CV' });
       }
 
-      // Get a public URL (if bucket is public)
       const { data: publicData } = supabase.storage
         .from('Resume')
         .getPublicUrl(filePath);
 
       cvUrl = publicData.publicUrl;
 
-      // Update student profile with latest CV URL
       await prisma.student.update({
         where: { id: studentId },
         data: { cvUrl },
@@ -230,7 +304,6 @@ router.post('/:jobId/apply', authenticateToken, authorizeStudent, upload.single(
     }
 
 
-    // Create application with optional applicant details
     const application = await prisma.application.create({
       data: {
         studentId,
@@ -249,7 +322,6 @@ router.post('/:jobId/apply', authenticateToken, authorizeStudent, upload.single(
   }
 });
 
-// Company: shortlist applicants for a job based on job criteria and close applications
 router.post('/:jobId/shortlist', authenticateToken, authorizeCompany, async (req, res) => {
   try {
     const companyId = req.user.id;
@@ -258,10 +330,8 @@ router.post('/:jobId/shortlist', authenticateToken, authorizeCompany, async (req
     const job = await prisma.job.findUnique({ where: { id: jobId } });
     if (!job || job.companyId !== companyId) return res.status(404).json({ success: false, message: 'Job not found or access denied' });
 
-    // Close the job to stop new applications
     await prisma.job.update({ where: { id: jobId }, data: { status: 'CLOSED' } });
 
-    // Fetch applications with student info
     const applications = await prisma.application.findMany({ where: { jobId }, include: { student: true } });
 
     let shortlisted = 0;
@@ -270,38 +340,39 @@ router.post('/:jobId/shortlist', authenticateToken, authorizeCompany, async (req
     for (const app of applications) {
       const student = app.student;
 
-      // Determine CGPA to evaluate: application-level overrides profile
       const appCgpa = typeof app.cgpa === 'number' ? app.cgpa : (student?.cgpa ?? null);
       const appBacklog = typeof app.backlog === 'number' ? app.backlog : (student?.backlog ?? 0);
 
       let passesCgpa = true;
-      if (typeof job.minCgpa === 'number') {
+      if (job.includeCgpaInShortlisting !== false && typeof job.minCgpa === 'number') {
         passesCgpa = (typeof appCgpa === 'number') ? (appCgpa >= job.minCgpa) : false;
       }
 
       let passesBacklog = true;
       if (job.allowBacklog === false || job.allowBacklog === null || job.allowBacklog === undefined) {
-        // If allowBacklog is falsy, require zero backlogs
         passesBacklog = (appBacklog === 0);
       } else if (job.allowBacklog === true) {
-        // If allowBacklog is true, check maxBacklog limit if specified
         if (typeof job.maxBacklog === 'number') {
           passesBacklog = (appBacklog <= job.maxBacklog);
         } else {
-          // If allowBacklog is true but no maxBacklog specified, allow any number of backlogs
           passesBacklog = true;
         }
       }
 
       const newStatus = (passesCgpa && passesBacklog) ? 'SHORTLISTED' : 'REJECTED';
 
-      // Build a human-readable decision reason
+      
       let decisionReason = '';
       if (newStatus === 'SHORTLISTED') {
-        decisionReason = 'Shortlisted — meets CGPA and backlog requirements';
+        const criteria = [];
+        if (job.includeCgpaInShortlisting !== false && typeof job.minCgpa === 'number') {
+          criteria.push('CGPA');
+        }
+        criteria.push('backlog');
+        decisionReason = `Shortlisted — meets ${criteria.join(' and ')} requirements`;
       } else {
         const reasons = [];
-        if (!passesCgpa) {
+        if (!passesCgpa && job.includeCgpaInShortlisting !== false) {
           reasons.push(`CGPA ${appCgpa === null ? 'N/A' : appCgpa} < required ${job.minCgpa}`);
         }
         if (!passesBacklog) {
@@ -318,7 +389,7 @@ router.post('/:jobId/shortlist', authenticateToken, authorizeCompany, async (req
 
       await prisma.application.update({ where: { id: app.id }, data: { status: newStatus, decisionReason } });
 
-      // Create notification for student
+      
       try {
         await prisma.notification.create({
           data: {
@@ -344,7 +415,7 @@ router.post('/:jobId/shortlist', authenticateToken, authorizeCompany, async (req
   }
 });
 
-// Student: get my applications
+
 router.get('/my-applications', authenticateToken, authorizeStudent, async (req, res) => {
   try {
     const studentId = req.user.id;
@@ -358,7 +429,7 @@ router.get('/my-applications', authenticateToken, authorizeStudent, async (req, 
       data: {
         applications: applications.map(app => ({
           ...app,
-          cvBase64: undefined // Don't send CV data back
+          cvBase64: undefined 
         }))
       }
     });
@@ -368,19 +439,18 @@ router.get('/my-applications', authenticateToken, authorizeStudent, async (req, 
   }
 });
 
-// Company: list applicants for a job (include student details and cv)
-// Serve CV files
+
 router.get('/cv/:filename', authenticateToken, async (req, res) => {
   try {
     const { filename } = req.params;
     const filePath = path.join(uploadsDir, filename);
     
-    // Check if file exists
+  
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ success: false, message: 'CV file not found' });
     }
 
-    // Security check - verify the user has access to this CV
+    
     const cvPath = `/uploads/cvs/${filename}`;
     const application = await prisma.application.findFirst({
       where: {
@@ -389,8 +459,8 @@ router.get('/cv/:filename', authenticateToken, async (req, res) => {
           { student: { cvUrl: cvPath } }
         ],
         OR: [
-          { studentId: req.user.id }, // Student can access their own CV
-          { job: { companyId: req.user.id } } // Company can access CVs of their job applicants
+          { studentId: req.user.id }, 
+          { job: { companyId: req.user.id } } 
         ]
       }
     });
@@ -399,14 +469,14 @@ router.get('/cv/:filename', authenticateToken, async (req, res) => {
       return res.status(403).json({ success: false, message: 'Access denied' });
     }
 
-    // Set appropriate content type based on file extension
+  
     const ext = path.extname(filename).toLowerCase();
     const contentType = ext === '.pdf' ? 'application/pdf' :
                        ext === '.doc' ? 'application/msword' :
                        ext === '.docx' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' :
                        'application/octet-stream';
     
-    // Set response headers
+    
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `inline; filename=${filename}`);
     res.sendFile(filePath);
@@ -426,7 +496,7 @@ router.get('/:jobId/applicants', authenticateToken, authorizeCompany, async (req
 
     const applications = await prisma.application.findMany({ where: { jobId }, include: { student: true } });
 
-    // Map to include both application-level fields and student profile
+    
     const result = applications.map(app => ({
       id: app.id,
       status: app.status,
