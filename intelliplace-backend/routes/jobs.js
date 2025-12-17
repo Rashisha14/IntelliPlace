@@ -3,10 +3,15 @@ import prisma from '../lib/prisma.js';
 import { authenticateToken } from '../middleware/auth.js';
 import multer from 'multer';
 import path from 'path';
-
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { supabase } from '../lib/supabase.js';
+import { createRequire } from 'module';
+import axios from 'axios';
+
+const require = createRequire(import.meta.url);
+// pdf-parse v2.x uses class-based API
+const { PDFParse } = require('pdf-parse');
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -522,6 +527,431 @@ router.get('/:jobId/applicants', authenticateToken, authorizeCompany, async (req
   } catch (error) {
     console.error('Error fetching applicants:', error);
     res.status(500).json({ success: false, message: 'Server error fetching applicants' });
+  }
+});
+
+async function downloadCV(cvUrl) {
+  try {
+    if (!cvUrl) {
+      console.log('     [ATS] No CV URL provided');
+      return null;
+    }
+    
+    console.log(`     [ATS] Step 1: Downloading CV from: ${cvUrl.substring(0, 100)}...`);
+    
+    let buffer = null;
+    
+    // Check if it's a Supabase URL and extract the file path
+    if (cvUrl.includes('supabase.co') || cvUrl.includes('storage.googleapis.com')) {
+      console.log(`     [ATS] Detected Supabase/storage URL`);
+      
+      // Try to extract file path from Supabase URL
+      // Supabase URLs look like: https://[project].supabase.co/storage/v1/object/public/Resume/cvs/123-123.pdf
+      const urlMatch = cvUrl.match(/\/public\/([^?]+)/);
+      if (urlMatch) {
+        const filePath = urlMatch[1];
+        console.log(`     [ATS] Extracted file path: ${filePath}`);
+        
+        // Extract bucket name (usually "Resume" based on the code)
+        const bucketMatch = filePath.match(/^([^/]+)\/(.+)$/);
+        if (bucketMatch) {
+          const bucketName = bucketMatch[1];
+          const filePathInBucket = bucketMatch[2];
+          
+          console.log(`     [ATS] Attempting Supabase SDK download from bucket: "${bucketName}", file: "${filePathInBucket}"`);
+          
+          try {
+            const { data: fileData, error: downloadError } = await supabase.storage
+              .from(bucketName)
+              .download(filePathInBucket);
+            
+            if (downloadError) {
+              console.error(`     [ATS] Supabase SDK download error: ${downloadError.message}`);
+              console.error(`     [ATS] Error code: ${downloadError.statusCode || 'N/A'}`);
+              
+              // Try with just "Resume" bucket as fallback
+              if (bucketName !== 'Resume') {
+                console.log(`     [ATS] Trying with "Resume" bucket as fallback...`);
+                const { data: fallbackData, error: fallbackError } = await supabase.storage
+                  .from('Resume')
+                  .download(filePathInBucket);
+                
+                if (!fallbackError && fallbackData) {
+                  const arrayBuffer = await fallbackData.arrayBuffer();
+                  buffer = Buffer.from(arrayBuffer);
+                  console.log(`     [ATS] Downloaded using "Resume" bucket fallback (${buffer.length} bytes)`);
+                } else {
+                  throw downloadError; // Use original error
+                }
+              } else {
+                throw downloadError;
+              }
+            } else {
+              // Convert Blob to Buffer
+              const arrayBuffer = await fileData.arrayBuffer();
+              buffer = Buffer.from(arrayBuffer);
+              console.log(`     [ATS] Downloaded from Supabase SDK (${buffer.length} bytes)`);
+            }
+          } catch (supabaseError) {
+            // Fallback to HTTP request
+            console.log(`     [ATS] Supabase SDK failed, falling back to HTTP download...`);
+            try {
+              const response = await axios.get(cvUrl, { 
+                responseType: 'arraybuffer',
+                timeout: 30000,
+                maxRedirects: 5
+              });
+              buffer = Buffer.from(response.data);
+              console.log(`     [ATS] HTTP fallback successful (${buffer.length} bytes)`);
+            } catch (httpError) {
+              console.error(`     [ATS] HTTP fallback also failed: ${httpError.message}`);
+              if (httpError.response) {
+                console.error(`     [ATS] HTTP Status: ${httpError.response.status}`);
+              }
+              throw supabaseError; // Throw original Supabase error
+            }
+          }
+        } else {
+          // Could not parse path, try HTTP
+          console.log(`      [ATS] Could not parse bucket/file from path: ${filePath}`);
+          console.log(`     [ATS] Attempting HTTP download...`);
+          try {
+            const response = await axios.get(cvUrl, { 
+              responseType: 'arraybuffer',
+              timeout: 30000,
+              maxRedirects: 5
+            });
+            buffer = Buffer.from(response.data);
+            console.log(`     [ATS] HTTP download successful (${buffer.length} bytes)`);
+          } catch (httpError) {
+            console.error(`     [ATS] HTTP download failed: ${httpError.message}`);
+            throw httpError;
+          }
+        }
+      } else {
+        // Not a standard Supabase URL pattern, try HTTP
+        console.log(`      [ATS] URL doesn't match Supabase pattern: ${cvUrl.substring(0, 100)}...`);
+        console.log(`     [ATS] Attempting HTTP download...`);
+        try {
+          const response = await axios.get(cvUrl, { 
+            responseType: 'arraybuffer',
+            timeout: 30000,
+            maxRedirects: 5
+          });
+          buffer = Buffer.from(response.data);
+          console.log(`     [ATS] HTTP download successful (${buffer.length} bytes)`);
+        } catch (httpError) {
+          console.error(`     [ATS] HTTP download failed: ${httpError.message}`);
+          throw httpError;
+        }
+      }
+    } else {
+      // Regular HTTP URL
+      console.log(`     [ATS] Using HTTP download for non-Supabase URL...`);
+      try {
+        const response = await axios.get(cvUrl, { 
+          responseType: 'arraybuffer',
+          timeout: 30000,
+          maxRedirects: 5,
+          validateStatus: function (status) {
+            return status >= 200 && status < 300;
+          }
+        });
+        buffer = Buffer.from(response.data);
+        console.log(`     [ATS] HTTP download successful (${buffer.length} bytes)`);
+      } catch (httpError) {
+        console.error(`     [ATS] HTTP download failed: ${httpError.message}`);
+        if (httpError.response) {
+          console.error(`     [ATS] HTTP Status: ${httpError.response.status}`);
+          console.error(`     [ATS] Response data: ${JSON.stringify(httpError.response.data).substring(0, 200)}`);
+        }
+        throw httpError;
+      }
+    }
+    
+    if (!buffer || buffer.length === 0) {
+      console.log('     [ATS] CV download returned empty data');
+      return null;
+    }
+    
+    console.log(`     [ATS] CV downloaded successfully (${buffer.length} bytes)`);
+    return buffer;
+    
+  } catch (error) {
+    if (error.response) {
+      console.error(`     [ATS] HTTP Error ${error.response.status}: ${error.response.statusText}`);
+      console.error(`     [ATS] URL: ${cvUrl}`);
+    } else if (error.request) {
+      console.error(`     [ATS] Network Error: Could not reach CV URL`);
+      console.error(`     [ATS] URL: ${cvUrl}`);
+    } else {
+      console.error(`     [ATS] Download Error: ${error.message}`);
+      if (error.stack) {
+        console.error(`     [ATS] Stack: ${error.stack.substring(0, 500)}`);
+      }
+    }
+    return null;
+  }
+}
+
+async function extractTextFromCV(cvUrl) {
+  try {
+    console.log(`     [ATS] Step 2: Extracting text from CV...`);
+    
+    // First, download the CV
+    const buffer = await downloadCV(cvUrl);
+    
+    if (!buffer) {
+      console.log('     [ATS] Failed to download CV, cannot extract text');
+      return null;
+    }
+    
+    // Check file format
+    if (!cvUrl.toLowerCase().endsWith('.pdf')) {
+      console.log(`     [ATS] CV format not supported (not PDF): ${cvUrl.substring(cvUrl.lastIndexOf('.'))}`);
+      return null;
+    }
+    
+    console.log(`     [ATS] Extracting text from PDF (${buffer.length} bytes)...`);
+  
+    const parser = new PDFParse({ data: buffer });
+    const data = await parser.getText();
+    const textLength = data.text ? data.text.trim().length : 0;
+    
+    if (textLength < 50) {
+      console.log(`      [ATS] Extracted text is too short (${textLength} characters, minimum 50 required)`);
+      return null;
+    }
+    
+    console.log(`     [ATS] Successfully extracted ${textLength} characters from PDF`);
+    return data.text;
+    
+  } catch (error) {
+    console.error(`     [ATS] Text extraction error: ${error.message}`);
+    if (error.stack) {
+      console.error(`     [ATS] Stack: ${error.stack.substring(0, 500)}`);
+    }
+    return null;
+  }
+}
+
+router.post('/:jobId/shortlist-ats', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+
+    console.log(`\n [ATS] Starting AI shortlisting for job ${jobId}`);
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) {
+      return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+    }
+
+    await prisma.job.update({ where: { id: jobId }, data: { status: 'CLOSED' } });
+
+    const applications = await prisma.application.findMany({ 
+      where: { jobId }, 
+      include: { student: true } 
+    });
+
+    if (applications.length === 0) {
+      return res.status(400).json({ success: false, message: 'No applications found for this job' });
+    }
+
+    console.log(` [ATS] Found ${applications.length} applications to process`);
+
+    const ATS_SERVICE_URL = process.env.ATS_SERVICE_URL || 'http://localhost:8000';
+    console.log(` [ATS] Connecting to ATS service at ${ATS_SERVICE_URL}`);
+    
+    const requiredSkills = job.requiredSkills 
+      ? (typeof job.requiredSkills === 'string' 
+          ? job.requiredSkills.split(',').map(s => s.trim()).filter(s => s)
+          : job.requiredSkills)
+      : [];
+
+    let processed = 0;
+    let shortlisted = 0;
+    let review = 0;
+    let rejected = 0;
+    const errors = [];
+
+    for (let i = 0; i < applications.length; i++) {
+      const app = applications[i];
+      const studentName = app.student?.name || 'Unknown';
+      console.log(`\n [ATS] Processing application ${i + 1}/${applications.length}: ${studentName}`);
+      try {
+        const student = app.student;
+        
+        const appCgpa = typeof app.cgpa === 'number' ? app.cgpa : (student?.cgpa ?? null);
+        const appBacklog = typeof app.backlog === 'number' ? app.backlog : (student?.backlog ?? 0);
+
+        let passesCgpa = true;
+        if (job.includeCgpaInShortlisting !== false && typeof job.minCgpa === 'number') {
+          passesCgpa = (typeof appCgpa === 'number') ? (appCgpa >= job.minCgpa) : false;
+        }
+
+        let passesBacklog = true;
+        if (job.allowBacklog === false || job.allowBacklog === null || job.allowBacklog === undefined) {
+          passesBacklog = (appBacklog === 0);
+        } else if (job.allowBacklog === true) {
+          if (typeof job.maxBacklog === 'number') {
+            passesBacklog = (appBacklog <= job.maxBacklog);
+          } else {
+            passesBacklog = true;
+          }
+        }
+
+        if (!passesCgpa || !passesBacklog) {
+          console.log(`   [ATS] ${studentName}: Rejected - Does not meet eligibility criteria`);
+          await prisma.application.update({
+            where: { id: app.id },
+            data: { 
+              status: 'REJECTED',
+              decisionReason: 'Does not meet eligibility criteria (CGPA/Backlog)'
+            }
+          });
+          rejected++;
+          continue;
+        }
+
+        const cvUrl = app.cvUrl || student?.cvUrl;
+        if (!cvUrl) {
+          console.log(`    [ATS] ${studentName}: No CV URL found (app.cvUrl: ${app.cvUrl}, student.cvUrl: ${student?.cvUrl})`);
+          await prisma.application.update({
+            where: { id: app.id },
+            data: { 
+              status: 'REVIEW',
+              decisionReason: 'No CV available for AI evaluation'
+            }
+          });
+          review++;
+          continue;
+        }
+
+        console.log(`   [ATS] ${studentName}: Processing CV from URL...`);
+        console.log(`   [ATS] ${studentName}: Full CV URL: ${cvUrl}`);
+        const resumeText = await extractTextFromCV(cvUrl);
+        if (!resumeText || resumeText.trim().length < 50) {
+          const reason = !resumeText 
+            ? 'CV text extraction failed (could not download or parse CV)' 
+            : `CV text extraction returned insufficient content (${resumeText.trim().length} characters, minimum 50 required)`;
+          console.log(`    [ATS] ${studentName}: ${reason}`);
+          await prisma.application.update({
+            where: { id: app.id },
+            data: { 
+              status: 'REVIEW',
+              decisionReason: reason
+            }
+          });
+          review++;
+          continue;
+        }
+        console.log(`   [ATS] ${studentName}: Successfully extracted ${resumeText.length} characters from CV`);
+
+        console.log(`   [ATS] ${studentName}: Sending to AI service for evaluation...`);
+        const atsRequest = {
+          resume_text: resumeText,
+          job_description: job.description,
+          required_skills: requiredSkills,
+          min_experience_years: 0,
+          education_requirement: null
+        };
+
+        const atsResponse = await axios.post(
+          `${ATS_SERVICE_URL}/evaluate-resume`,
+          atsRequest,
+          { timeout: 30000 }
+        );
+
+        const atsResult = atsResponse.data;
+        const score = (atsResult.final_score * 100).toFixed(1);
+        let newStatus = atsResult.decision;
+        let decisionReason = `ATS Score: ${score}% - ${atsResult.decision}. ${atsResult.explanation.split('\n')[0]}`;
+
+        console.log(`   [ATS] ${studentName}: Score ${score}% - Decision: ${newStatus}`);
+
+        if (newStatus === 'SHORTLISTED') {
+          shortlisted++;
+        } else if (newStatus === 'REVIEW') {
+          review++;
+        } else {
+          rejected++;
+        }
+
+        await prisma.application.update({
+          where: { id: app.id },
+          data: { 
+            status: newStatus,
+            decisionReason: decisionReason.substring(0, 500)
+          }
+        });
+
+        try {
+          await prisma.notification.create({
+            data: {
+              studentId: app.studentId,
+              title: `Application ${newStatus}`,
+              message: `Your application for ${job.title} has been evaluated using AI resume analysis. Status: ${newStatus}. ${decisionReason.substring(0, 200)}`,
+              applicationId: app.id,
+              jobId: jobId
+            }
+          });
+        } catch (notifError) {
+          console.error('Error creating notification:', notifError);
+        }
+
+        processed++;
+        console.log(`   [ATS] ${studentName}: Completed successfully`);
+      } catch (error) {
+        const studentName = app.student?.name || 'Unknown';
+        console.error(`   [ATS] ${studentName}: Error -`, error.message);
+        errors.push(`Application ${app.id}: ${error.message}`);
+        
+        await prisma.application.update({
+          where: { id: app.id },
+          data: { 
+            status: 'REVIEW',
+            decisionReason: 'Error during AI evaluation - requires manual review'
+          }
+        });
+        review++;
+      }
+    }
+
+    console.log(`\n [ATS] Shortlisting complete!`);
+    console.log(`    Results: ${processed} processed, ${shortlisted} shortlisted, ${review} review, ${rejected} rejected`);
+    if (processed === 0 && review > 0) {
+      console.log(`     WARNING: No applications were processed by AI!`);
+      console.log(`    This usually means:`);
+      console.log(`      - CVs are not available (students didn't upload CVs)`);
+      console.log(`      - CV download failed (check Supabase bucket permissions)`);
+      console.log(`      - CV format not supported (only PDFs are supported)`);
+      console.log(`      - CV text extraction failed`);
+      console.log(`    Check the logs above for each application to see the specific reason.`);
+    }
+    if (errors.length > 0) {
+      console.log(`     Errors encountered: ${errors.length}`);
+      errors.forEach((err, idx) => console.log(`      ${idx + 1}. ${err}`));
+    }
+
+    res.json({
+      success: true,
+      message: `ATS shortlisting complete. Processed: ${processed}, Shortlisted: ${shortlisted}, Review: ${review}, Rejected: ${rejected}`,
+      data: {
+        processed,
+        shortlisted,
+        review,
+        rejected,
+        errors: errors.length > 0 ? errors : undefined
+      }
+    });
+  } catch (error) {
+    console.error(' [ATS] Fatal error in ATS shortlisting:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error during ATS shortlisting',
+      error: error.message 
+    });
   }
 });
 

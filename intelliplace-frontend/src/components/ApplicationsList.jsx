@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileCheck, Download, Mail, Phone, ChevronDown, ChevronUp, User, FileDown } from 'lucide-react';
+import { FileCheck, Download, Mail, Phone, ChevronDown, ChevronUp, User, FileDown, Sparkles } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
@@ -41,6 +41,8 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
 
   const [previewCV, setPreviewCV] = useState(null);
   const [expandedApp, setExpandedApp] = useState(null);
+  const [atsLoading, setAtsLoading] = useState(false);
+  const [atsProgress, setAtsProgress] = useState(null);
 
   const downloadCV = (application) => {
     if (!application.cvUrl) {
@@ -83,20 +85,92 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
         'Phone': app.student.phone || 'N/A',
         'CGPA': app.cgpa || 'N/A',
        // 'CGPA (Profile)': app.student.cgpa || 'N/A',
-        'Backlog (Application)': app.backlog !== null ? app.backlog : 'N/A',
-        'Backlog (Profile)': app.student.backlog !== null ? app.student.backlog : 'N/A',
-        //'Status': app.status || 'N/A',
-        'Applied Date': new Date(app.createdAt).toLocaleString(),
-        'CV Available': app.cvUrl ? 'Yes' : 'No',
-      };
-    });
+         'Backlog (Application)': app.backlog !== null ? app.backlog : 'N/A',
+         'Backlog (Profile)': app.student.backlog !== null ? app.student.backlog : 'N/A',
+         //'Status': app.status || 'N/A',
+         'Applied Date': new Date(app.createdAt).toLocaleString(),
+         'CV Available': app.cvUrl ? 'Yes' : 'No',
+       };
+     });
 
-    const worksheet = XLSX.utils.json_to_sheet(exportData);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Applications');
+     const worksheet = XLSX.utils.json_to_sheet(exportData);
+     const workbook = XLSX.utils.book_new();
+     XLSX.utils.book_append_sheet(workbook, worksheet, 'Applications');
 
-    const fileName = `Applications_${new Date().toISOString().split('T')[0]}.xlsx`;
-    XLSX.writeFile(workbook, fileName);
+     const fileName = `Applications_${new Date().toISOString().split('T')[0]}.xlsx`;
+     XLSX.writeFile(workbook, fileName);
+   };
+
+  const handleAtsShortlist = async () => {
+    if (applications.length === 0) {
+      alert('No applications to shortlist');
+      return;
+    }
+
+    if (!window.confirm(`This will evaluate all ${applications.length} applications using AI resume analysis. Continue?`)) {
+      return;
+    }
+
+    setAtsLoading(true);
+    setActionMessage(null);
+    setAtsProgress('Initializing AI shortlisting...');
+    
+    console.log('🚀 Starting ATS shortlisting for', applications.length, 'applications');
+    
+    try {
+      const startTime = Date.now();
+      setAtsProgress(`Connecting to AI service...`);
+      
+      const res = await fetch(
+        `http://localhost:5000/api/jobs/${jobId}/shortlist-ats`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      
+      const json = await res.json();
+      const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(1);
+      
+      if (res.ok) {
+        console.log('✅ ATS shortlisting completed:', json.data);
+        setAtsProgress(null);
+        
+        const { processed, shortlisted, review, rejected } = json.data || {};
+        let message = json.message || 'AI shortlisting complete';
+        
+        if (processed === 0 && review > 0) {
+          message += '\n⚠️ No applications were processed by AI. Check backend console for details.';
+          message += '\nCommon issues: CV not available, CV download failed, or CV format not supported.';
+        }
+        
+        setActionMessage({
+          type: processed > 0 ? 'success' : 'error',
+          text: `${message} (Completed in ${elapsedTime}s)`,
+        });
+        await fetchApplications();
+        setJobStatus('CLOSED');
+      } else {
+        console.error('❌ ATS shortlisting failed:', json);
+        setAtsProgress(null);
+        setActionMessage({
+          type: 'error',
+          text: json.message || 'AI shortlisting failed. Check console for details.',
+        });
+      }
+    } catch (err) {
+      console.error('❌ Error during ATS shortlisting:', err);
+      setAtsProgress(null);
+      setActionMessage({ 
+        type: 'error', 
+        text: `Connection error: ${err.message}. Make sure the ATS service is running on http://localhost:8000` 
+      });
+    } finally {
+      setAtsLoading(false);
+    }
   };
 
   return (
@@ -107,14 +181,27 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
             <h2 className="text-2xl font-semibold text-gray-800">Applications</h2>
             <div className="ml-auto flex items-center gap-3">
               {applications.length > 0 && (
-                <button
-                  onClick={exportToExcel}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
-                  title="Export to Excel"
-                >
-                  <FileDown className="w-4 h-4" />
-                  Export Excel
-                </button>
+                <>
+                  <button
+                    onClick={exportToExcel}
+                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+                    title="Export to Excel"
+                  >
+                    <FileDown className="w-4 h-4" />
+                    Export Excel
+                  </button>
+                  {jobStatus === 'OPEN' && (
+                    <button
+                      onClick={handleAtsShortlist}
+                      disabled={atsLoading}
+                      className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Shortlist using AI Resume Analysis"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                      {atsLoading ? (atsProgress || 'Processing...') : 'Shortlist using Resume'}
+                    </button>
+                  )}
+                </>
               )}
               {jobStatus === 'OPEN' && !confirming && (
                 <button
@@ -185,6 +272,15 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
         </div>
 
         <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
+          {atsProgress && (
+            <div className="p-3 mb-4 rounded bg-blue-50 text-blue-800 border border-blue-200">
+              <div className="flex items-center gap-2">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-800"></div>
+                <span className="font-medium">{atsProgress}</span>
+              </div>
+              <p className="text-sm mt-1 text-blue-600">This may take a few moments. Check browser console for detailed progress.</p>
+            </div>
+          )}
           {actionMessage && (
             <div
               className={`p-3 mb-4 rounded ${
