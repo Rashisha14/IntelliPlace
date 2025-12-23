@@ -10,6 +10,21 @@ import { createRequire } from 'module';
 import axios from 'axios';
 
 const require = createRequire(import.meta.url);
+
+// Ensure DOMMatrix is defined for pdf-parse (pdfjs) which expects browser APIs.
+// Try modern maintained polyfill `@thednp/dommatrix` first, fall back to `dommatrix` if needed.
+try {
+  try {
+    const dommatrixPkg = require('@thednp/dommatrix');
+    global.DOMMatrix = global.DOMMatrix || dommatrixPkg.DOMMatrix || dommatrixPkg.default || dommatrixPkg;
+  } catch (e) {
+    const { DOMMatrix } = require('dommatrix');
+    global.DOMMatrix = global.DOMMatrix || DOMMatrix;
+  }
+} catch (err) {
+  // If no polyfill is available, the require of pdf-parse will throw a helpful error.
+}
+
 // pdf-parse v2.x uses class-based API
 const { PDFParse } = require('pdf-parse');
 

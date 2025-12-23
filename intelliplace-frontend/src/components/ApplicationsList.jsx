@@ -34,10 +34,8 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     if (jobId) fetchApplications();
   }, [jobId]);
 
-  const [actionLoading, setActionLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState(null);
   const [jobStatus, setJobStatus] = useState(initialJobStatus || 'OPEN');
-  const [confirming, setConfirming] = useState(false);
 
   const [previewCV, setPreviewCV] = useState(null);
   const [expandedApp, setExpandedApp] = useState(null);
@@ -235,91 +233,34 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                     <FileDown className="w-4 h-4" />
                     Export Excel
                   </button>
+
+                  {/* Shortlisting should be available even after applications are closed — companies may still want to process existing applicants */}
+                  <button
+                    onClick={handleAtsShortlist}
+                    disabled={atsLoading}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Shortlist using AI Resume Analysis"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    {atsLoading ? (atsProgress || 'Processing...') : 'Shortlist using Resume'}
+                  </button>
+
+                  {/* Close applications button only shown when job is open */}
                   {jobStatus === 'OPEN' && (
-                    <>
-                      <button
-                        onClick={handleAtsShortlist}
-                        disabled={atsLoading}
-                        className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="Shortlist using AI Resume Analysis"
-                      >
-                        <Sparkles className="w-4 h-4" />
-                        {atsLoading ? (atsProgress || 'Processing...') : 'Shortlist using Resume'}
-                      </button>
-                      <button
-                        onClick={handleCloseApplication}
-                        disabled={closeLoading || atsLoading}
-                        className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                        title="Close applications manually"
-                      >
-                        <XCircle className="w-4 h-4" />
-                        {closeLoading ? 'Closing...' : 'Close Applications'}
-                      </button>
-                    </>
+                    <button
+                      onClick={handleCloseApplication}
+                      disabled={closeLoading || atsLoading}
+                      className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="Close applications manually"
+                    >
+                      <XCircle className="w-4 h-4" />
+                      {closeLoading ? 'Closing...' : 'Close Applications'}
+                    </button>
                   )}
                 </>
               )}
-              {jobStatus === 'OPEN' && !confirming && (
-                <button
-                  onClick={() => setConfirming(true)}
-                  className="btn btn-warning"
-                  disabled={actionLoading}
-                >
-                 
-                </button>
-              )}
-              {confirming && jobStatus === 'OPEN' && (
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-700">Are you sure?</span>
-                  <button
-                    onClick={async () => {
-                      setActionLoading(true);
-                      setActionMessage(null);
-                      try {
-                        const res = await fetch(
-                          `http://localhost:5000/api/jobs/${jobId}/shortlist`,
-                          {
-                            method: 'POST',
-                            headers: {
-                              Authorization: `Bearer ${localStorage.getItem('token')}`,
-                            },
-                          }
-                        );
-                        const json = await res.json();
-                        if (res.ok) {
-                          setActionMessage({
-                            type: 'success',
-                            text: json.message || 'Shortlisting complete',
-                          });
-                          await fetchApplications();
-                          setJobStatus('CLOSED');
-                        } else {
-                          setActionMessage({
-                            type: 'error',
-                            text: json.message || 'Shortlisting failed',
-                          });
-                        }
-                      } catch (err) {
-                        setActionMessage({ type: 'error', text: err.message });
-                      } finally {
-                        setActionLoading(false);
-                        setConfirming(false);
-                      }
-                    }}
-                    className="btn btn-primary"
-                    disabled={actionLoading}
-                  >
-                    {actionLoading ? 'Processing...' : 'Confirm'}
-                  </button>
-                  <button
-                    onClick={() => setConfirming(false)}
-                    className="btn btn-ghost"
-                    disabled={actionLoading}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              )}
+
+
               <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
                 ×
               </button>
