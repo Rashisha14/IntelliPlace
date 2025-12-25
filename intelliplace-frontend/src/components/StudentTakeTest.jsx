@@ -16,8 +16,9 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
 
   const containerRef = useRef(null);
   const timerRef = useRef(null);
+  const submittingRef = useRef(false); // 🔒 SUBMIT LOCK
 
-  /* ---------------- HELPERS ---------------- */
+  /* ---------------- FULLSCREEN ---------------- */
   const enterFullscreen = async () => {
     try {
       if (!document.fullscreenElement) {
@@ -26,15 +27,15 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
     } catch {}
   };
 
+  /* ---------------- VIOLATION HANDLER ---------------- */
   const registerViolation = () => {
-    if (result) return;
+    if (result || submittingRef.current) return;
 
     setWarnings(prev => {
       const next = prev + 1;
 
-      // 🔴 AUTO SUBMIT AFTER 3RD WARNING
       if (next > MAX_WARNINGS) {
-        handleSubmit();
+        handleSubmit(); // 🔴 AUTO SUBMIT
         return next;
       }
 
@@ -59,17 +60,14 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
       }
     };
 
-    // TAB SWITCH
     const onVisibilityChange = () => {
       if (document.hidden) registerViolation();
     };
 
-    // MINIMIZE / ALT+TAB
     const onBlur = () => {
       registerViolation();
     };
 
-    // 🔥 ESC FULLSCREEN EXIT
     const onFullscreenChange = () => {
       if (!document.fullscreenElement && !result) {
         registerViolation();
@@ -100,11 +98,14 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
     setSections([]);
     setWarnings(0);
     setResult(null);
+    submittingRef.current = false;
 
     fetch(
       `http://localhost:5000/api/jobs/${jobId}/aptitude-test/questions/public`,
       {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("token")}`
+        }
       }
     )
       .then(res => res.json())
@@ -133,7 +134,7 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
       setTimeLeft(t => {
         if (t <= 1) {
           clearInterval(timerRef.current);
-          handleSubmit();
+          handleSubmit(); // ⏱ AUTO SUBMIT
           return 0;
         }
         return t - 1;
@@ -143,9 +144,10 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
     return () => clearInterval(timerRef.current);
   }, [timeLeft, result]);
 
-  /* ---------------- SUBMIT ---------------- */
+  /* ---------------- SUBMIT (LOCKED) ---------------- */
   const handleSubmit = async () => {
-    if (result) return;
+    if (submittingRef.current || result) return;
+    submittingRef.current = true;
 
     setLoading(true);
     setShowSecurityModal(false);
@@ -178,8 +180,10 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
       clearInterval(timerRef.current);
       document.exitFullscreen?.();
       onSubmitted?.();
-    } catch {
+    } catch (err) {
+      console.error(err);
       setError("Submission failed");
+      submittingRef.current = false; // allow retry only if failed
     } finally {
       setLoading(false);
     }
@@ -204,7 +208,7 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
     <AnimatePresence>
       <div
         ref={containerRef}
-        className="fixed inset-0 z-[9999] bg-gray-100 text-gray-900"
+        className="fixed inset-0 z-[9999] bg-gray-100 text-gray-900 flex flex-col"
       >
         {/* HEADER */}
         <div className="bg-white border-b px-6 py-4 flex justify-between">
@@ -239,27 +243,26 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
 
         {/* WARNING BAR */}
         {warnings > 0 && !result && (
-          <div className="bg-yellow-100 border-b border-yellow-300 text-yellow-800 text-center py-2 text-sm">
+          <div className="bg-yellow-100 border-b text-yellow-800 text-center py-2 text-sm">
             <AlertTriangle className="inline w-4 h-4 mr-2" />
             Security warnings: {warnings}/{MAX_WARNINGS}
           </div>
         )}
 
         {/* CONTENT */}
-        <div className="p-6 overflow-y-auto h-[calc(100vh-140px)]">
-          {loading && <p className="text-center">Loading questions…</p>}
+        <div className="flex-1 overflow-y-auto p-6 pb-28">
           {error && <p className="text-red-600">{error}</p>}
 
           {!result &&
             sections.map((section, sIdx) => (
               <div key={sIdx} className="mb-10">
-                <h3 className="text-base font-semibold mb-4 border-l-4 border-blue-600 pl-3">
+                <h3 className="font-semibold mb-4 border-l-4 border-blue-600 pl-3">
                   Section {sIdx + 1}: {section.title}
                 </h3>
 
                 {section.questions.map((q, qIdx) => (
-                  <div key={q.id} className="bg-white border rounded p-5 mb-5">
-                    <p className="font-medium mb-4">
+                  <div key={q.id} className="bg-white border rounded p-5 mb-4">
+                    <p className="font-medium mb-3">
                       Q{qIdx + 1}. {q.questionText}
                     </p>
 
@@ -288,20 +291,47 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
                 ))}
               </div>
             ))}
+
+          {result && (
+            <div className="text-center mt-20">
+              <h2 className="text-2xl font-bold mb-2">
+                {result.passed ? "Test Passed" : "Test Failed"}
+              </h2>
+              <p className="text-gray-600">
+                Score: {result.score}/{result.maxScore}
+              </p>
+            </div>
+          )}
         </div>
 
-        {/* 🔒 SECURITY MODAL */}
+        {/* FOOTER */}
+        {!result && !showSecurityModal && (
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t px-6 py-4 flex justify-between z-[9000]">
+            <span className="text-sm text-gray-500">
+              Progress: {answeredCount}/{totalQuestions}
+            </span>
+            <button
+              onClick={handleSubmit}
+              disabled={loading}
+              className="bg-blue-600 px-8 py-3 rounded text-white font-semibold disabled:opacity-50"
+            >
+              Submit Test
+            </button>
+          </div>
+        )}
+
+        {/* SECURITY MODAL */}
         {showSecurityModal && warnings <= MAX_WARNINGS && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-[10000]">
-            <div className="bg-white rounded-lg shadow-lg w-[420px] p-6">
-              <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-yellow-500" />
+            <div className="bg-white rounded-lg p-6 w-[420px]">
+              <h3 className="font-semibold flex gap-2 mb-3">
+                <AlertTriangle className="text-yellow-500" />
                 Security Alert
               </h3>
               <p className="text-sm text-gray-600 mb-6">
-                You attempted to leave fullscreen or switch apps.
+                You attempted to leave fullscreen.
                 <br />
-                Warnings remaining: {MAX_WARNINGS - warnings + 1}
+                Warnings left: {MAX_WARNINGS - warnings + 1}
               </p>
 
               <div className="flex justify-end gap-3">
