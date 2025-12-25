@@ -13,6 +13,9 @@ import ApplicationsList from '../../components/ApplicationsList';
 import Navbar from '../../components/Navbar';
 import { getCurrentUser } from '../../utils/auth';
 import CompanyPostJob from '../../components/CompanyPostJob';
+import CompanyCreateTest from '../../components/CompanyCreateTest';
+import CompanyViewTest from '../../components/CompanyViewTest';
+import Modal from '../../components/Modal';
 
 const CompanyDashboard = () => {
   const navigate = useNavigate();
@@ -62,6 +65,14 @@ const CompanyDashboard = () => {
   const [selectedJobId, setSelectedJobId] = useState(null);
   const [selectedJobStatus, setSelectedJobStatus] = useState(null);
   const [isPostJobOpen, setIsPostJobOpen] = useState(false);
+  const [isCreateTestOpen, setIsCreateTestOpen] = useState(false);
+  const [testJobId, setTestJobId] = useState(null);
+  const [testsMap, setTestsMap] = useState({});
+  const [isViewTestOpen, setIsViewTestOpen] = useState(false);
+  const [viewTestJobId, setViewTestJobId] = useState(null);
+  const [isStartConfirmOpen, setIsStartConfirmOpen] = useState(false);
+  const [startingJob, setStartingJob] = useState(null);
+  const [startLoading, setStartLoading] = useState(false);
   const [lastFetch, setLastFetch] = useState(0); // Track last fetch time
 
   const fetchJobs = async (userId) => {
@@ -76,6 +87,29 @@ const CompanyDashboard = () => {
         // Filter jobs belonging to this company
         const myJobs = json.data.jobs.filter(j => j.company && j.company.id === userId);
         setJobs(myJobs);
+
+        // fetch tests for each job
+        try {
+          const tokens = myJobs.map(async job => {
+            try {
+              const r = await fetch(`http://localhost:5000/api/jobs/${job.id}/aptitude-test`, {
+                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+              });
+              if (!r.ok) return { jobId: job.id, test: null };
+              const d = await r.json();
+              return { jobId: job.id, test: d.data.test };
+            } catch (err) {
+              return { jobId: job.id, test: null };
+            }
+          });
+          const results = await Promise.all(tokens);
+          const map = {};
+          results.forEach(r => { if (r && r.test) map[r.jobId] = r.test; });
+          setTestsMap(map);
+        } catch (e) {
+          console.error('Failed to fetch tests for jobs:', e);
+        }
+
       } else {
         setJobs([]);
       }
@@ -93,6 +127,30 @@ const CompanyDashboard = () => {
     if (!user?.id || Date.now() - lastFetch < 1000) return; // Debounce fetches
     fetchJobs(user.id);
   }, [user?.id, lastFetch]);
+
+  const handleConfirmStart = async () => {
+    if (!startingJob) return;
+    setStartLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`http://localhost:5000/api/jobs/${startingJob.id}/aptitude-test/start`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      const d = await res.json();
+      if (!res.ok) {
+        alert(d.message || 'Failed to start test');
+      } else {
+        setTestsMap(prev => ({ ...prev, [startingJob.id]: d.data.test }));
+        setJobs(prev => prev.map(j => j.id === startingJob.id ? { ...j, status: d.data.job?.status || 'CLOSED' } : j));
+        alert(`Test started — ${d.data.invited || 0} shortlisted students notified`);
+        setIsStartConfirmOpen(false);
+        setStartingJob(null);
+      }
+    } catch (err) {
+      console.error('Failed to start test:', err);
+      alert('Failed to start test');
+    } finally {
+      setStartLoading(false);
+    }
+  };
 
   if (!user || user.userType !== 'company') {
     return null;
@@ -189,6 +247,45 @@ const CompanyDashboard = () => {
             setIsPostJobOpen(false);
             fetchJobs(user.id);
           }}
+        />
+
+        <CompanyCreateTest
+          isOpen={isCreateTestOpen}
+          onClose={() => { setIsCreateTestOpen(false); setTestJobId(null); }}
+          jobId={testJobId}
+          onCreated={async () => {
+            setIsCreateTestOpen(false);
+            setTestJobId(null);
+            // Refresh tests map for that job
+            try {
+              const r = await fetch(`http://localhost:5000/api/jobs/${testJobId}/aptitude-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+              if (r.ok) {
+                const d = await r.json();
+                setTestsMap(prev => ({ ...prev, [testJobId]: d.data.test }));
+              }
+            } catch (err) {
+              console.error('Failed to refresh test after creation:', err);
+            }
+          }}
+        />
+
+        <CompanyViewTest
+          isOpen={isViewTestOpen}
+          onClose={() => { setIsViewTestOpen(false); setViewTestJobId(null); }}
+          jobId={viewTestJobId}
+          test={viewTestJobId ? testsMap[viewTestJobId] : null}
+        />
+
+        <Modal
+          open={isStartConfirmOpen}
+          title={`Start test for ${startingJob?.title || ''}`}
+          message={`Starting the test will close applications for this job and notify all shortlisted students. Continue?`}
+          type="warning"
+          onClose={() => setIsStartConfirmOpen(false)}
+          actions={[
+            { label: 'Cancel', onClick: () => setIsStartConfirmOpen(false) },
+            { label: startLoading ? 'Starting...' : 'Start Test', onClick: handleConfirmStart, autoClose: false }
+          ]}
         />
 
         {/* Recent Jobs */}
@@ -297,13 +394,64 @@ const CompanyDashboard = () => {
                       <div className="text-xs text-gray-500">
                         Posted {new Date(job.createdAt).toLocaleDateString()}
                       </div>
-                      <button
-                        onClick={() => { setSelectedJobId(job.id); setSelectedJobStatus(job.status); }}
-                        className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
-                      >
-                        <Users className="w-4 h-4" />
-                        View Applications
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {testsMap[job.id] ? (
+                          <>
+                            <button
+                              onClick={() => { setIsStartConfirmOpen(true); setStartingJob(job); }}
+                              disabled={testsMap[job.id]?.status === 'STARTED'}
+                              className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
+                            >
+                              Start Test
+                            </button>
+
+                            <button
+                              onClick={() => { setIsViewTestOpen(true); setViewTestJobId(job.id); }}
+                              className="inline-flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm"
+                            >
+                              View Test
+                            </button>
+
+                            <button
+                              onClick={async () => {
+                                const token = localStorage.getItem('token');
+                                try {
+                                  const res = await fetch(`http://localhost:5000/api/jobs/${job.id}/aptitude-test/submissions`, { headers: { Authorization: `Bearer ${token}` } });
+                                  const d = await res.json();
+                                  if (!res.ok) {
+                                    alert(d.message || 'Failed to fetch submissions');
+                                  } else {
+                                    const subs = d.data.submissions || [];
+                                    const passed = subs.filter(s => s.passed).length;
+                                    alert(`${subs.length} submissions — ${passed} passed, ${subs.length - passed} failed`);
+                                  }
+                                } catch (err) {
+                                  console.error('Failed to fetch submissions:', err);
+                                  alert('Failed to fetch submissions');
+                                }
+                              }}
+                              className="inline-flex items-center gap-2 px-3 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors text-sm"
+                            >
+                              View Results
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => { setIsCreateTestOpen(true); setTestJobId(job.id); }}
+                            className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+                          >
+                            Create Aptitude Test
+                          </button>
+                        )}
+
+                        <button
+                          onClick={() => { setSelectedJobId(job.id); setSelectedJobStatus(job.status); }}
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
+                        >
+                          <Users className="w-4 h-4" />
+                          View Applications
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </motion.div>

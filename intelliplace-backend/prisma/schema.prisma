@@ -22,6 +22,7 @@ model Student {
   updatedAt     DateTime       @updatedAt @map("updated_at")
   applications  Application[]
   notifications Notification[]
+  aptitudeSubmissions AptitudeSubmission[]
 
   @@index([email])
   @@map("students")
@@ -63,6 +64,7 @@ model Job {
   updatedAt            DateTime       @updatedAt @map("updated_at")
   applications         Application[]
   interviews           Interview[]
+  aptitudeTest         AptitudeTest?
   company              Company        @relation(fields: [companyId], references: [id])
   notifications        Notification[]
 
@@ -129,6 +131,61 @@ model Notification {
   @@index([studentId])
   @@index([read])
   @@map("notifications")
+}
+
+model AptitudeTest {
+  id             Int      @id @default(autoincrement())
+  jobId          Int      @map("job_id") @unique
+  sections       Json
+  cutoff         Int?
+  totalQuestions Int?
+  status         String   @default("CREATED")
+  startedAt      DateTime?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  job Job @relation(fields: [jobId], references: [id])
+  questions AptitudeQuestion[]
+  submissions AptitudeSubmission[]
+
+  @@index([jobId])
+  @@map("aptitude_tests")
+}
+
+model AptitudeQuestion {
+  id          Int      @id @default(autoincrement())
+  testId      Int      @map("test_id")
+  section     String
+  questionText String  @map("question_text")
+  options     Json
+  correctIndex Int    @map("correct_index")
+  marks       Int?    @default(1)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  test AptitudeTest @relation(fields: [testId], references: [id])
+
+  @@index([testId])
+  @@map("aptitude_questions")
+}
+
+model AptitudeSubmission {
+  id          Int      @id @default(autoincrement())
+  testId      Int      @map("test_id")
+  studentId   Int      @map("student_id")
+  answers     Json
+  score       Int
+  maxScore    Int
+  passed      Boolean?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  test    AptitudeTest @relation(fields: [testId], references: [id])
+  student Student      @relation(fields: [studentId], references: [id])
+
+  @@index([testId])
+  @@index([studentId])
+  @@map("aptitude_submissions")
 }
 
 model Admin {

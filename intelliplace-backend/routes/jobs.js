@@ -492,6 +492,375 @@ router.post('/:jobId/close', authenticateToken, authorizeCompany, async (req, re
   }
 });
 
+// Create an aptitude test for a job
+router.post('/:jobId/aptitude-test', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+    const { sections, cutoff, totalQuestions, questions } = req.body;
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+
+    const existing = await prisma.aptitudeTest.findUnique({ where: { jobId } });
+    if (existing) return res.status(400).json({ success: false, message: 'Aptitude test already exists for this job' });
+
+    if (!Array.isArray(sections) || sections.length === 0) {
+      return res.status(400).json({ success: false, message: 'At least one section with question count is required' });
+    }
+
+    // basic validation for sections
+    let expectedTotal = 0;
+    for (const s of sections) {
+      if (!s.name || typeof s.name !== 'string' || typeof s.questions !== 'number' || s.questions < 1) {
+        return res.status(400).json({ success: false, message: 'Each section must have a valid name and a questions count >= 1' });
+      }
+      expectedTotal += s.questions;
+    }
+
+    // If questions provided, validate them
+    if (questions) {
+      if (!Array.isArray(questions)) {
+        return res.status(400).json({ success: false, message: 'Questions must be an array' });
+      }
+
+      // Check total count
+      if (questions.length !== expectedTotal) {
+        return res.status(400).json({ success: false, message: `Total questions provided (${questions.length}) does not match sum of section question counts (${expectedTotal})` });
+      }
+
+      // Check per-section counts
+      const countsBySection = {};
+      for (let idx = 0; idx < sections.length; idx++) {
+        countsBySection[sections[idx].name] = 0;
+      }
+
+      for (const q of questions) {
+        if (!q.section || !q.questionText) return res.status(400).json({ success: false, message: 'Each question must have section and questionText' });
+        if (!Array.isArray(q.options) || q.options.length !== 4) return res.status(400).json({ success: false, message: 'Each question must have exactly 4 options' });
+        if (typeof q.correctIndex !== 'number' || q.correctIndex < 0 || q.correctIndex > 3) return res.status(400).json({ success: false, message: 'correctIndex must be 0-3' });
+        countsBySection[q.section] = (countsBySection[q.section] || 0) + 1;
+      }
+
+      for (const s of sections) {
+        const got = countsBySection[s.name] || 0;
+        if (got !== s.questions) {
+          return res.status(400).json({ success: false, message: `Section ${s.name} expects ${s.questions} questions but got ${got}` });
+        }
+      }
+    }
+
+    // Create test and questions inside a transaction
+    const createdTest = await prisma.aptitudeTest.create({
+      data: {
+        jobId,
+        sections: sections,
+        cutoff: cutoff ? parseInt(cutoff, 10) : null,
+        totalQuestions: totalQuestions ? parseInt(totalQuestions, 10) : expectedTotal,
+      }
+    });
+
+    if (questions && questions.length > 0) {
+      const qdata = questions.map(q => ({
+        testId: createdTest.id,
+        section: q.section,
+        questionText: q.questionText,
+        options: q.options,
+        correctIndex: q.correctIndex,
+        marks: q.marks ? parseInt(q.marks, 10) : 1,
+      }));
+
+      await prisma.aptitudeQuestion.createMany({ data: qdata });
+    }
+
+    const testWithQuestions = await prisma.aptitudeTest.findUnique({ where: { id: createdTest.id }, include: { questions: true } });
+
+    res.status(201).json({ success: true, message: 'Aptitude test created', data: testWithQuestions });
+  } catch (error) {
+    console.error('Error creating aptitude test:', error);
+    res.status(500).json({ success: false, message: 'Server error creating aptitude test' });
+  }
+});
+
+// Get aptitude test for a job
+router.get('/:jobId/aptitude-test', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+
+    const test = await prisma.aptitudeTest.findUnique({ where: { jobId }, include: { questions: true } });
+    if (!test) return res.status(404).json({ success: false, message: 'No aptitude test found for this job' });
+
+    res.json({ success: true, data: { test } });
+  } catch (error) {
+    console.error('Error fetching aptitude test:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching aptitude test' });
+  }
+});
+
+// Start aptitude test for a job (only after applications are closed)
+router.post('/:jobId/aptitude-test/start', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+
+    const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
+    if (!test) return res.status(404).json({ success: false, message: 'No aptitude test found for this job' });
+
+    // Auto-close applications before starting the test
+    if (job.status !== 'CLOSED') {
+      await prisma.job.update({ where: { id: jobId }, data: { status: 'CLOSED' } });
+    }
+
+    if (test.status === 'STARTED') return res.status(400).json({ success: false, message: 'Aptitude test has already been started' });
+
+    const updated = await prisma.aptitudeTest.update({ where: { id: test.id }, data: { status: 'STARTED', startedAt: new Date() } });
+
+    // Refresh job to pick up updated status
+    const jobUpdated = await prisma.job.findUnique({ where: { id: jobId } });
+
+    // Notify shortlisted applicants
+    const shortlistedApps = await prisma.application.findMany({ where: { jobId, status: 'SHORTLISTED' }, include: { student: true } });
+    let invited = 0;
+    for (const app of shortlistedApps) {
+      try {
+        await prisma.notification.create({
+          data: {
+            studentId: app.studentId,
+            title: `Aptitude Test: ${job.title}`,
+            message: `You're invited to take the aptitude test for ${job.title}. Log in to your dashboard to start the test.`,
+            jobId: jobId,
+            applicationId: app.id,
+          }
+        });
+        invited++;
+      } catch (err) {
+        console.error('Failed to create notification for application', app.id, err);
+      }
+    }
+
+    res.json({ success: true, message: 'Aptitude test started', data: { test: updated, invited, job: jobUpdated } });
+  } catch (error) {
+    console.error('Error starting aptitude test:', error);
+    res.status(500).json({ success: false, message: 'Server error starting aptitude test' });
+  }
+});
+
+// Company: manage questions for a job's aptitude test
+router.post('/:jobId/aptitude-test/questions', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+    const { section, questionText, options, correctIndex, marks } = req.body;
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+
+    const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
+    if (!test) return res.status(404).json({ success: false, message: 'No aptitude test found for this job' });
+
+    if (!section || !questionText) return res.status(400).json({ success: false, message: 'Section and question text are required' });
+    if (!Array.isArray(options) || options.length !== 4) return res.status(400).json({ success: false, message: 'Exactly 4 options are required' });
+    if (typeof correctIndex !== 'number' || correctIndex < 0 || correctIndex > 3) return res.status(400).json({ success: false, message: 'correctIndex must be 0-3' });
+
+    const q = await prisma.aptitudeQuestion.create({
+      data: {
+        testId: test.id,
+        section,
+        questionText,
+        options,
+        correctIndex,
+        marks: marks ? parseInt(marks, 10) : 1,
+      }
+    });
+
+    res.status(201).json({ success: true, message: 'Question created', data: q });
+  } catch (error) {
+    console.error('Error creating question:', error);
+    res.status(500).json({ success: false, message: 'Server error creating question' });
+  }
+});
+
+router.get('/:jobId/aptitude-test/questions', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+
+    const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
+    if (!test) return res.status(404).json({ success: false, message: 'No aptitude test found for this job' });
+
+    const questions = await prisma.aptitudeQuestion.findMany({ where: { testId: test.id }, orderBy: { createdAt: 'asc' } });
+
+    res.json({ success: true, data: { questions } });
+  } catch (error) {
+    console.error('Error fetching questions:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching questions' });
+  }
+});
+
+router.delete('/:jobId/aptitude-test/questions/:qId', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+    const qId = parseInt(req.params.qId);
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+
+    const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
+    if (!test) return res.status(404).json({ success: false, message: 'No aptitude test found for this job' });
+
+    const q = await prisma.aptitudeQuestion.findUnique({ where: { id: qId } });
+    if (!q || q.testId !== test.id) return res.status(404).json({ success: false, message: 'Question not found' });
+
+    await prisma.aptitudeQuestion.delete({ where: { id: qId } });
+    res.json({ success: true, message: 'Question deleted' });
+  } catch (error) {
+    console.error('Error deleting question:', error);
+    res.status(500).json({ success: false, message: 'Server error deleting question' });
+  }
+});
+
+// Student: fetch public questions (only allowed once test is STARTED)
+router.get('/:jobId/aptitude-test/questions/public', authenticateToken, authorizeStudent, async (req, res) => {
+  try {
+    const studentId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+
+    const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
+    if (!test) return res.status(404).json({ success: false, message: 'No aptitude test found for this job' });
+    if (test.status !== 'STARTED') return res.status(400).json({ success: false, message: 'Test has not started yet' });
+
+    // Ensure the student is shortlisted for this job
+    const application = await prisma.application.findFirst({ where: { jobId, studentId } });
+    if (!application || application.status !== 'SHORTLISTED') {
+      return res.status(403).json({ success: false, message: 'You are not eligible to take this test' });
+    }
+
+    const questions = await prisma.aptitudeQuestion.findMany({ where: { testId: test.id }, orderBy: { createdAt: 'asc' } });
+
+    // Strip correctIndex when sending to students
+    const publicQuestions = questions.map(q => ({ id: q.id, section: q.section, questionText: q.questionText, options: q.options, marks: q.marks }));
+
+    res.json({ success: true, data: { questions: publicQuestions } });
+  } catch (error) {
+    console.error('Error fetching public questions:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching questions' });
+  }
+});
+
+// Student: submit aptitude test answers
+router.post('/:jobId/aptitude-test/submit', authenticateToken, authorizeStudent, async (req, res) => {
+  try {
+    const studentId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+    const { answers } = req.body; // [{ questionId, selectedIndex }]
+
+    if (!Array.isArray(answers)) return res.status(400).json({ success: false, message: 'Answers array required' });
+
+    const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
+    if (!test) return res.status(404).json({ success: false, message: 'No aptitude test found for this job' });
+    if (test.status !== 'STARTED') return res.status(400).json({ success: false, message: 'Test is not currently accepting submissions' });
+
+    const application = await prisma.application.findFirst({ where: { jobId, studentId } });
+    if (!application || application.status !== 'SHORTLISTED') return res.status(403).json({ success: false, message: 'You are not eligible to take this test' });
+
+    // Prevent multiple submissions
+    const existing = await prisma.aptitudeSubmission.findFirst({ where: { testId: test.id, studentId } });
+    if (existing) return res.status(400).json({ success: false, message: 'You have already submitted the test' });
+
+    const questions = await prisma.aptitudeQuestion.findMany({ where: { testId: test.id } });
+    const qMap = {};
+    let maxScore = 0;
+    questions.forEach(q => { qMap[q.id] = q; maxScore += q.marks || 1; });
+
+    let score = 0;
+    for (const ans of answers) {
+      if (!ans || typeof ans.questionId !== 'number' || typeof ans.selectedIndex !== 'number') continue;
+      const q = qMap[ans.questionId];
+      if (!q) continue;
+      if (ans.selectedIndex === q.correctIndex) score += q.marks || 1;
+    }
+
+    const passed = typeof test.cutoff === 'number' ? (score >= test.cutoff) : true;
+
+    const submission = await prisma.aptitudeSubmission.create({
+      data: {
+        testId: test.id,
+        studentId,
+        answers: answers,
+        score,
+        maxScore,
+        passed
+      }
+    });
+
+    // Update application status & notify student if failed
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!passed) {
+      const decisionReason = `Failed aptitude test (score ${score}/${maxScore})`;
+      await prisma.application.update({ where: { id: application.id }, data: { status: 'REJECTED', decisionReason } });
+
+      await prisma.notification.create({
+        data: {
+          studentId,
+          title: `Aptitude Test Result: ${job?.title || ''}`,
+          message: `You scored ${score}/${maxScore} on the aptitude test. You have not met the cutoff and your application has been rejected.`,
+          jobId,
+          applicationId: application.id,
+          decisionReason
+        }
+      });
+    } else {
+      const decisionReason = `Passed aptitude test (score ${score}/${maxScore})`;
+      await prisma.notification.create({
+        data: {
+          studentId,
+          title: `Aptitude Test Result: ${job?.title || ''}`,
+          message: `You scored ${score}/${maxScore} on the aptitude test. You have passed and remain shortlisted.`,
+          jobId,
+          applicationId: application.id,
+          decisionReason
+        }
+      });
+    }
+
+    res.json({ success: true, data: { submissionId: submission.id, score, maxScore, passed } });
+  } catch (error) {
+    console.error('Error submitting aptitude test:', error);
+    res.status(500).json({ success: false, message: 'Server error submitting test' });
+  }
+});
+
+// Company: view aptitude submissions for this job
+router.get('/:jobId/aptitude-test/submissions', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+
+    const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
+    if (!test) return res.status(404).json({ success: false, message: 'No aptitude test found for this job' });
+
+    const subs = await prisma.aptitudeSubmission.findMany({ where: { testId: test.id }, include: { student: true } });
+
+    res.json({ success: true, data: { submissions: subs.map(s => ({ id: s.id, student: { id: s.student.id, name: s.student.name, email: s.student.email }, score: s.score, maxScore: s.maxScore, passed: s.passed, createdAt: s.createdAt })) } });
+  } catch (error) {
+    console.error('Error fetching aptitude submissions:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching submissions' });
+  }
+});
 
 router.get('/my-applications', authenticateToken, authorizeStudent, async (req, res) => {
   try {

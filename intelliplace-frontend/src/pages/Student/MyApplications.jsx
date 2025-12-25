@@ -134,6 +134,15 @@ const MyApplications = () => {
                   >
                     Open Job
                   </button>
+
+                  {app.status === 'SHORTLISTED' && (
+                    <button
+                      onClick={() => navigate(`/student/take-test/${app.jobId}`)}
+                      className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700"
+                    >
+                      Take Test
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -156,6 +165,26 @@ const MyApplications = () => {
         type={modal?.type}
         onClose={() => setModal(null)}
         actions={[]}
+      />
+
+      {/* Student Take Test Modal */}
+      <StudentTakeTest
+        isOpen={isTestOpen}
+        onClose={() => { setIsTestOpen(false); setTestJobId(null); }}
+        jobId={testJobId}
+        onSubmitted={() => {
+          // Refresh applications to pick up status changes
+          (async () => {
+            try {
+              const res = await fetch('http://localhost:5000/api/jobs/my-applications', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+              const json = await res.json();
+              if (res.ok) setApplications(json.data.applications || []);
+              setNotice({ type: 'success', text: 'Test submitted. Your application status may have updated.' });
+            } catch (err) {
+              console.error('Failed to refresh applications after submission', err);
+            }
+          })();
+        }}
       />
     </div>
   );
