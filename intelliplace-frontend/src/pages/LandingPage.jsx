@@ -95,7 +95,7 @@ const LandingPage = () => {
           <h1 className="text-5xl md:text-6xl font-bold leading-tight">
             Smarter Campus Hiring <br />
             <span className="text-gray-300">
-              Built for Modern Institutions
+              Built for Modern Institutions MITsbqekqqkvf
             </span>
           </h1>
 
