@@ -9,8 +9,8 @@ import {
   GraduationCap,
   X,
   FileText,
-  Globe,
-  DollarSign,
+  Globe,IndianRupee
+,
   Eye
 } from 'lucide-react';
 import { getCurrentUser } from '../utils/auth';
@@ -309,7 +309,7 @@ const JobList = () => {
                       </div>
                       {job.salary && (
                         <div className="flex items-start gap-2">
-                          <DollarSign className="w-4 h-4 text-gray-400 mt-1" />
+                          <IndianRupee className="w-4 h-4 text-gray-400 mt-1" />
                           <div>
                             <p className="text-sm text-gray-500">Salary</p>
                             <p className="font-medium text-gray-900">{job.salary}</p>
