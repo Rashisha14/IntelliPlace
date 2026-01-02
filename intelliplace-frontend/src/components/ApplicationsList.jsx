@@ -280,15 +280,6 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                   </button>
                 </div>
               )}
-              {jobStatus === 'OPEN' && !confirming && !confirmClose && (
-                <button
-                  onClick={() => setConfirming(true)}
-                  className="btn btn-warning"
-                  disabled={actionLoading}
-                >
-                 
-                </button>
-              )}
               {confirming && jobStatus === 'OPEN' && (
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-700">Are you sure?</span>
