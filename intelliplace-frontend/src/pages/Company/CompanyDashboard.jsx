@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   Building2,
@@ -8,6 +8,7 @@ import {
   FileCheck,
   TrendingUp,
   Plus,
+  ClipboardList,
 } from 'lucide-react';
 import ApplicationsList from '../../components/ApplicationsList';
 import Navbar from '../../components/Navbar';
@@ -556,107 +557,14 @@ const CompanyDashboard = () => {
                         Posted {new Date(job.createdAt).toLocaleDateString()}
                       </div>
                       <div className="flex items-center gap-2">
-                        {testsMap[job.id] ? (
-                          <>
-                            {/* Show Start Test button only if test is CREATED (not STARTED or STOPPED) */}
-                            {testsMap[job.id]?.status === 'CREATED' && (
-                              <button
-                                onClick={() => { setIsStartConfirmOpen(true); setStartingJob(job); }}
-                                className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
-                              >
-                                Start Test
-                              </button>
-                            )}
-
-                            {/* Show Stop Test button only if test is STARTED */}
-                            {testsMap[job.id]?.status === 'STARTED' && (
-                              <button
-                                onClick={() => { setIsStopConfirmOpen(true); setStoppingJob(job); }}
-                                className="inline-flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
-                              >
-                                Stop Test
-                              </button>
-                            )}
-
-                            {/* Show View Test button only if test is CREATED or STARTED (not STOPPED) */}
-                            {testsMap[job.id]?.status !== 'STOPPED' && (
-                              <button
-                                onClick={() => { setIsViewTestOpen(true); setViewTestJobId(job.id); }}
-                                className="inline-flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm"
-                              >
-                                View Test
-                              </button>
-                            )}
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              onClick={() => { setIsCreateTestOpen(true); setTestJobId(job.id); }}
-                              className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                            >
-                              Create Aptitude Test
-                            </button>
-                            {!codingTestsMap[job.id] && (
-                              <button
-                                onClick={() => { setIsCreateCodingTestOpen(true); setTestJobId(job.id); }}
-                                className="inline-flex items-center gap-2 px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
-                              >
-                                Create Coding Test
-                              </button>
-                            )}
-                          </>
-                        )}
-                        
-                        {/* Coding Test Controls */}
-                        {codingTestsMap[job.id] && (
-                          <>
-                            {codingTestsMap[job.id].status === 'CREATED' && (
-                              <>
-                                <button
-                                  onClick={() => { setIsStartConfirmOpen(true); setStartingJob({ ...job, isCoding: true }); }}
-                                  className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
-                                >
-                                  Start Coding Test
-                                </button>
-                                <button
-                                  onClick={() => { setEditingCodingTestJobId(job.id); setIsEditCodingTestOpen(true); }}
-                                  className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                                >
-                                  Edit Test
-                                </button>
-                              </>
-                            )}
-                            {codingTestsMap[job.id].status === 'STARTED' && (
-                              <>
-                                <button
-                                  onClick={() => { setIsStopConfirmOpen(true); setStoppingJob({ ...job, isCoding: true }); }}
-                                  className="inline-flex items-center gap-2 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm"
-                                >
-                                  Stop Test
-                                </button>
-                                <span className="px-3 py-2 bg-green-100 text-green-800 rounded-lg text-sm font-medium">
-                                  Coding Test Active
-                                </span>
-                              </>
-                            )}
-                            {codingTestsMap[job.id].status === 'STOPPED' && (
-                              <>
-                                <button
-                                  onClick={() => { setIsStartConfirmOpen(true); setStartingJob({ ...job, isCoding: true }); }}
-                                  className="inline-flex items-center gap-2 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm"
-                                >
-                                  Restart Test
-                                </button>
-                                <button
-                                  onClick={() => { setEditingCodingTestJobId(job.id); setIsEditCodingTestOpen(true); }}
-                                  className="inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
-                                >
-                                  Edit Test
-                                </button>
-                              </>
-                            )}
-                          </>
-                        )}
+                        {/* Recruitment Process Button */}
+                        <Link
+                          to={`/company/recruitment/${job.id}`}
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm"
+                        >
+                          <ClipboardList className="w-4 h-4" />
+                          Recruitment Process
+                        </Link>
 
                         <button
                           onClick={() => { setSelectedJobId(job.id); setSelectedJobStatus(job.status); }}

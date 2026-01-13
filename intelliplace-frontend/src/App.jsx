@@ -10,6 +10,7 @@ import MyApplications from './pages/Student/MyApplications';
 import CompanyLogin from './pages/Company/CompanyLogin';
 import CompanyRegister from './pages/Company/CompanyRegister';
 import CompanyDashboard from './pages/Company/CompanyDashboard';
+import RecruitmentProcess from './pages/Company/RecruitmentProcess';
 import AdminDashboard from './pages/Admin/AdminDashboard';
 
 function App() {
@@ -29,6 +30,7 @@ function App() {
         <Route path="/company/login" element={<CompanyLogin />} />
         <Route path="/company/register" element={<CompanyRegister />} />
         <Route path="/company/dashboard" element={<CompanyDashboard />} />
+        <Route path="/company/recruitment/:jobId" element={<RecruitmentProcess />} />
         
         {/* Admin Routes */}
         <Route path="/admin/dashboard" element={<AdminDashboard />} />
