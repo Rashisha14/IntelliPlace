@@ -20,6 +20,7 @@ import { getCurrentUser } from '../../utils/auth';
 import CompanyCreateTest from '../../components/CompanyCreateTest';
 import CompanyCreateCodingTest from '../../components/CompanyCreateCodingTest';
 import CompanyViewTest from '../../components/CompanyViewTest';
+import CompanyStartInterview from '../../components/CompanyStartInterview';
 import Modal from '../../components/Modal';
 
 const RecruitmentProcess = () => {
@@ -31,8 +32,13 @@ const RecruitmentProcess = () => {
   const [aptitudeTest, setAptitudeTest] = useState(null);
   const [codingTest, setCodingTest] = useState(null);
   const [interviews, setInterviews] = useState([]);
+  const [shortlistedApplications, setShortlistedApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const isFetchingRef = useRef(false);
+  
+  // Interview modal state
+  const [isInterviewOpen, setIsInterviewOpen] = useState(false);
+  const [selectedApplication, setSelectedApplication] = useState(null);
   
   // Modals
   const [isCreateAptitudeOpen, setIsCreateAptitudeOpen] = useState(false);
@@ -155,6 +161,30 @@ const RecruitmentProcess = () => {
           console.error('Error fetching interviews:', err);
         }
         setInterviews([]);
+      }
+
+      // Fetch shortlisted applications
+      try {
+        const applicationsRes = await fetch(
+          `http://localhost:5000/api/jobs/${jobId}/applicants`,
+          {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+          }
+        );
+        if (applicationsRes.ok) {
+          const applicationsData = await applicationsRes.json();
+          const allApplications = applicationsData.data?.applications || [];
+          // Filter only shortlisted applications
+          const shortlisted = allApplications.filter(
+            (app) => app.status === 'SHORTLISTED'
+          );
+          setShortlistedApplications(shortlisted);
+        } else {
+          setShortlistedApplications([]);
+        }
+      } catch (err) {
+        console.error('Error fetching applications:', err);
+        setShortlistedApplications([]);
       }
     } catch (err) {
       console.error('Unexpected error:', err);
@@ -404,7 +434,13 @@ const RecruitmentProcess = () => {
             ) : (
               <InterviewContent
                 interviews={interviews}
+                applications={shortlistedApplications}
+                job={job}
                 jobId={jobId}
+                onStartInterview={(application) => {
+                  setSelectedApplication(application);
+                  setIsInterviewOpen(true);
+                }}
                 onRefresh={() => fetchJobAndTests(false)}
               />
             )}
@@ -486,6 +522,21 @@ const RecruitmentProcess = () => {
           },
         ]}
       />
+
+      {isInterviewOpen && selectedApplication && (
+        <CompanyStartInterview
+          isOpen={isInterviewOpen}
+          onClose={() => {
+            setIsInterviewOpen(false);
+            setSelectedApplication(null);
+            fetchJobAndTests(false);
+          }}
+          jobId={parseInt(jobId)}
+          applicationId={selectedApplication.id}
+          application={selectedApplication}
+          job={job}
+        />
+      )}
     </div>
   );
 };
@@ -762,7 +813,7 @@ const CodingTestContent = ({
 };
 
 // Interview Content Component
-const InterviewContent = ({ interviews, jobId, onRefresh }) => {
+const InterviewContent = ({ interviews, applications, job, jobId, onStartInterview, onRefresh }) => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -771,78 +822,144 @@ const InterviewContent = ({ interviews, jobId, onRefresh }) => {
             Interview Management
           </h3>
           <p className="text-sm text-gray-600">
-            Schedule and manage interviews for shortlisted candidates
+            Conduct AI-powered interviews for shortlisted candidates
           </p>
         </div>
         <button
           onClick={onRefresh}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
         >
           <Plus className="w-4 h-4" />
-          Schedule Interview
+          Refresh
         </button>
       </div>
 
-      {interviews && interviews.length > 0 ? (
-        <div className="space-y-4">
-          {interviews.map((interview) => (
-            <div
-              key={interview.id}
-              className="bg-gray-50 rounded-lg p-4 border border-gray-200"
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-3 mb-2">
-                    <span
-                      className={`px-3 py-1 text-sm font-medium rounded-full ${
-                        interview.status === 'SCHEDULED'
-                          ? 'bg-blue-100 text-blue-800'
-                          : interview.status === 'COMPLETED'
-                          ? 'bg-green-100 text-green-800'
-                          : interview.status === 'CANCELLED'
-                          ? 'bg-red-100 text-red-800'
-                          : 'bg-gray-100 text-gray-800'
-                      }`}
+      {/* Shortlisted Applications */}
+      <div>
+        <h4 className="text-lg font-semibold text-gray-800 mb-4">
+          Shortlisted Candidates
+        </h4>
+        {applications && applications.length > 0 ? (
+          <div className="space-y-3">
+            {applications.map((application) => {
+              const existingInterview = interviews?.find(
+                (i) => i.applicationId === application.id
+              );
+              return (
+                <div
+                  key={application.id}
+                  className="bg-white rounded-lg p-4 border border-gray-200 hover:border-green-500 transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-2">
+                        <h5 className="font-semibold text-gray-800">
+                          {application.student?.name || 'Unknown'}
+                        </h5>
+                        {application.student?.cgpa && (
+                          <span className="text-sm text-gray-600">
+                            CGPA: {application.student.cgpa}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        <p>Email: {application.student?.email}</p>
+                        {application.student?.rollNumber && (
+                          <p>Roll Number: {application.student.rollNumber}</p>
+                        )}
+                      </div>
+                      {existingInterview && (
+                        <div className="mt-2">
+                          <span
+                            className={`px-2 py-1 text-xs font-medium rounded-full ${
+                              existingInterview.status === 'COMPLETED'
+                                ? 'bg-green-100 text-green-800'
+                                : existingInterview.status === 'IN_PROGRESS'
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-yellow-100 text-yellow-800'
+                            }`}
+                          >
+                            Interview: {existingInterview.status}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => onStartInterview(application)}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                     >
-                      {interview.status}
-                    </span>
-                    <span className="px-3 py-1 text-sm bg-purple-100 text-purple-800 rounded-full">
-                      {interview.type}
-                    </span>
+                      <Video className="w-4 h-4" />
+                      {existingInterview ? 'Continue Interview' : 'Start Interview'}
+                    </button>
                   </div>
-                  <div className="text-sm text-gray-600">
-                    <p>
-                      <strong>Date:</strong>{' '}
-                      {new Date(interview.date).toLocaleString()}
-                    </p>
-                    {interview.notes && (
-                      <p className="mt-1">
-                        <strong>Notes:</strong> {interview.notes}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-8 bg-gray-50 rounded-lg">
+            <Users className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+            <p className="text-gray-600">
+              No shortlisted candidates yet. Shortlist candidates first to conduct interviews.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Interview History */}
+      {interviews && interviews.length > 0 && (
+        <div>
+          <h4 className="text-lg font-semibold text-gray-800 mb-4">
+            Interview History
+          </h4>
+          <div className="space-y-3">
+            {interviews.map((interview) => (
+              <div
+                key={interview.id}
+                className="bg-gray-50 rounded-lg p-4 border border-gray-200"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-3 mb-2">
+                      <span
+                        className={`px-3 py-1 text-sm font-medium rounded-full ${
+                          interview.status === 'COMPLETED'
+                            ? 'bg-green-100 text-green-800'
+                            : interview.status === 'IN_PROGRESS'
+                            ? 'bg-blue-100 text-blue-800'
+                            : interview.status === 'SCHEDULED'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-gray-100 text-gray-800'
+                        }`}
+                      >
+                        {interview.status}
+                      </span>
+                      <span className="px-3 py-1 text-sm bg-purple-100 text-purple-800 rounded-full">
+                        {interview.type}
+                      </span>
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      <p>
+                        <strong>Date:</strong>{' '}
+                        {new Date(interview.date).toLocaleString()}
                       </p>
-                    )}
+                      {interview.application?.student && (
+                        <p>
+                          <strong>Candidate:</strong>{' '}
+                          {interview.application.student.name}
+                        </p>
+                      )}
+                      {interview.sessions && interview.sessions.length > 0 && (
+                        <p>
+                          <strong>Sessions:</strong> {interview.sessions.length}
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-12">
-          <Video className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-800 mb-2">
-            No Interviews Scheduled
-          </h3>
-          <p className="text-gray-600 mb-6">
-            Schedule interviews for shortlisted candidates to proceed with the
-            recruitment process
-          </p>
-          <button
-            onClick={onRefresh}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-          >
-            <Plus className="w-5 h-5" />
-            Schedule Interview
-          </button>
+            ))}
+          </div>
         </div>
       )}
     </div>

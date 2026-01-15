@@ -107,10 +107,29 @@ model Interview {
   updatedAt     DateTime    @updatedAt @map("updated_at")
   application   Application @relation(fields: [applicationId], references: [id])
   job           Job         @relation(fields: [jobId], references: [id])
+  sessions      InterviewSession[]
 
   @@index([applicationId])
   @@index([jobId])
   @@map("interviews")
+}
+
+model InterviewSession {
+  id            Int         @id @default(autoincrement())
+  interviewId  Int         @map("interview_id")
+  mode          String      // "TECH" or "HR"
+  status        String      @default("ACTIVE") // ACTIVE, COMPLETED, CANCELLED
+  currentQuestionIndex Int  @default(0) @map("current_question_index")
+  questions     String      // JSON array of questions
+  answers       String?     // JSON array of answers
+  startedAt     DateTime    @default(now()) @map("started_at")
+  completedAt   DateTime?   @map("completed_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  interview     Interview   @relation(fields: [interviewId], references: [id])
+
+  @@index([interviewId])
+  @@map("interview_sessions")
 }
 
 model Notification {

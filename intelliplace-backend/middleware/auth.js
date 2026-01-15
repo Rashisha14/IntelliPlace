@@ -1,4 +1,4 @@
-import jwt from 'jsonwebtoken';
+﻿import jwt from 'jsonwebtoken';
 
 export const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -17,3 +17,16 @@ export const authenticateToken = (req, res, next) => {
   });
 };
 
+export const authorizeCompany = (req, res, next) => {
+  if (!req.user || req.user.userType !== 'company') {
+    return res.status(403).json({ success: false, message: 'Company access required' });
+  }
+  next();
+};
+
+export const authorizeStudent = (req, res, next) => {
+  if (!req.user || req.user.userType !== 'student') {
+    return res.status(403).json({ success: false, message: 'Student access required' });
+  }
+  next();
+};
