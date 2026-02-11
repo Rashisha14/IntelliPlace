@@ -1,7 +1,57 @@
-node_modules/
+# Environment Variables
 .env
-.DS_Store
+.env.local
+.env.development
+.env.production
+.env.test
+.env.*.local
+
+# Dependencies
+node_modules/
+node_modules
+
+# Uploads and User Data (CVs, documents, etc.)
+uploads/
+uploads/**/*
+
+# Logs
 *.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build artifacts
 dist/
 build/
+*.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Prisma (keep migrations, ignore generated client if needed)
+# .prisma/client/ is auto-generated but usually committed
 

@@ -29,7 +29,7 @@ const AdminDashboard = () => {
 
   const fetchData = async (query = '', page = 1) => {
     if (!user) return;
-    
+
     setLoading(true);
     try {
       const response = await fetch(`http://localhost:5000/api/dashboard/admin/${activeTab}?search=${query}&page=${page}&limit=10`, {
@@ -65,11 +65,11 @@ const AdminDashboard = () => {
             Authorization: `Bearer ${localStorage.getItem('token')}`,
           },
         });
-        
+
         if (!response.ok) throw new Error('Failed to fetch stats');
-        
+
         const data = await response.json();
-        
+
         setStats([
           { label: 'Total Students', value: data.data.totalStudents.toString(), icon: GraduationCap, color: 'from-red-500 to-red-600' },
           { label: 'Total Companies', value: data.data.totalCompanies.toString(), icon: Building2, color: 'from-red-600 to-red-700' },
@@ -183,22 +183,20 @@ const AdminDashboard = () => {
             <button
               onClick={(e) => { e.preventDefault(); setActiveTab('students'); }}
               type="button"
-              className={`py-4 px-6 text-sm font-medium ${
-                activeTab === 'students'
+              className={`py-4 px-6 text-sm font-medium ${activeTab === 'students'
                   ? 'text-red-600 border-b-2 border-red-600'
                   : 'text-gray-500 hover:text-gray-700'
-              }`}
+                }`}
             >
               Students
             </button>
             <button
               onClick={(e) => { e.preventDefault(); setActiveTab('companies'); }}
               type="button"
-              className={`py-4 px-6 text-sm font-medium ${
-                activeTab === 'companies'
+              className={`py-4 px-6 text-sm font-medium ${activeTab === 'companies'
                   ? 'text-red-600 border-b-2 border-red-600'
                   : 'text-gray-500 hover:text-gray-700'
-              }`}
+                }`}
             >
               Companies
             </button>

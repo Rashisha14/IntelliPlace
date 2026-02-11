@@ -42,11 +42,11 @@ const CompanyDashboard = () => {
             Authorization: `Bearer ${localStorage.getItem('token')}`,
           },
         });
-        
+
         if (!response.ok) throw new Error('Failed to fetch stats');
-        
+
         const data = await response.json();
-        
+
         setStats([
           { label: 'Jobs Posted', value: data.data.jobsPosted.toString(), icon: Briefcase, color: 'from-red-500 to-red-600' },
           { label: 'Applications', value: data.data.totalApplications.toString(), icon: FileCheck, color: 'from-red-600 to-red-700' },
@@ -105,26 +105,26 @@ const CompanyDashboard = () => {
               const r = await fetch(`http://localhost:5000/api/jobs/${job.id}/aptitude-test`, {
                 headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
               });
-              
+
               // Fetch coding test
               const codingR = await fetch(`http://localhost:5000/api/jobs/${job.id}/coding-test`, {
                 headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
               });
-              
+
               let aptitudeTest = null;
               if (r.ok) {
                 const aptitudeData = await r.json();
                 aptitudeTest = aptitudeData.data?.test || aptitudeData.data;
               }
-              
+
               let codingTest = null;
               if (codingR.ok) {
                 const codingData = await codingR.json();
                 codingTest = codingData.data;
               }
-              
-              return { 
-                jobId: job.id, 
+
+              return {
+                jobId: job.id,
                 aptitudeTest,
                 codingTest
               };
@@ -172,7 +172,7 @@ const CompanyDashboard = () => {
       const endpoint = isCoding
         ? `http://localhost:5000/api/jobs/${startingJob.id}/coding-test/start`
         : `http://localhost:5000/api/jobs/${startingJob.id}/aptitude-test/start`;
-      
+
       const res = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       const d = await res.json();
       if (!res.ok) {
@@ -207,7 +207,7 @@ const CompanyDashboard = () => {
       const endpoint = isCoding
         ? `http://localhost:5000/api/jobs/${stoppingJob.id}/coding-test/stop`
         : `http://localhost:5000/api/jobs/${stoppingJob.id}/aptitude-test/stop`;
-      
+
       const res = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       const d = await res.json();
       if (!res.ok) {
@@ -290,7 +290,7 @@ const CompanyDashboard = () => {
         >
           <h2 className="text-2xl font-bold text-gray-800 mb-6">Quick Actions</h2>
           <div className="grid md:grid-cols-3 gap-4">
-            <button 
+            <button
               onClick={() => setIsPostJobOpen(true)}
               className="btn btn-primary text-left"
             >
@@ -300,7 +300,7 @@ const CompanyDashboard = () => {
                 <p className="text-sm text-white/90">Create a new job posting</p>
               </div>
             </button>
-            <button 
+            <button
               onClick={() => {
                 const jobsSection = document.querySelector('#recent-jobs');
                 if (jobsSection) jobsSection.scrollIntoView({ behavior: 'smooth' });
@@ -318,7 +318,7 @@ const CompanyDashboard = () => {
             </button>
           </div>
         </motion.div>
-        
+
         {/* Post Job Modal */}
         <CompanyPostJob
           isOpen={isPostJobOpen}
@@ -370,7 +370,7 @@ const CompanyDashboard = () => {
             if (user) fetchJobs(user.id);
           }}
         />
-        
+
         <CompanyCreateCodingTest
           isOpen={isEditCodingTestOpen}
           onClose={() => { setIsEditCodingTestOpen(false); setEditingCodingTestJobId(null); }}
@@ -405,7 +405,7 @@ const CompanyDashboard = () => {
         <Modal
           open={isStartConfirmOpen}
           title={`Start ${startingJob?.isCoding ? 'Coding' : 'Aptitude'} Test for ${startingJob?.title || ''}`}
-          message={startingJob?.isCoding 
+          message={startingJob?.isCoding
             ? `Starting the coding test will allow students to take the test. Continue?`
             : `Starting the test will close applications for this job and notify all shortlisted students. Continue?`}
           type="warning"
@@ -456,7 +456,7 @@ const CompanyDashboard = () => {
             <div className="text-center py-12">
               <Briefcase className="w-16 h-16 text-gray-400 mx-auto mb-4" />
               <p className="text-gray-600">No job postings yet</p>
-              <button 
+              <button
                 onClick={() => setIsPostJobOpen(true)}
                 className="mt-4 inline-flex items-center gap-2 px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
               >
@@ -480,18 +480,16 @@ const CompanyDashboard = () => {
                           <h3 className="text-lg font-semibold text-gray-800 group-hover:text-red-600 transition-colors">
                             {job.title}
                           </h3>
-                          <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                            job.status === 'OPEN' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
-                          }`}>
+                          <span className={`px-2 py-1 text-xs font-medium rounded-full ${job.status === 'OPEN' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+                            }`}>
                             {job.status}
                           </span>
                         </div>
-                        <span className={`px-3 py-1 text-xs font-medium rounded-full ${
-                          job.type === 'FULL_TIME' ? 'bg-green-100 text-green-800' :
-                          job.type === 'PART_TIME' ? 'bg-blue-100 text-blue-800' :
-                          job.type === 'CONTRACT' ? 'bg-purple-100 text-purple-800' :
-                          'bg-orange-100 text-orange-800'
-                        }`}>
+                        <span className={`px-3 py-1 text-xs font-medium rounded-full ${job.type === 'FULL_TIME' ? 'bg-green-100 text-green-800' :
+                            job.type === 'PART_TIME' ? 'bg-blue-100 text-blue-800' :
+                              job.type === 'CONTRACT' ? 'bg-purple-100 text-purple-800' :
+                                'bg-orange-100 text-orange-800'
+                          }`}>
                           {job.type.replace('_', ' ')}
                         </span>
                       </div>
@@ -513,7 +511,7 @@ const CompanyDashboard = () => {
                         )}
                         {job.requiredSkills && (
                           <div className="flex flex-wrap gap-1">
-                            {typeof job.requiredSkills === 'string' 
+                            {typeof job.requiredSkills === 'string'
                               ? job.requiredSkills.split(',').map((skill, index) => (
                                 <span key={index} className="px-2 py-1 text-xs bg-gray-100 text-gray-800 rounded">
                                   {skill.trim()}
@@ -527,24 +525,22 @@ const CompanyDashboard = () => {
                             }
                           </div>
                         )}
-                        
+
                         {/* Test Status Badges */}
                         <div className="flex flex-wrap gap-2 mt-3">
                           {testsMap[job.id] && (
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                              testsMap[job.id].status === 'STARTED' ? 'bg-green-100 text-green-800' :
-                              testsMap[job.id].status === 'CREATED' ? 'bg-yellow-100 text-yellow-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${testsMap[job.id].status === 'STARTED' ? 'bg-green-100 text-green-800' :
+                                testsMap[job.id].status === 'CREATED' ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-gray-100 text-gray-800'
+                              }`}>
                               Aptitude: {testsMap[job.id].status}
                             </span>
                           )}
                           {codingTestsMap[job.id] && (
-                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${
-                              codingTestsMap[job.id].status === 'STARTED' ? 'bg-green-100 text-green-800' :
-                              codingTestsMap[job.id].status === 'CREATED' ? 'bg-yellow-100 text-yellow-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${codingTestsMap[job.id].status === 'STARTED' ? 'bg-green-100 text-green-800' :
+                                codingTestsMap[job.id].status === 'CREATED' ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-gray-100 text-gray-800'
+                              }`}>
                               Coding: {codingTestsMap[job.id].status}
                             </span>
                           )}

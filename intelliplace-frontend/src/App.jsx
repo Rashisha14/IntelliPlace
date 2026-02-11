@@ -12,12 +12,14 @@ import CompanyRegister from './pages/Company/CompanyRegister';
 import CompanyDashboard from './pages/Company/CompanyDashboard';
 import RecruitmentProcess from './pages/Company/RecruitmentProcess';
 import AdminDashboard from './pages/Admin/AdminDashboard';
+import { GlowingEffectDemo } from "./components/GlowingEffectDemo";
 
 function App() {
   return (
     <Router>
       <Routes>
         <Route path="/" element={<ModernLandingPage />} />
+        <Route path="/glow-demo" element={<div className="min-h-screen bg-[#030712] text-white p-10"><h1 className="text-3xl font-bold mb-8 text-center">Glowing Effect Demo</h1><GlowingEffectDemo /></div>} />
 
         {/* Student Routes */}
         <Route path="/student/login" element={<StudentLogin />} />

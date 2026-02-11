@@ -36,11 +36,11 @@ const StudentDashboard = () => {
             Authorization: `Bearer ${localStorage.getItem('token')}`,
           },
         });
-        
+
         if (!response.ok) throw new Error('Failed to fetch stats');
-        
+
         const data = await response.json();
-        
+
         setStats([
           { label: 'Applications Sent', value: data.data.applicationsSent.toString(), icon: FileText, color: 'from-red-500 to-red-600' },
           { label: 'Interviews', value: data.data.interviews.toString(), icon: Briefcase, color: 'from-red-600 to-red-700' },

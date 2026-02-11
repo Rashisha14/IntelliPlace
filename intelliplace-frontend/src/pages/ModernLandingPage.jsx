@@ -20,6 +20,10 @@ import {
     Video
 } from "lucide-react";
 
+import { GlowingEffect } from "../components/ui/glowing-effect";
+import { ExpandableTabs } from "../components/ui/expandable-tabs";
+import { cn } from "../lib/utils";
+
 import AdminLoginModal from "../components/AdminLoginModal";
 import StudentLoginModal from "../components/StudentLoginModal";
 import CompanyLoginModal from "../components/CompanyLoginModal";
@@ -59,10 +63,21 @@ const ModernLandingPage = () => {
                         </div>
                         <span className="font-bold text-lg tracking-tight">IntelliPlace</span>
                     </div>
-                    <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-400">
-                        <a href="#features" className="hover:text-white transition-colors">Features</a>
-                        <a href="#solutions" className="hover:text-white transition-colors">Solutions</a>
-                        <a href="#contact" className="hover:text-white transition-colors">Contact</a>
+                    <div className="hidden md:flex">
+                        <ExpandableTabs
+                            tabs={[
+                                { title: "Features", icon: Sparkles },
+                                { title: "Solutions", icon: Rocket },
+                                { title: "Contact", icon: Mail },
+                            ]}
+                            className="border-white/10 bg-white/5"
+                            onChange={(index) => {
+                                const ids = ["features", "solutions", "contact"];
+                                if (index !== null && ids[index]) {
+                                    document.getElementById(ids[index])?.scrollIntoView({ behavior: 'smooth' });
+                                }
+                            }}
+                        />
                     </div>
 
                     <button
@@ -319,18 +334,30 @@ const StatCard = ({ icon: Icon, label, value, delay }) => (
 const RoleCard = ({ title, desc, icon: Icon, color, bg, onClick }) => (
     <div
         onClick={onClick}
-        className="group relative p-8 rounded-2xl glass-panel cursor-pointer transition-all hover:translate-y-[-4px]"
+        className="relative min-h-[14rem] rounded-[1.25rem] border-[0.75px] border-white/10 p-2 md:rounded-[1.5rem] md:p-3 bg-white/5 cursor-pointer group hover:translate-y-[-4px] transition-all"
     >
-        <div className={`w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mb-6 transition-colors ${bg}`}>
-            <Icon className={`w-6 h-6 transition-colors ${color}`} />
+        <GlowingEffect
+            spread={40}
+            glow={true}
+            disabled={false}
+            proximity={64}
+            inactiveZone={0.01}
+            borderWidth={3}
+        />
+        <div className="relative flex h-full flex-col justify-between overflow-hidden rounded-xl border-[0.75px] border-white/5 bg-[#030712]/90 p-6 shadow-sm">
+            <div>
+                <div className={`w-12 h-12 rounded-xl bg-white/5 flex items-center justify-center mb-6 transition-colors ${bg}`}>
+                    <Icon className={`w-6 h-6 transition-colors ${color}`} />
+                </div>
+                <h3 className="text-xl font-semibold mb-3 flex items-center gap-2">
+                    {title}
+                    <ChevronRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-gray-500" />
+                </h3>
+                <p className="text-sm text-gray-400 leading-relaxed">
+                    {desc}
+                </p>
+            </div>
         </div>
-        <h3 className="text-xl font-semibold mb-3 flex items-center gap-2">
-            {title}
-            <ChevronRight className="w-4 h-4 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all text-gray-500" />
-        </h3>
-        <p className="text-sm text-gray-400 leading-relaxed">
-            {desc}
-        </p>
     </div>
 );
 
