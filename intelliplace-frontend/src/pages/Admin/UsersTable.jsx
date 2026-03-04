@@ -1,10 +1,12 @@
 import { motion } from 'framer-motion';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import Modal from '../../components/Modal';
 
 const UsersTable = ({ type, data, onSearch, loading }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [selectedUser, setSelectedUser] = useState(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -52,9 +54,15 @@ const UsersTable = ({ type, data, onSearch, loading }) => {
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{student.email}</td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{student.rollNumber || '-'}</td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{student.phone || '-'}</td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{student.cgpa ?? '-'} / {student.backlog ?? '-'} backlog</td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{student.applications.length}</td>
       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-        <button className="text-red-600 hover:text-red-900">View Details</button>
+        <button
+          className="text-red-600 hover:text-red-900"
+          onClick={() => setSelectedUser(student)}
+        >
+          View Details
+        </button>
       </td>
     </tr>
   );
@@ -67,18 +75,24 @@ const UsersTable = ({ type, data, onSearch, loading }) => {
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{company.website || '-'}</td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{company.jobs.length}</td>
       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-        <button className="text-red-600 hover:text-red-900">View Details</button>
+        <button
+          className="text-red-600 hover:text-red-900"
+          onClick={() => setSelectedUser(company)}
+        >
+          View Details
+        </button>
       </td>
     </tr>
   );
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5 }}
-      className="bg-white shadow-lg rounded-lg overflow-hidden"
-    >
+    <>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5 }}
+        className="bg-white shadow-lg rounded-lg overflow-hidden"
+      >
       {/* Search Bar */}
       <div className="p-4 border-b border-gray-200">
         <form onSubmit={handleSearch} className="flex gap-4">
@@ -112,6 +126,7 @@ const UsersTable = ({ type, data, onSearch, loading }) => {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Roll Number</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CGPA / Backlog</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Applications</th>
                   <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </>
@@ -185,7 +200,29 @@ const UsersTable = ({ type, data, onSearch, loading }) => {
           </div>
         </div>
       )}
-    </motion.div>
+      </motion.div>
+
+      {/* Details Modal */}
+      {selectedUser && (
+        <Modal
+          open={true}
+          title={`Details - ${type === 'students' ? selectedUser.name : selectedUser.companyName}`}
+          message={
+            <div className="text-xs overflow-auto max-h-60 space-y-2">
+              {Object.entries(selectedUser).map(([key, value]) => (
+                <div key={key} className="flex">
+                  <span className="font-semibold mr-2 capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
+                  <span className="break-all">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+                </div>
+              ))}
+            </div>
+          }
+          type="info"
+          onClose={() => setSelectedUser(null)}
+          actions={[{ label: 'Close', onClick: () => setSelectedUser(null) }]}
+        />
+      )}
+    </>
   );
 };
 

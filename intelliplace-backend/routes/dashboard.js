@@ -60,6 +60,8 @@ router.get('/admin/students', authorizeAdmin, async (req, res) => {
           email: true,
           rollNumber: true,
           phone: true,
+          cgpa: true,
+          backlog: true,
           createdAt: true,
           applications: {
             select: {
@@ -277,6 +279,115 @@ router.get('/student/stats/:studentId', async (req, res) => {
     console.error('Error fetching student stats:', error);
     res.status(500).json({ success: false, message: 'Server error fetching stats' });
   }
+});
+
+// Get analytics for admin dashboard - jobs by status
+router.get('/admin/analytics/jobs-by-status', authorizeAdmin, async (req, res) => {
+  try {
+    const jobsByStatus = await prisma.job.groupBy({
+      by: ['status'],
+      _count: true,
+    });
+
+    const formatted = jobsByStatus.map(item => ({
+      status: item.status || 'UNKNOWN',
+      count: item._count
+    }));
+
+    res.json({
+      success: true,
+      data: { jobsByStatus: formatted }
+    });
+  } catch (error) {
+    console.error('Error fetching jobs by status:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get analytics for admin dashboard - applications by status
+router.get('/admin/analytics/applications-by-status', authorizeAdmin, async (req, res) => {
+  try {
+    const appsByStatus = await prisma.application.groupBy({
+      by: ['status'],
+      _count: true,
+    });
+
+    const formatted = appsByStatus.map(item => ({
+      status: item.status || 'UNKNOWN',
+      count: item._count
+    }));
+
+    res.json({
+      success: true,
+      data: { applicationsByStatus: formatted }
+    });
+  } catch (error) {
+    console.error('Error fetching applications by status:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get analytics for admin dashboard - companies by industry
+router.get('/admin/analytics/companies-by-industry', authorizeAdmin, async (req, res) => {
+  try {
+    const companiesByIndustry = await prisma.company.groupBy({
+      by: ['industry'],
+      _count: true,
+    });
+
+    const formatted = companiesByIndustry
+      .filter(item => item.industry !== null)
+      .map(item => ({
+        industry: item.industry || 'Not Specified',
+        count: item._count
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10); // Top 10 industries
+
+    res.json({
+      success: true,
+      data: { companiesByIndustry: formatted }
+    });
+  } catch (error) {
+    console.error('Error fetching companies by industry:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Get analytics for admin dashboard - students statistics
+router.get('/admin/analytics/students-stats', authorizeAdmin, async (req, res) => {
+  try {
+    const studentsWithApplications = await prisma.student.findMany({
+      select: {
+        id: true,
+        _count: {
+          select: {
+            applications: true
+          }
+        }
+      }
+    });
+
+    const appCounts = studentsWithApplications.map(s => s._count.applications);
+    
+    const stats = {
+      totalStudents: studentsWithApplications.length,
+      avgApplicationsPerStudent: appCounts.length > 0 
+        ? (appCounts.reduce((a, b) => a + b, 0) / appCounts.length).toFixed(2)
+        : 0,
+      studentsWith0Apps: appCounts.filter(c => c === 0).length,
+      studentsWith1to5Apps: appCounts.filter(c => c > 0 && c <= 5).length,
+      studentsWith5plusApps: appCounts.filter(c => c > 5).length
+    };
+
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error('Error fetching students stats:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }  
 });
 
 export default router;

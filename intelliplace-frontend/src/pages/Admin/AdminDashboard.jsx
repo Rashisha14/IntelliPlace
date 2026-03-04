@@ -14,6 +14,21 @@ import Navbar from '../../components/Navbar';
 import { getCurrentUser } from '../../utils/auth';
 import UsersTable from './UsersTable';
 
+// Chart.js imports
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+import { Bar, Pie, Doughnut } from 'react-chartjs-2';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Title, Tooltip, Legend);
+
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
@@ -26,6 +41,13 @@ const AdminDashboard = () => {
     { label: 'Job Postings', value: '0', icon: FileText, color: 'from-green-500 to-green-600' },
     { label: 'Applications', value: '0', icon: BarChart3, color: 'from-orange-500 to-orange-600' }
   ]);
+  const [analytics, setAnalytics] = useState({
+    jobsByStatus: [],
+    applicationsByStatus: [],
+    companiesByIndustry: [],
+    studentsStats: null
+  });
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   const fetchData = async (query = '', page = 1) => {
     if (!user) return;
@@ -81,7 +103,46 @@ const AdminDashboard = () => {
       }
     };
 
+    const fetchAnalytics = async () => {
+      setAnalyticsLoading(true);
+      try {
+        const [jobsRes, appsRes, industriesRes, studentsRes] = await Promise.all([
+          fetch('http://localhost:5000/api/dashboard/admin/analytics/jobs-by-status', {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          }),
+          fetch('http://localhost:5000/api/dashboard/admin/analytics/applications-by-status', {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          }),
+          fetch('http://localhost:5000/api/dashboard/admin/analytics/companies-by-industry', {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          }),
+          fetch('http://localhost:5000/api/dashboard/admin/analytics/students-stats', {
+            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+          })
+        ]);
+
+        const [jobsData, appsData, industriesData, studentsData] = await Promise.all([
+          jobsRes.json(),
+          appsRes.json(),
+          industriesRes.json(),
+          studentsRes.json()
+        ]);
+
+        setAnalytics({
+          jobsByStatus: jobsData.data?.jobsByStatus || [],
+          applicationsByStatus: appsData.data?.applicationsByStatus || [],
+          companiesByIndustry: industriesData.data?.companiesByIndustry || [],
+          studentsStats: studentsData.data || null
+        });
+      } catch (error) {
+        console.error('Failed to fetch analytics:', error);
+      } finally {
+        setAnalyticsLoading(false);
+      }
+    };
+
     fetchStats();
+    fetchAnalytics();
   }, [user, navigate]);
 
   // Fetch table data when tab changes
@@ -143,6 +204,183 @@ const AdminDashboard = () => {
               <p className="text-gray-600 text-sm">{stat.label}</p>
             </motion.div>
           ))}
+        </div>
+
+        {/* Charts Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          {/* Overview Chart */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="bg-white rounded-xl shadow-lg p-3 border border-gray-200 h-64"
+          >
+            <h2 className="text-lg font-bold text-gray-800 mb-2">Overview</h2>
+            <Bar
+              data={{
+                labels: stats.map(s => s.label),
+                datasets: [
+                  {
+                    label: 'Count',
+                    data: stats.map(s => parseInt(s.value, 10) || 0),
+                    backgroundColor: ['#f87171', '#ef4444', '#10b981', '#f59e0b'],
+                  },
+                ],
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                  legend: { position: 'bottom', labels: { font: { size: 10 } } },
+                  title: { display: false },
+                },
+                scales: {
+                  y: { beginAtZero: true },
+                },
+              }}
+            />
+          </motion.div>
+
+          {/* Jobs by Status */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.35 }}
+            className="bg-white rounded-xl shadow-lg p-3 border border-gray-200 h-64"
+          >
+            <h2 className="text-lg font-bold text-gray-800 mb-2">Jobs by Status</h2>
+            {analytics.jobsByStatus.length > 0 ? (
+              <Pie
+                data={{
+                  labels: analytics.jobsByStatus.map(item => item.status),
+                  datasets: [
+                    {
+                      data: analytics.jobsByStatus.map(item => item.count),
+                      backgroundColor: ['#3b82f6', '#10b981', '#ef4444', '#f59e0b'],
+                      borderColor: '#fff',
+                      borderWidth: 2,
+                    },
+                  ],
+                }}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { position: 'bottom', labels: { font: { size: 10 } } },
+                  },
+                }}
+              />
+            ) : (
+              <p className="text-gray-500 text-center py-8">No data available</p>
+            )}
+          </motion.div>
+
+          {/* Applications by Status */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            className="bg-white rounded-xl shadow-lg p-3 border border-gray-200 h-64"
+          >
+            <h2 className="text-lg font-bold text-gray-800 mb-2">Applications by Status</h2>
+            {analytics.applicationsByStatus.length > 0 ? (
+              <Doughnut
+                data={{
+                  labels: analytics.applicationsByStatus.map(item => item.status),
+                  datasets: [
+                    {
+                      data: analytics.applicationsByStatus.map(item => item.count),
+                      backgroundColor: ['#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444'],
+                      borderColor: '#fff',
+                      borderWidth: 2,
+                    },
+                  ],
+                }}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { position: 'bottom', labels: { font: { size: 9 } } },
+                  },
+                }}
+              />
+            ) : (
+              <p className="text-gray-500 text-center py-8">No data available</p>
+            )}
+          </motion.div>
+
+          {/* Companies by Industry */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.45 }}
+            className="bg-white rounded-xl shadow-lg p-3 border border-gray-200 h-64"
+          >
+            <h2 className="text-lg font-bold text-gray-800 mb-2">Top Industries</h2>
+            {analytics.companiesByIndustry.length > 0 ? (
+              <Bar
+                data={{
+                  labels: analytics.companiesByIndustry.map(item => item.industry),
+                  datasets: [
+                    {
+                      label: 'Companies',
+                      data: analytics.companiesByIndustry.map(item => item.count),
+                      backgroundColor: '#7c3aed',
+                    },
+                  ],
+                }}
+                options={{
+                  indexAxis: 'y',
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  plugins: {
+                    legend: { display: false },
+                  },
+                  scales: {
+                    x: { beginAtZero: true },
+                  },
+                }}
+              />
+            ) : (
+              <p className="text-gray-500 text-center py-8">No data available</p>
+            )}
+          </motion.div>
+
+          {/* Students Statistics */}
+          {analytics.studentsStats && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.5 }}
+              className="bg-white rounded-xl shadow-lg p-3 border border-gray-200"
+            >
+              <h2 className="text-lg font-bold text-gray-800 mb-2">Students Statistics</h2>
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Total Students:</span>
+                  <span className="font-bold text-gray-800">{analytics.studentsStats.totalStudents}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Avg Applications/Student:</span>
+                  <span className="font-bold text-gray-800">{analytics.studentsStats.avgApplicationsPerStudent}</span>
+                </div>
+                <div className="border-t pt-3 mt-3 space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">0 Applications:</span>
+                    <span className="font-bold text-orange-600">{analytics.studentsStats.studentsWith0Apps}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">1-5 Applications:</span>
+                    <span className="font-bold text-blue-600">{analytics.studentsStats.studentsWith1to5Apps}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">5+ Applications:</span>
+                    <span className="font-bold text-green-600">{analytics.studentsStats.studentsWith5plusApps}</span>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
         </div>
 
         {/* Quick Actions */}
