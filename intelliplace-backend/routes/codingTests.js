@@ -32,10 +32,11 @@ router.post('/:jobId/coding-test', authenticateToken, authorizeCompany, async (r
       return res.status(404).json({ success: false, message: 'Job not found or access denied' });
     }
 
-    // Check if coding test already exists
+    // Check if coding test already exists - if so, delete it first to allow recreation
     const existingTest = await prisma.codingTest.findUnique({ where: { jobId } });
     if (existingTest) {
-      return res.status(400).json({ success: false, message: 'Coding test already exists for this job' });
+      await prisma.codingQuestion.deleteMany({ where: { testId: existingTest.id } });
+      await prisma.codingTest.delete({ where: { id: existingTest.id } });
     }
 
     // Validate required fields
@@ -107,14 +108,28 @@ router.post('/:jobId/coding-test', authenticateToken, authorizeCompany, async (r
       }
     });
 
+    // Parse JSON fields for response
+    const testData = {
+      ...codingTest,
+      allowedLanguages: typeof codingTest.allowedLanguages === 'string' 
+        ? JSON.parse(codingTest.allowedLanguages) 
+        : codingTest.allowedLanguages,
+      questions: codingTest.questions.map(q => ({
+        ...q,
+        testCases: JSON.parse(q.testCases),
+        expectedOutputs: JSON.parse(q.expectedOutputs),
+        sampleCases: q.sampleCases ? (typeof q.sampleCases === 'string' ? JSON.parse(q.sampleCases) : q.sampleCases) : null
+      }))
+    };
+
     res.status(201).json({
       success: true,
       message: 'Coding test created successfully',
-      data: codingTest
+      data: testData
     });
   } catch (error) {
     console.error('Error creating coding test:', error);
-    res.status(500).json({ success: false, message: 'Server error creating coding test' });
+    res.status(500).json({ success: false, message: 'Server error creating coding test', error: error.message });
   }
 });
 
