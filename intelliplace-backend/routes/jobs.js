@@ -1067,7 +1067,7 @@ router.post('/:jobId/aptitude-test/start', authenticateToken, authorizeCompany, 
 
     const updated = await prisma.aptitudeTest.update({
       where: { id: test.id },
-      data: { status: 'ACTIVE', startedAt: new Date() }
+      data: { status: 'STARTED', startedAt: new Date() }
     });
 
     res.json({ success: true, message: 'Test started', data: { test: updated } });
@@ -1166,7 +1166,7 @@ router.get('/:jobId/aptitude-test/status', authenticateToken, authorizeStudent, 
 
     const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
     if (!test) {
-      return res.json({ success: true, data: { status: 'NOT_CREATED', submitted: false } });
+      return res.json({ success: true, data: { test: null, status: 'NOT_CREATED', submitted: false } });
     }
 
     const submission = await prisma.aptitudeSubmission.findFirst({
@@ -1176,6 +1176,12 @@ router.get('/:jobId/aptitude-test/status', authenticateToken, authorizeStudent, 
     res.json({
       success: true,
       data: {
+        test: {
+          ...test,
+          sections: test.sections,
+          status: test.status,
+          cutoff: test.cutoff
+        },
         status: test.status,
         submitted: !!submission,
         submission: submission || null
