@@ -2,7 +2,7 @@ import { Component } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 
 // Pages
-import ModernLandingPage from './pages/ModernLandingPage';
+import LandingPage from './pages/LandingPage';
 import StudentLogin from './pages/Student/StudentLogin';
 import StudentRegister from './pages/Student/StudentRegister';
 import StudentDashboard from './pages/Student/StudentDashboard';
@@ -48,7 +48,7 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<ModernLandingPage />} />
+        <Route path="/" element={<LandingPage />} />
         <Route path="/glow-demo" element={<div className="min-h-screen bg-[#030712] text-white p-10"><h1 className="text-3xl font-bold mb-8 text-center">Glowing Effect Demo</h1><GlowingEffectDemo /></div>} />
 
         {/* Student Routes */}
