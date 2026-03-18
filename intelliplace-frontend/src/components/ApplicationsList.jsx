@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { FileCheck, Download, Mail, Phone, ChevronDown, ChevronUp, User, FileDown, Sparkles, XCircle, Code } from 'lucide-react';
+import { FileCheck, Download, Mail, Phone, ChevronDown, ChevronUp, User, FileDown, Sparkles, XCircle, Code, ClipboardList } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import Swal from 'sweetalert2';
 import { API_BASE_URL } from '../config.js';
@@ -15,6 +15,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
   const [previewCV, setPreviewCV] = useState(null);
   const [expandedApp, setExpandedApp] = useState(null);
   const [codingSubmissions, setCodingSubmissions] = useState({});
+  const [aptitudeSubmissions, setAptitudeSubmissions] = useState({});
   const [viewingCodeFor, setViewingCodeFor] = useState(null);
   const [atsLoading, setAtsLoading] = useState(false);
   const [atsProgress, setAtsProgress] = useState(null);
@@ -48,12 +49,45 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     if (jobId) fetchApplications();
   }, [jobId]);
 
-  // Auto-fetch coding submissions when user expands an application
+  // Auto-fetch submissions when user expands an application
   useEffect(() => {
     if (!expandedApp || !jobId || applications.length === 0) return;
     const app = applications.find(a => a.id === expandedApp);
-    if (app?.student?.id) fetchCodingSubmissions(app);
+    if (app?.student?.id) {
+      fetchCodingSubmissions(app);
+      fetchAptitudeSubmissions(app);
+    }
   }, [expandedApp, jobId, applications]);
+
+  const fetchAptitudeSubmissions = async (app) => {
+    if (!app?.student?.id) return;
+    if (aptitudeSubmissions[app.id]?.fetched) return;
+    setAptitudeSubmissions(prev => ({ ...prev, [app.id]: { loading: true } }));
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/aptitude-test/submissions/${app.student.id}`,
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
+      );
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setAptitudeSubmissions(prev => ({
+          ...prev,
+          [app.id]: { fetched: true, loading: false, submission: json.data?.submission || null }
+        }));
+      } else {
+        setAptitudeSubmissions(prev => ({
+          ...prev,
+          [app.id]: { fetched: true, loading: false, submission: null, error: json.message || 'Failed to load' }
+        }));
+      }
+    } catch (err) {
+      console.error('Failed to fetch aptitude submission:', err);
+      setAptitudeSubmissions(prev => ({
+        ...prev,
+        [app.id]: { fetched: true, loading: false, submission: null, error: err.message }
+      }));
+    }
+  };
 
   const fetchCodingSubmissions = async (app) => {
     if (!app?.student?.id) return;
@@ -686,6 +720,46 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                             </div>
                             </div>
                             </div>
+                          </div>
+
+                          {/* Aptitude Test Submission - for applicants who took the test */}
+                          <div className="mt-4 pt-4 border-t">
+                            <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                              <ClipboardList className="w-4 h-4" />
+                              Aptitude Test Results
+                            </h4>
+                            {aptitudeSubmissions[app.id]?.loading ? (
+                              <p className="text-sm text-gray-500">Loading...</p>
+                            ) : aptitudeSubmissions[app.id]?.submission ? (
+                              <div className="border rounded-lg p-4 bg-white shadow-sm mt-3">
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                  <span className="font-semibold text-gray-800">Overall Score</span>
+                                  <span className={`text-xs font-bold px-2 py-1 rounded shrink-0 ${
+                                    aptitudeSubmissions[app.id].submission.status === 'PASSED' ? 'bg-green-100 text-green-800' : 
+                                    aptitudeSubmissions[app.id].submission.status === 'FAILED' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'
+                                  }`}>
+                                    {aptitudeSubmissions[app.id].submission.status || 'SUBMITTED'}
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-4 mt-2">
+                                  <div className="text-center">
+                                    <div className="text-2xl font-bold text-gray-800">{aptitudeSubmissions[app.id].submission.score ?? '-'}</div>
+                                    <div className="text-xs text-gray-500">Score</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className="text-2xl font-bold text-gray-800">{aptitudeSubmissions[app.id].submission.percentage?.toFixed(1) ?? '-'}%</div>
+                                    <div className="text-xs text-gray-500">Percentage</div>
+                                  </div>
+                                </div>
+                                <div className="mt-4 text-xs text-gray-500">
+                                  Submitted: {new Date(aptitudeSubmissions[app.id].submission.submittedAt || aptitudeSubmissions[app.id].submission.createdAt).toLocaleString()}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-500 mt-2">
+                                {aptitudeSubmissions[app.id]?.error || 'No aptitude test taken'}
+                              </p>
+                            )}
                           </div>
 
                           {/* Coding Test Submissions - for applicants who took the test */}

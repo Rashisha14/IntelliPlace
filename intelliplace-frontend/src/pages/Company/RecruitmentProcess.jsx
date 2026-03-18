@@ -505,20 +505,26 @@ const RecruitmentProcess = () => {
         open={isStartConfirmOpen}
         title={`Start ${testToStart?.type === 'coding' ? 'Coding' : 'Aptitude'} Test`}
         message={
-          testToStart?.type === 'coding'
-            ? `Starting the coding test will allow students to take the test. Continue?`
-            : `Starting the test will close applications for this job and notify all shortlisted students. Continue?`
+          job?.status !== 'CLOSED'
+            ? `You must close applications for this job before starting any tests.`
+            : testToStart?.type === 'coding'
+              ? `Starting the coding test will allow students to take the test. Continue?`
+              : `Starting the test will allow shortlisted students to take the test. Continue?`
         }
-        type="warning"
+        type={job?.status !== 'CLOSED' ? "error" : "warning"}
         onClose={() => setIsStartConfirmOpen(false)}
-        actions={[
-          { label: 'Cancel', onClick: () => setIsStartConfirmOpen(false) },
-          {
-            label: startLoading ? 'Starting...' : 'Start Test',
-            onClick: handleStartTest,
-            autoClose: false,
-          },
-        ]}
+        actions={
+          job?.status !== 'CLOSED'
+            ? [{ label: 'OK', onClick: () => setIsStartConfirmOpen(false) }]
+            : [
+                { label: 'Cancel', onClick: () => setIsStartConfirmOpen(false) },
+                {
+                  label: startLoading ? 'Starting...' : 'Start Test',
+                  onClick: handleStartTest,
+                  autoClose: false,
+                },
+              ]
+        }
       />
 
       <Modal

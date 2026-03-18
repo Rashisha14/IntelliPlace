@@ -405,15 +405,23 @@ const CompanyDashboard = () => {
         <Modal
           open={isStartConfirmOpen}
           title={`Start ${startingJob?.isCoding ? 'Coding' : 'Aptitude'} Test for ${startingJob?.title || ''}`}
-          message={startingJob?.isCoding
-            ? `Starting the coding test will allow students to take the test. Continue?`
-            : `Starting the test will close applications for this job and notify all shortlisted students. Continue?`}
-          type="warning"
+          message={
+            startingJob?.status !== 'CLOSED'
+              ? `You must close applications for this job before starting any tests.`
+              : startingJob?.isCoding
+                ? `Starting the coding test will allow students to take the test. Continue?`
+                : `Starting the test will allow shortlisted students to take the test. Continue?`
+          }
+          type={startingJob?.status !== 'CLOSED' ? "error" : "warning"}
           onClose={() => setIsStartConfirmOpen(false)}
-          actions={[
-            { label: 'Cancel', onClick: () => setIsStartConfirmOpen(false) },
-            { label: startLoading ? 'Starting...' : 'Start Test', onClick: handleConfirmStart, autoClose: false }
-          ]}
+          actions={
+            startingJob?.status !== 'CLOSED'
+              ? [{ label: 'OK', onClick: () => setIsStartConfirmOpen(false) }]
+              : [
+                  { label: 'Cancel', onClick: () => setIsStartConfirmOpen(false) },
+                  { label: startLoading ? 'Starting...' : 'Start Test', onClick: handleConfirmStart, autoClose: false }
+                ]
+          }
         />
 
         <Modal

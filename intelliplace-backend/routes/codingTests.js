@@ -288,6 +288,10 @@ router.post('/:jobId/coding-test/start', authenticateToken, authorizeCompany, as
       return res.status(404).json({ success: false, message: 'Job not found or access denied' });
     }
 
+    if (job.status !== 'CLOSED') {
+      return res.status(400).json({ success: false, message: 'Applications must be closed before starting the test' });
+    }
+
     const codingTest = await prisma.codingTest.findUnique({ where: { jobId } });
     if (!codingTest) {
       return res.status(404).json({ success: false, message: 'Coding test not found' });

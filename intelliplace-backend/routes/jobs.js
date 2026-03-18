@@ -879,7 +879,11 @@ router.post('/:jobId/aptitude-test', authenticateToken, authorizeCompany, async 
     }
 
     // Delete existing test if any
-    await prisma.aptitudeTest.deleteMany({ where: { jobId } });
+    const existingTest = await prisma.aptitudeTest.findUnique({ where: { jobId } });
+    if (existingTest) {
+      await prisma.aptitudeQuestion.deleteMany({ where: { testId: existingTest.id } });
+      await prisma.aptitudeTest.delete({ where: { id: existingTest.id } });
+    }
 
     // Create new test with sections
     const test = await prisma.aptitudeTest.create({
@@ -1060,6 +1064,10 @@ router.post('/:jobId/aptitude-test/start', authenticateToken, authorizeCompany, 
       return res.status(404).json({ success: false, message: 'Job not found or access denied' });
     }
 
+    if (job.status !== 'CLOSED') {
+      return res.status(400).json({ success: false, message: 'Applications must be closed before starting the test' });
+    }
+
     const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
     if (!test) {
       return res.status(404).json({ success: false, message: 'Test not found' });
@@ -1190,6 +1198,39 @@ router.get('/:jobId/aptitude-test/status', authenticateToken, authorizeStudent, 
   } catch (error) {
     console.error('Error fetching test status:', error);
     res.status(500).json({ success: false, message: 'Server error fetching test status' });
+  }
+});
+
+// Get student's aptitude test submission (for company)
+router.get('/:jobId/aptitude-test/submissions/:studentId', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const studentId = parseInt(req.params.studentId);
+    const jobId = parseInt(req.params.jobId);
+    const companyId = req.user.id;
+
+    // Verify company owns the job
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) {
+      return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+    }
+
+    const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
+    if (!test) {
+      return res.status(404).json({ success: false, message: 'Aptitude test not found' });
+    }
+
+    const submission = await prisma.aptitudeSubmission.findFirst({
+      where: { testId: test.id, studentId },
+      orderBy: { submittedAt: 'desc' }
+    });
+
+    res.json({
+      success: true,
+      data: { submission: submission || null, testCutoff: test.cutoff }
+    });
+  } catch (error) {
+    console.error('Error fetching aptitude submission:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching submission' });
   }
 });
 
