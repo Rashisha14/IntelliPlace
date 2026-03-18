@@ -9,6 +9,7 @@ import {
   Check
 } from "lucide-react";
 import Swal from "sweetalert2";
+import { API_BASE_URL } from "../config.js";
 
 const defaultSections = [
   { name: "Quantitative", questions: 10 },
@@ -23,7 +24,7 @@ const emptyQuestion = {
   marks: 1
 };
 
-const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated }) => {
+const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated, editingTest = false }) => {
   const [sections, setSections] = useState([]);
   const [questionsBySection, setQuestionsBySection] = useState({});
   const [activeSection, setActiveSection] = useState(0);
@@ -38,15 +39,68 @@ const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated }) => {
   useEffect(() => {
     if (!isOpen) return;
 
-    setSections(defaultSections);
+    if (editingTest) {
+      setLoading(true);
+      fetch(`${API_BASE_URL}/jobs/${jobId}/aptitude-test`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+      })
+        .then((res) => res.json())
+        .then((json) => {
+          if (json.success && json.data && json.data.test) {
+            const test = json.data.test;
+            setCutoff(test.cutoff || 50);
 
-    const map = {};
-    defaultSections.forEach((_, i) => (map[i] = []));
-    setQuestionsBySection(map);
+            let loadedSections = test.sections && test.sections.length > 0 ? test.sections : defaultSections;
+            if (typeof loadedSections[0] === 'string') {
+               // Old format backwards compatibility
+               loadedSections = loadedSections.map(s => ({ name: s, questions: 10 }));
+            }
+            setSections(loadedSections);
 
-    setActiveSection(0);
-    setCutoff(50);
-  }, [isOpen]);
+            const map = {};
+            loadedSections.forEach((_, i) => (map[i] = []));
+            
+            if (test.questions && Array.isArray(test.questions)) {
+              test.questions.forEach((q) => {
+                const sectionIndex = loadedSections.findIndex(s => s.name === q.section);
+                if (sectionIndex !== -1) {
+                  map[sectionIndex].push({
+                    id: q.id,
+                    questionText: q.questionText || q.question || "",
+                    options: q.options || ["", "", "", ""],
+                    correctIndex: q.correctIndex !== undefined ? q.correctIndex : 0,
+                    marks: q.marks || 1,
+                    section: q.section
+                  });
+                }
+              });
+            }
+            setQuestionsBySection(map);
+          } else {
+            // Fallback if test load fails but we're in edit mode
+            setSections(defaultSections);
+            const map = {};
+            defaultSections.forEach((_, i) => (map[i] = []));
+            setQuestionsBySection(map);
+            setCutoff(50);
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to load aptitude test:", err);
+          Swal.fire("Error", "Failed to load test data", "error");
+        })
+        .finally(() => setLoading(false));
+    } else {
+      setSections(defaultSections);
+
+      const map = {};
+      defaultSections.forEach((_, i) => (map[i] = []));
+      setQuestionsBySection(map);
+
+      setActiveSection(0);
+      setCutoff(50);
+    }
+  }, [isOpen, jobId, editingTest]);
 
   if (!isOpen) return null;
 
@@ -171,7 +225,7 @@ const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated }) => {
       );
 
       const res = await fetch(
-        `http://localhost:5000/api/jobs/${jobId}/aptitude-test`,
+        `${API_BASE_URL}/jobs/${jobId}/aptitude-test`,
         {
           method: "POST",
           headers: {
@@ -198,7 +252,8 @@ const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated }) => {
         onClose();
       });
     } catch {
-      Swal.fire("Error", "Failed to create quiz", "error");
+      Swal.fire("Error", "Please complete all section requirements before saving", "error");
+      return;
     } finally {
       setLoading(false);
     }
@@ -350,13 +405,13 @@ const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated }) => {
             />
           </div>
 
-          <button
-            onClick={handleSubmit}
-            disabled={!allSectionsComplete || loading}
-            className="btn btn-primary"
-          >
-            {loading ? "Creating..." : "Create Quiz"}
-          </button>
+              <button
+                onClick={handleSubmit}
+                disabled={loading}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {loading ? "Saving..." : editingTest ? "Update Quiz" : "Create Quiz"}
+              </button>
         </div>
       </motion.div>
 

@@ -45,6 +45,7 @@ const RecruitmentProcess = () => {
   
   // Modals
   const [isCreateAptitudeOpen, setIsCreateAptitudeOpen] = useState(false);
+  const [isEditAptitudeOpen, setIsEditAptitudeOpen] = useState(false);
   const [isCreateCodingOpen, setIsCreateCodingOpen] = useState(false);
   const [isEditCodingOpen, setIsEditCodingOpen] = useState(false);
   const [isViewTestOpen, setIsViewTestOpen] = useState(false);
@@ -244,7 +245,7 @@ const RecruitmentProcess = () => {
           setAptitudeTest(d.data.test);
         }
         alert(
-          `Test started${testToStart.type !== 'coding' ? ` — ${d.data.invited || 0} shortlisted students notified` : ''}`
+          `Test started${testToStart.type !== 'coding' ? ` — ${d.notified || 0} shortlisted students notified` : ''}`
         );
         setIsStartConfirmOpen(false);
         setTestToStart(null);
@@ -417,6 +418,7 @@ const RecruitmentProcess = () => {
               <AptitudeTestContent
                 test={aptitudeTest}
                 onCreate={() => setIsCreateAptitudeOpen(true)}
+                onEdit={() => setIsEditAptitudeOpen(true)}
                 onStart={() => {
                   setTestToStart({ type: 'aptitude' });
                   setIsStartConfirmOpen(true);
@@ -469,6 +471,17 @@ const RecruitmentProcess = () => {
         jobId={parseInt(jobId)}
         onCreated={async () => {
           setIsCreateAptitudeOpen(false);
+          await fetchJobAndTests(false);
+        }}
+      />
+      
+      <CompanyCreateTest
+        isOpen={isEditAptitudeOpen}
+        onClose={() => setIsEditAptitudeOpen(false)}
+        jobId={parseInt(jobId)}
+        editingTest={true}
+        onCreated={async () => {
+          setIsEditAptitudeOpen(false);
           await fetchJobAndTests(false);
         }}
       />
@@ -562,7 +575,10 @@ const RecruitmentProcess = () => {
         <ApplicationsList
           jobId={parseInt(jobId)}
           initialJobStatus={job?.status}
-          onClose={() => setShowApplicationsList(false)}
+          onClose={() => {
+            setShowApplicationsList(false);
+            fetchJobAndTests(false); // Refresh after closing modal to update job status
+          }}
         />
       )}
     </div>
@@ -570,8 +586,8 @@ const RecruitmentProcess = () => {
 };
 
 // Aptitude Test Content Component
-const AptitudeTestContent = ({ test, onCreate, onStart, onStop, onView }) => {
-  if (!test) {
+const AptitudeTestContent = ({ test, onCreate, onEdit, onStart, onStop, onView }) => {
+  if (!test || !test.questions || test.questions.length === 0) {
     return (
       <div className="text-center py-12">
         <ClipboardList className="w-16 h-16 text-gray-400 mx-auto mb-4" />
@@ -639,18 +655,25 @@ const AptitudeTestContent = ({ test, onCreate, onStart, onStop, onView }) => {
           <div className="text-sm text-gray-600 mb-1">Status</div>
           <div className="text-2xl font-bold text-gray-800">{test.status}</div>
         </div>
-      </div>
-
-      {/* Actions */}
+      </div>      {/* Actions */}
       <div className="flex flex-wrap gap-3 pt-4 border-t">
         {test.status === 'CREATED' && (
-          <button
-            onClick={onStart}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-          >
-            <Play className="w-4 h-4" />
-            Start Test
-          </button>
+          <>
+            <button
+              onClick={onStart}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <Play className="w-4 h-4" />
+              Start Test
+            </button>
+            <button
+              onClick={onEdit}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Edit className="w-4 h-4" />
+              Edit Test
+            </button>
+          </>
         )}
         {test.status === 'STARTED' && (
           <button
@@ -661,13 +684,45 @@ const AptitudeTestContent = ({ test, onCreate, onStart, onStop, onView }) => {
             Stop Test
           </button>
         )}
-        {test.status !== 'STOPPED' && (
+        {test.status === 'STOPPED' && (
+          <>
+            <button
+              onClick={onStart}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <Play className="w-4 h-4" />
+              Restart Test
+            </button>
+            <button
+              onClick={onEdit}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Edit className="w-4 h-4" />
+              Edit Test
+            </button>
+          </>
+        )}
+        {test.status !== 'STOPPED' && test.status !== 'STARTED' && (
           <button
             onClick={onView}
             className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
           >
             <Eye className="w-4 h-4" />
             View Test
+          </button>
+        )}
+        {(test.status === 'CREATED' || test.status === 'CLOSED' || test.status === 'STOPPED') && (
+          <button
+            onClick={() => {
+              if(window.confirm('Are you sure you want to recreate this test? This will permanently delete the current test and all its questions.')) {
+                onCreate();
+              }
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
+            title="Delete this test and start over"
+          >
+            <Edit className="w-4 h-4" />
+            Recreate Test
           </button>
         )}
       </div>
@@ -684,7 +739,7 @@ const CodingTestContent = ({
   onStop,
   onRestart,
 }) => {
-  if (!test) {
+  if (!test || !test.questions || test.questions.length === 0) {
     return (
       <div className="text-center py-12">
         <Code className="w-16 h-16 text-gray-400 mx-auto mb-4" />

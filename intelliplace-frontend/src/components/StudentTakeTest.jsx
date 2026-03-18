@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Clock, AlertTriangle, Lock } from "lucide-react";
+import { API_BASE_URL } from "../config";
 
 const MAX_WARNINGS = 2;
 
@@ -101,7 +102,7 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
     submittingRef.current = false;
 
     fetch(
-      `http://localhost:5000/api/jobs/${jobId}/aptitude-test/questions/public`,
+      `${API_BASE_URL}/jobs/${jobId}/aptitude-test/questions/public`,
       {
         headers: {
           Authorization: `Bearer ${localStorage.getItem("token")}`
@@ -110,19 +111,32 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
     )
       .then(res => res.json())
       .then(json => {
-        if (!Array.isArray(json.data?.sections)) {
+        if (!json.success) {
+          throw new Error(json.message || "Unable to load questions");
+        }
+        
+        const questions = json.data?.questions;
+        if (!Array.isArray(questions)) {
           throw new Error("Invalid question format");
         }
 
-        setSections(json.data.sections);
+        // Group questions by section
+        const grouped = {};
+        questions.forEach(q => {
+          const sec = q.section || "General";
+          if (!grouped[sec]) grouped[sec] = [];
+          grouped[sec].push(q);
+        });
 
-        const totalQ = json.data.sections.reduce(
-          (sum, s) => sum + s.questions.length,
-          0
-        );
-        setTimeLeft(totalQ * 60);
+        const sectionsList = Object.entries(grouped).map(([title, questions]) => ({
+          title,
+          questions
+        }));
+
+        setSections(sectionsList);
+        setTimeLeft(questions.length * 60);
       })
-      .catch(() => setError("Unable to load questions"))
+      .catch((err) => setError(err.message || "Unable to load questions"))
       .finally(() => setLoading(false));
   }, [isOpen, jobId]);
 
@@ -152,17 +166,13 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
     setLoading(true);
     setShowSecurityModal(false);
 
-    const allQuestions = sections.flatMap(s => s.questions);
     const payload = {
-      answers: allQuestions.map(q => ({
-        questionId: q.id,
-        selectedIndex: answers[q.id] ?? -1
-      }))
+      answers: answers
     };
 
     try {
       const res = await fetch(
-        `http://localhost:5000/api/jobs/${jobId}/aptitude-test/submit`,
+        `${API_BASE_URL}/jobs/${jobId}/aptitude-test/submit`,
         {
           method: "POST",
           headers: {
@@ -295,10 +305,10 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
           {result && (
             <div className="text-center mt-20">
               <h2 className="text-2xl font-bold mb-2">
-                {result.passed ? "Test Passed" : "Test Failed"}
+                {result.status === "PASSED" ? "Test Passed" : "Test Failed"}
               </h2>
               <p className="text-gray-600">
-                Score: {result.score}/{result.maxScore}
+                Score: {result.score}/{result.totalMarks}
               </p>
             </div>
           )}

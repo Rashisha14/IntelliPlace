@@ -1078,7 +1078,108 @@ router.post('/:jobId/aptitude-test/start', authenticateToken, authorizeCompany, 
       data: { status: 'STARTED', startedAt: new Date() }
     });
 
-    res.json({ success: true, message: 'Test started', data: { test: updated } });
+    // Get all shortlisted applications for this job
+    const shortlistedApplications = await prisma.application.findMany({
+      where: {
+        jobId: jobId,
+        status: 'SHORTLISTED'
+      },
+      include: {
+        student: true
+      }
+    });
+
+    // Send notifications to all shortlisted students
+    let notifiedCount = 0;
+    const notificationErrors = [];
+    
+    console.log(`[Aptitude Test Start] Found ${shortlistedApplications.length} shortlisted applications for job ${jobId}`);
+    
+    if (shortlistedApplications.length === 0) {
+      console.log(`[Aptitude Test Start] No shortlisted applications found for job ${jobId}. Skipping notifications.`);
+    }
+    
+    for (const app of shortlistedApplications) {
+      // Validate required fields
+      if (!app.studentId) {
+        console.error(`[Aptitude Test Start] Application ${app.id} has no studentId. Skipping notification.`);
+        notificationErrors.push(`Application ${app.id}: Missing studentId`);
+        continue;
+      }
+      
+      if (!app.student) {
+        console.error(`[Aptitude Test Start] Application ${app.id} has no student data. Skipping notification.`);
+        notificationErrors.push(`Application ${app.id}: Missing student data`);
+        continue;
+      }
+      
+      try {
+        console.log(`[Aptitude Test Start] Creating notification for student ${app.studentId} (${app.student?.name || 'Unknown'}), application ${app.id}, job ${jobId}`);
+        
+        const notification = await prisma.notification.create({
+          data: {
+            studentId: app.studentId,
+            title: 'Aptitude Test Started',
+            message: `The aptitude test for "${job.title}" has started. You can now take the test from your applications page.`,
+            jobId: jobId,
+            applicationId: app.id
+          }
+        });
+        
+        console.log(`[Aptitude Test Start] ✅ Notification created successfully: ID=${notification.id}, Student=${app.studentId}, Job=${jobId}, Application=${app.id}`);
+        notifiedCount++;
+      } catch (notifError) {
+        const errorDetails = {
+          message: notifError.message,
+          code: notifError.code,
+          meta: notifError.meta,
+          stack: notifError.stack
+        };
+        console.error(`[Aptitude Test Start] ❌ Failed to create notification for student ${app.studentId} (${app.student?.name || 'Unknown'}):`, JSON.stringify(errorDetails, null, 2));
+        notificationErrors.push(`Student ${app.studentId} (${app.student?.name || 'Unknown'}): ${notifError.message || 'Unknown error'}`);
+      }
+    }
+    
+    console.log(`[Aptitude Test Start] Notifications sent: ${notifiedCount}/${shortlistedApplications.length}`);
+    if (notificationErrors.length > 0) {
+      console.error(`[Aptitude Test Start] Notification errors:`, notificationErrors);
+    }
+    
+    // Verify notifications were actually created in the database
+    if (notifiedCount > 0) {
+      try {
+        const verifyNotifications = await prisma.notification.findMany({
+          where: {
+            jobId: jobId,
+            title: 'Aptitude Test Started',
+            createdAt: {
+              gte: new Date(Date.now() - 60000) // Created in the last minute
+            }
+          },
+          select: {
+            id: true,
+            studentId: true,
+            title: true,
+            createdAt: true
+          }
+        });
+        console.log(`[Aptitude Test Start] Verified ${verifyNotifications.length} notifications in database for job ${jobId}`);
+        if (verifyNotifications.length !== notifiedCount) {
+          console.warn(`[Aptitude Test Start] ⚠️ Mismatch: Created ${notifiedCount} but found ${verifyNotifications.length} in database`);
+        }
+      } catch (verifyError) {
+        console.error(`[Aptitude Test Start] Failed to verify notifications:`, verifyError);
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Test started. ${notifiedCount} students notified.`, 
+      data: { test: updated },
+      notified: notifiedCount,
+      totalShortlisted: shortlistedApplications.length,
+      errors: notificationErrors.length > 0 ? notificationErrors : undefined
+    });
   } catch (error) {
     console.error('Error starting test:', error);
     res.status(500).json({ success: false, message: 'Server error starting test' });
