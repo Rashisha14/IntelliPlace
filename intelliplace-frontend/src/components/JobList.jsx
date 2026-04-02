@@ -15,6 +15,62 @@ import {
 } from 'lucide-react';
 import { getCurrentUser } from '../utils/auth';
 
+const getStatusBadgeClasses = (status) => {
+  const s = status ? status.toUpperCase() : 'UNKNOWN';
+  switch (s) {
+    case 'PENDING': return 'bg-yellow-100 text-yellow-800 border border-yellow-200 bg-opacity-70';
+    case 'REVIEWING': return 'bg-blue-100 text-blue-800 border border-blue-200';
+    case 'SHORTLISTED': return 'bg-green-100 text-green-800 border border-green-200';
+    case 'APP PASS':
+    case 'PASSED APTITUDE':
+    case 'APTITUDE_PASSED': return 'bg-green-100 text-green-800 border border-green-200';
+    case 'APP FAIL':
+    case 'FAILED APTITUDE':
+    case 'APTITUDE_FAILED': return 'bg-red-50 text-red-600 border border-red-200';
+    case 'CODE PASS':
+    case 'PASSED CODING':
+    case 'CODING_PASSED': return 'bg-green-100 text-green-800 border border-green-200';
+    case 'CODE FAIL':
+    case 'FAILED CODING':
+    case 'CODING_FAILED': return 'bg-red-100 text-red-700 border border-red-300';
+    case 'INTERVIEW FAIL':
+    case 'FAILED INTERVIEW': return 'bg-red-100 text-red-800 border border-red-400';
+    case 'SELECTED': 
+    case 'HIRED': 
+    case 'OFFERED': return 'bg-green-100 text-green-800 border border-green-200';
+    case 'REJECTED': return 'bg-red-100 text-red-800 border border-red-400';
+    default: return 'bg-gray-100 text-gray-800 border border-gray-200';
+  }
+};
+
+const getCardClasses = (status) => {
+  const s = status ? status.toUpperCase() : 'UNKNOWN';
+  switch (s) {
+    case 'PENDING': return 'border-yellow-500 bg-yellow-50/30';
+    case 'REVIEWING': return 'border-blue-500 bg-blue-50/30';
+    case 'SHORTLISTED': return 'border-green-500 bg-green-50/30';
+    case 'APP PASS':
+    case 'PASSED APTITUDE':
+    case 'APTITUDE_PASSED': return 'border-green-500 bg-green-50/30';
+    case 'APP FAIL':
+    case 'FAILED APTITUDE':
+    case 'APTITUDE_FAILED': return 'border-red-300 bg-red-50/30';
+    case 'CODE PASS':
+    case 'PASSED CODING':
+    case 'CODING_PASSED': return 'border-green-500 bg-green-50/30';
+    case 'CODE FAIL':
+    case 'FAILED CODING':
+    case 'CODING_FAILED': return 'border-red-400 bg-red-50/30';
+    case 'INTERVIEW FAIL':
+    case 'FAILED INTERVIEW': return 'border-red-600 bg-red-50/30';
+    case 'SELECTED': 
+    case 'HIRED': 
+    case 'OFFERED': return 'border-green-600 bg-green-50/30';
+    case 'REJECTED': return 'border-red-600 bg-red-50/30';
+    default: return 'border-gray-500 bg-gray-50/30';
+  }
+};
+
 const JobList = () => {
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -261,17 +317,9 @@ const JobList = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 className={`card ${
-                  applicationStatuses[job.id]?.status === 'SHORTLISTED' 
-                    ? 'border-green-500 bg-green-50/30' 
-                    : applicationStatuses[job.id]?.status === 'REJECTED'
-                    ? 'border-red-500 bg-red-50/30'
-                    : applicationStatuses[job.id]?.status === 'HIRED'
-                    ? 'border-blue-500 bg-blue-50/30'
-                    : applicationStatuses[job.id]?.status === 'OFFERED'
-                    ? 'border-purple-500 bg-purple-50/30'
-                    : isApplied 
-                    ? 'border-green-500 bg-green-50/30' 
-                    : 'hover:shadow-md'
+                  !applicationStatuses[job.id] 
+                    ? (isApplied ? 'border-green-500 bg-green-50/30' : 'hover:shadow-md')
+                    : getCardClasses(applicationStatuses[job.id].status)
                 }`}
               >
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
@@ -284,17 +332,7 @@ const JobList = () => {
                         </span>
                       )}
                       {applicationStatuses[job.id] && (
-                        <span className={`px-3 py-1 text-xs font-medium rounded-full ${
-                          applicationStatuses[job.id].status === 'SHORTLISTED' 
-                            ? 'bg-green-100 text-green-800 border border-green-300' 
-                            : applicationStatuses[job.id].status === 'REJECTED'
-                            ? 'bg-red-100 text-red-800 border border-red-300'
-                            : applicationStatuses[job.id].status === 'HIRED'
-                            ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                            : applicationStatuses[job.id].status === 'OFFERED'
-                            ? 'bg-purple-100 text-purple-800 border border-purple-300'
-                            : 'bg-yellow-100 text-yellow-800 border border-yellow-300'
-                        }`}>
+                        <span className={`px-3 py-1 text-xs font-medium rounded-full ${getStatusBadgeClasses(applicationStatuses[job.id].status)}`}>
                           {applicationStatuses[job.id].status}
                         </span>
                       )}
@@ -431,17 +469,7 @@ const JobList = () => {
                         Applied ✓
                         </button>
                         {applicationStatuses[job.id]?.status && (
-                          <div className={`px-3 py-2 rounded-md text-center text-sm font-medium ${
-                            applicationStatuses[job.id].status === 'SHORTLISTED' 
-                              ? 'bg-green-50 text-green-700 border border-green-200' 
-                              : applicationStatuses[job.id].status === 'REJECTED'
-                              ? 'bg-red-50 text-red-700 border border-red-200'
-                              : applicationStatuses[job.id].status === 'HIRED'
-                              ? 'bg-blue-50 text-blue-700 border border-blue-200'
-                              : applicationStatuses[job.id].status === 'OFFERED'
-                              ? 'bg-purple-50 text-purple-700 border border-purple-200'
-                              : 'bg-yellow-50 text-yellow-700 border border-yellow-200'
-                          }`}>
+                          <div className={`px-3 py-2 rounded-md text-center text-sm font-medium ${getStatusBadgeClasses(applicationStatuses[job.id].status).replaceAll('-100', '-50').replaceAll('-800', '-700')}`}>
                             Status: {applicationStatuses[job.id].status}
                           </div>
                         )}

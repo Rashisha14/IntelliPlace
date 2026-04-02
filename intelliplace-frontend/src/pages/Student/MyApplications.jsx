@@ -10,6 +10,34 @@ import { useNavigate } from 'react-router-dom';
 import { getCurrentUser } from '../../utils/auth';
 import { Play, Code, RefreshCw, Video } from 'lucide-react';
 
+const getStatusBadgeClasses = (status) => {
+  const s = status ? status.toUpperCase() : 'UNKNOWN';
+  switch (s) {
+    case 'PENDING': return 'bg-yellow-100 text-yellow-800 border border-yellow-200 bg-opacity-70';
+    case 'REVIEWING': return 'bg-blue-100 text-blue-800 border border-blue-200';
+    case 'SHORTLISTED': return 'bg-green-100 text-green-800 border border-green-200';
+    case 'APP PASS':
+    case 'PASSED APTITUDE':
+    case 'APTITUDE_PASSED': return 'bg-green-100 text-green-800 border border-green-200';
+    case 'APP FAIL':
+    case 'FAILED APTITUDE':
+    case 'APTITUDE_FAILED': return 'bg-red-50 text-red-600 border border-red-200';
+    case 'CODE PASS':
+    case 'PASSED CODING':
+    case 'CODING_PASSED': return 'bg-green-100 text-green-800 border border-green-200';
+    case 'CODE FAIL':
+    case 'FAILED CODING':
+    case 'CODING_FAILED': return 'bg-red-100 text-red-700 border border-red-300';
+    case 'INTERVIEW FAIL':
+    case 'FAILED INTERVIEW': return 'bg-red-100 text-red-800 border border-red-400';
+    case 'SELECTED': 
+    case 'HIRED': 
+    case 'OFFERED': return 'bg-green-100 text-green-800 border border-green-200';
+    case 'REJECTED': return 'bg-red-100 text-red-800 border border-red-400';
+    default: return 'bg-gray-100 text-gray-800 border border-gray-200';
+  }
+};
+
 const MyApplications = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
@@ -40,9 +68,11 @@ const MyApplications = () => {
           const apps = json.data.applications || [];
           setApplications(apps);
           
-          // Fetch test status for each job that has SHORTLISTED applications
+          const ELIGIBLE_STATUSES = ['SHORTLISTED', 'APP PASS', 'PASSED APTITUDE', 'APTITUDE_PASSED', 'CODE PASS', 'PASSED CODING', 'CODE_PASSED'];
+          
+          // Fetch test status for each job that has eligible applications
           const shortlistedJobs = apps
-            .filter(app => app.status === 'SHORTLISTED')
+            .filter(app => ELIGIBLE_STATUSES.includes(app.status?.toUpperCase()))
             .map(app => app.jobId);
           
           const testStatusMap = {};
@@ -87,9 +117,9 @@ const MyApplications = () => {
           console.log('Test statuses:', testStatusMap);
           console.log('Coding test statuses:', codingTestStatusMap);
           
-          // Fetch interview sessions for shortlisted applications
+          // Fetch interview sessions for eligible applications
           const interviewSessionMap = {};
-          for (const app of apps.filter(a => a.status === 'SHORTLISTED')) {
+          for (const app of apps.filter(a => ELIGIBLE_STATUSES.includes(a.status?.toUpperCase()))) {
             try {
               const interviewRes = await fetch(
                 `${API_BASE_URL}/jobs/${app.jobId}/interviews/${app.id}/student-session`,
@@ -169,8 +199,9 @@ const MyApplications = () => {
       
       const jobId = parseInt(openCodingTestJobId);
       
-      // Check if student has a shortlisted application for this job
-      const app = applications.find(a => a.jobId === jobId && a.status === 'SHORTLISTED');
+      // Check if student has an eligible application for this job
+      const ELIGIBLE_STATUSES = ['SHORTLISTED', 'APP PASS', 'PASSED APTITUDE', 'APTITUDE_PASSED', 'CODE PASS', 'PASSED CODING', 'CODE_PASSED'];
+      const app = applications.find(a => a.jobId === jobId && ELIGIBLE_STATUSES.includes(a.status?.toUpperCase()));
       
       if (app) {
         // Check if coding test is available
@@ -207,8 +238,9 @@ const MyApplications = () => {
         const { jobId, applicationId } = JSON.parse(openInterviewData);
         sessionStorage.removeItem('openInterview');
         
-        // Check if student has a shortlisted application for this job
-        const app = applications.find(a => a.jobId === jobId && a.id === applicationId && a.status === 'SHORTLISTED');
+        // Check if student has an eligible application for this job
+        const ELIGIBLE_STATUSES = ['SHORTLISTED', 'APP PASS', 'PASSED APTITUDE', 'APTITUDE_PASSED', 'CODE PASS', 'PASSED CODING', 'CODE_PASSED'];
+        const app = applications.find(a => a.jobId === jobId && a.id === applicationId && ELIGIBLE_STATUSES.includes(a.status?.toUpperCase()));
         
         if (app) {
           // Fetch interview session and open
@@ -323,13 +355,7 @@ const MyApplications = () => {
                   </div>
 
                   <div>
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-sm font-medium ${
-                      app.status === 'PASSED APTITUDE' ? 'bg-green-100 text-green-800 border border-green-200' :
-                      app.status === 'FAILED APTITUDE' ? 'bg-red-100 text-red-800 border border-red-200' :
-                      app.status && app.status.toLowerCase().includes('reject') ? 'bg-red-100 text-red-800 border border-red-200' :
-                      app.status && (app.status.toLowerCase().includes('shortlist') || app.status.toLowerCase().includes('hire') || app.status.toLowerCase().includes('accept')) ? 'bg-green-100 text-green-800 border border-green-200' :
-                      'bg-gray-100 text-gray-800'
-                    }`}>
+                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-md text-sm font-medium ${getStatusBadgeClasses(app.status)}`}>
                       {app.status}
                     </span>
                   </div>
@@ -360,7 +386,7 @@ const MyApplications = () => {
                     Open Job
                   </button>
 
-                  {app.status === 'SHORTLISTED' && testStatuses[app.jobId] === 'STARTED' && (
+                  {['SHORTLISTED', 'APP PASS', 'PASSED APTITUDE', 'APTITUDE_PASSED'].includes(app.status?.toUpperCase()) && testStatuses[app.jobId] === 'STARTED' && (
                     <button
                       onClick={() => {
                         setTestJobId(app.jobId);
@@ -373,7 +399,7 @@ const MyApplications = () => {
                     </button>
                   )}
                   
-                  {app.status === 'SHORTLISTED' && codingTestStatuses[app.jobId] && (
+                  {['SHORTLISTED', 'APP PASS', 'PASSED APTITUDE', 'APTITUDE_PASSED', 'CODE PASS', 'PASSED CODING'].includes(app.status?.toUpperCase()) && codingTestStatuses[app.jobId] && (
                     <>
                       {codingTestStatuses[app.jobId] === 'STARTED' ? (
                         <button
@@ -394,7 +420,7 @@ const MyApplications = () => {
                     </>
                   )}
                   
-                  {app.status === 'SHORTLISTED' && interviewSessions[app.jobId] && (
+                  {['SHORTLISTED', 'APP PASS', 'PASSED APTITUDE', 'APTITUDE_PASSED', 'CODE PASS', 'PASSED CODING'].includes(app.status?.toUpperCase()) && interviewSessions[app.jobId] && (
                     <button
                       onClick={() => handleStartInterview(app.jobId, app.id)}
                       className="flex items-center gap-2 px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700"

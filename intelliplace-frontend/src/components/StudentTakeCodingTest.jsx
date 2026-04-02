@@ -410,6 +410,19 @@ int main() {
       }
     }
 
+    // Tell backend the test is finished so it can evaluate and update the application status
+    try {
+      await fetch(`${API_BASE_URL}/jobs/${jobId}/coding-test/finish`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}`
+        }
+      });
+    } catch (err) {
+      console.error('Error finalizing test:', err);
+    }
+
     clearInterval(timerRef.current);
     document.exitFullscreen?.();
     

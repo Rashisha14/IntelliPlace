@@ -3,6 +3,15 @@ import { FileCheck, Download, Mail, Phone, ChevronDown, ChevronUp, User, FileDow
 import * as XLSX from 'xlsx';
 import Swal from 'sweetalert2';
 import { API_BASE_URL } from '../config.js';
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend
+} from 'chart.js';
+import { Doughnut } from 'react-chartjs-2';
+
+ChartJS.register(ArcElement, Tooltip, Legend);
 
 const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
   const [applications, setApplications] = useState([]);
@@ -149,9 +158,6 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     }
 
     const exportData = applications.map((app, index) => {
-      const displayCgpa = app.cgpa || app.student?.cgpa || 'N/A';
-      const displayBacklog = app.backlog !== null ? app.backlog : (app.student?.backlog != null ? app.student.backlog : 'N/A');
-      
       return {
         'S.No': index + 1,
         'Name': app.student?.name || 'N/A',
@@ -419,6 +425,91 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     }
   };
 
+  const totalApplicants = applications.length;
+  const statusCounts = applications.reduce((acc, app) => {
+    const status = app.status ? app.status.toUpperCase() : 'UNKNOWN';
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {});
+
+  const getStatusColor = (status) => {
+    const s = status ? status.toUpperCase() : 'UNKNOWN';
+    switch (s) {
+      case 'PENDING': return '#FACC15'; // yellow-400
+      case 'REVIEWING': return '#60A5FA'; // blue-400
+      case 'SHORTLISTED': return '#22C55E'; // green-500
+      case 'APP PASS':
+      case 'PASSED APTITUDE':
+      case 'APTITUDE_PASSED': return '#4ADE80'; // green-400 (light green)
+      case 'APP FAIL':
+      case 'FAILED APTITUDE':
+      case 'APTITUDE_FAILED': return '#FCA5A5'; // red-300 (light red)
+      case 'CODE PASS':
+      case 'PASSED CODING':
+      case 'CODING_PASSED': return '#22C55E'; // green-500
+      case 'CODE FAIL':
+      case 'FAILED CODING':
+      case 'CODING_FAILED': return '#EF4444'; // red-500 (medium red)
+      case 'INTERVIEW FAIL':
+      case 'FAILED INTERVIEW': return '#DC2626'; // red-600
+      case 'SELECTED': 
+      case 'HIRED': 
+      case 'OFFERED': return '#16A34A'; // green-600
+      case 'REJECTED': return '#DC2626'; // red-600
+      default: return '#9CA3AF'; // gray-400
+    }
+  };
+
+  const getStatusBadgeClasses = (status) => {
+    const s = status ? status.toUpperCase() : 'UNKNOWN';
+    switch (s) {
+      case 'PENDING': return 'bg-yellow-100 text-yellow-800 border border-yellow-200 bg-opacity-70';
+      case 'REVIEWING': return 'bg-blue-100 text-blue-800 border border-blue-200';
+      case 'SHORTLISTED': return 'bg-green-100 text-green-800 border border-green-200';
+      case 'APP PASS':
+      case 'PASSED APTITUDE':
+      case 'APTITUDE_PASSED': return 'bg-green-100 text-green-800 border border-green-200';
+      case 'APP FAIL':
+      case 'FAILED APTITUDE':
+      case 'APTITUDE_FAILED': return 'bg-red-50 text-red-600 border border-red-200';
+      case 'CODE PASS':
+      case 'PASSED CODING':
+      case 'CODING_PASSED': return 'bg-green-100 text-green-800 border border-green-200';
+      case 'CODE FAIL':
+      case 'FAILED CODING':
+      case 'CODING_FAILED': return 'bg-red-100 text-red-700 border border-red-300';
+      case 'INTERVIEW FAIL':
+      case 'FAILED INTERVIEW': return 'bg-red-100 text-red-800 border border-red-400';
+      case 'SELECTED': 
+      case 'HIRED': 
+      case 'OFFERED': return 'bg-green-100 text-green-800 border border-green-200';
+      case 'REJECTED': return 'bg-red-100 text-red-800 border border-red-400';
+      default: return 'bg-gray-100 text-gray-800 border border-gray-200';
+    }
+  };
+
+  const chartData = {
+    labels: Object.keys(statusCounts),
+    datasets: [
+      {
+        data: Object.values(statusCounts),
+        backgroundColor: Object.keys(statusCounts).map(getStatusColor),
+        borderWidth: 1,
+      },
+    ],
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'right',
+        labels: { boxWidth: 12, font: { size: 11 } }
+      },
+    },
+  };
+
   const modalContent = (
     <div 
       className="fixed inset-0 bg-black/50 flex items-center justify-center p-4"
@@ -576,7 +667,33 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
               <p className="text-gray-700 font-medium">No applications yet</p>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-6">
+              {/* Analytics Summary */}
+              <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm flex flex-col md:flex-row gap-8 items-center justify-between">
+                <div className="flex-1 w-full">
+                  <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-indigo-500" />
+                    Application Summary
+                  </h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                    <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 shadow-sm">
+                      <p className="text-sm text-indigo-600 font-semibold uppercase tracking-wider">Total Applied</p>
+                      <p className="text-3xl font-bold text-indigo-900 mt-1">{totalApplicants}</p>
+                    </div>
+                    {Object.entries(statusCounts).map(([status, count]) => (
+                      <div key={status} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                        <p className="text-sm text-gray-500 font-semibold uppercase tracking-wider">{status}</p>
+                        <p className="text-2xl font-bold text-gray-800 mt-1">{count}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="w-48 h-48 flex-shrink-0 relative">
+                  <Doughnut data={chartData} options={chartOptions} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
               {applications.map((app, index) => {
                 const isExpanded = expandedApp === app.id;
                 const displayCgpa = app.cgpa || app.student?.cgpa || 'N/A';
@@ -616,19 +733,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                           </div>
                           <div className="flex items-center justify-between">
                             <span
-                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
-                                app.status === 'PENDING'
-                                  ? 'bg-yellow-100 text-yellow-800'
-                                  : app.status === 'REVIEWING'
-                                  ? 'bg-blue-100 text-blue-800'
-                                  : app.status === 'SHORTLISTED'
-                                  ? 'bg-green-100 text-green-800'
-                                  : app.status === 'REJECTED'
-                                  ? 'bg-red-100 text-red-800'
-                                  : app.status === 'HIRED'
-                                  ? 'bg-purple-100 text-purple-800'
-                                  : 'bg-gray-100 text-gray-800'
-                              }`}
+                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusBadgeClasses(app.status)}`}
                             >
                               {app.status}
                             </span>
@@ -882,6 +987,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                   </div>
                 );
               })}
+            </div>
             </div>
           )}
         </div>

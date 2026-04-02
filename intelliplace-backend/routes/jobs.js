@@ -1216,6 +1216,38 @@ router.post('/:jobId/aptitude-test/stop', authenticateToken, authorizeCompany, a
       data: { status: 'CLOSED' }
     });
 
+    // Auto-fail students who didn't take the test
+    const participants = await prisma.application.findMany({
+      where: { jobId, status: 'SHORTLISTED' }
+    });
+
+    for (const applicant of participants) {
+      const submission = await prisma.aptitudeSubmission.findFirst({
+        where: { testId: test.id, studentId: applicant.studentId }
+      });
+
+      if (!submission) {
+        await prisma.application.update({
+          where: { id: applicant.id },
+          data: { status: 'APTITUDE_FAILED' }
+        });
+
+        try {
+          await prisma.notification.create({
+            data: {
+              studentId: applicant.studentId,
+              title: 'Aptitude Test Failed',
+              message: `You did not complete the aptitude test for "${job.title}". You have been marked as Failed.`,
+              applicationId: applicant.id,
+              jobId: jobId
+            }
+          });
+        } catch (err) {
+          console.error('Failed to create notification for no-show:', err);
+        }
+      }
+    }
+
     res.json({ success: true, message: 'Test stopped', data: { test: updated } });
   } catch (error) {
     console.error('Error stopping test:', error);

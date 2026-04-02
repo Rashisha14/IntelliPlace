@@ -164,7 +164,7 @@ router.get('/:jobId/coding-test/status', authenticateToken, async (req, res) => 
         where: {
           jobId: jobId,
           studentId: req.user.id,
-          status: 'APTITUDE_PASSED'
+          status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
         }
       });
 
@@ -234,7 +234,7 @@ router.get('/:jobId/coding-test', authenticateToken, async (req, res) => {
         where: {
           jobId: jobId,
           studentId: req.user.id,
-          status: 'APTITUDE_PASSED'
+          status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
         }
       });
 
@@ -343,7 +343,7 @@ router.post('/:jobId/coding-test/start', authenticateToken, authorizeCompany, as
     const shortlistedApplications = await prisma.application.findMany({
       where: {
         jobId: jobId,
-        status: 'APTITUDE_PASSED'
+        status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
       },
       include: {
         student: true
@@ -492,7 +492,10 @@ router.post('/:jobId/coding-test/stop', authenticateToken, authorizeCompany, asy
 
     // Evaluate all students who are APTITUDE_PASSED
     const participants = await prisma.application.findMany({
-      where: { jobId, status: 'APTITUDE_PASSED' }
+      where: { 
+        jobId, 
+        status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
+      }
     });
 
     for (const applicant of participants) {
@@ -501,6 +504,29 @@ router.post('/:jobId/coding-test/stop', authenticateToken, authorizeCompany, asy
         where: { testId: codingTest.id, studentId: applicant.studentId },
         orderBy: { createdAt: 'desc' }
       });
+
+      if (submissions.length === 0) {
+        // Did not take test
+        await prisma.application.update({
+          where: { id: applicant.id },
+          data: { status: 'CODING_FAILED' }
+        });
+
+        try {
+          await prisma.notification.create({
+            data: {
+              studentId: applicant.studentId,
+              title: 'Coding Test Failed',
+              message: `You did not complete the coding test for "${job.title}". You have been marked as Failed.`,
+              applicationId: applicant.id,
+              jobId: jobId
+            }
+          });
+        } catch (err) {
+          console.error('Failed to create notification for missing test sumission:', err);
+        }
+        continue;
+      }
 
       // Group by question and get highest score
       let totalScore = 0;
@@ -695,7 +721,11 @@ router.post('/:jobId/coding-test/run-sample', authenticateToken, authorizeStuden
     }
 
     const application = await prisma.application.findFirst({
-      where: { jobId, studentId: req.user.id, status: 'APTITUDE_PASSED' }
+      where: { 
+        jobId, 
+        studentId: req.user.id, 
+        status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
+      }
     });
     if (!application) {
       return res.status(403).json({ success: false, message: 'You must be shortlisted to take this test' });
@@ -869,6 +899,89 @@ router.post('/:jobId/coding-test/submit', authenticateToken, authorizeStudent, a
   } catch (error) {
     console.error('Error submitting code:', error);
     res.status(500).json({ success: false, message: 'Server error submitting code' });
+  }
+});
+
+// Finish coding test (Student)
+router.post('/:jobId/coding-test/finish', authenticateToken, authorizeStudent, async (req, res) => {
+  try {
+    const studentId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+
+    const codingTest = await prisma.codingTest.findUnique({
+      where: { jobId },
+      include: { questions: true }
+    });
+
+    if (!codingTest) {
+      return res.status(404).json({ success: false, message: 'Coding test not found' });
+    }
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+
+    const application = await prisma.application.findFirst({
+      where: { 
+        jobId: jobId, 
+        studentId: studentId,
+        status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
+      }
+    });
+
+    if (!application) {
+      return res.status(404).json({ success: false, message: 'Application not found or not eligible' });
+    }
+
+    // Find all submissions for this student and test
+    const submissions = await prisma.codingSubmission.findMany({
+      where: { testId: codingTest.id, studentId },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    // Group by question and get highest score
+    let totalScore = 0;
+    const scoresByQ = {};
+    for (const sub of submissions) {
+      if (!scoresByQ[sub.questionId] || sub.score > scoresByQ[sub.questionId]) {
+        scoresByQ[sub.questionId] = sub.score;
+      }
+    }
+    for (const qScore of Object.values(scoresByQ)) {
+      totalScore += qScore || 0;
+    }
+
+    // Calculate total possible points
+    const maxPossible = codingTest.questions.reduce((sum, q) => sum + (q.points || 0), 0);
+    const percentage = maxPossible > 0 ? (totalScore / maxPossible) * 100 : 0;
+    
+    const newStatus = percentage >= (codingTest.cutoff || 0) ? 'CODING_PASSED' : 'CODING_FAILED';
+
+    await prisma.application.update({
+      where: { id: application.id },
+      data: { status: newStatus }
+    });
+
+    try {
+      await prisma.notification.create({
+        data: {
+          studentId: studentId,
+          title: `Coding Test ${newStatus === 'CODING_PASSED' ? 'Passed' : 'Failed'}`,
+          message: `Your coding test for job "${job?.title || jobId}" was evaluated. You scored ${totalScore}/${maxPossible} (${percentage.toFixed(1)}%). Status: ${newStatus}.`,
+          applicationId: application.id,
+          jobId: jobId
+        }
+      });
+    } catch (err) {
+      console.error('Failed to create notification for coding test completion:', err);
+    }
+
+    res.json({
+      success: true,
+      message: 'Test finished successfully',
+      data: { status: newStatus, score: totalScore, percentage }
+    });
+  } catch (error) {
+    console.error('Error finishing test:', error);
+    res.status(500).json({ success: false, message: 'Server error finishing test' });
   }
 });
 
