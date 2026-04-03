@@ -256,6 +256,7 @@ ${prevTitles}
 Rules:
 - One clear question only; no "Question 5:" preamble; no numbering in the text; max 130 words.
 - Sound spoken and natural, not like a form field.
+- Address the candidate by name **${candidateName}** exactly as written (same spelling and spacing) when you use their name in the question. If the name is literally "Candidate" or empty, do not force a fake name.
 - When resume text or skills list gives you hooks, **use them by name or clear reference** (company, project, tool, course) — do not ignore listed experience, projects, or skills unless you already exhausted them in prior questions.${finalQuestionNote}
 - Return ONLY valid JSON with shape: {"question":"<the question text>"}`;
 
