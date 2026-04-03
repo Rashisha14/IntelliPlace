@@ -172,6 +172,8 @@ const MyApplications = () => {
             question: null, // Will show start screen first
             questionIndex: -1,
             session: data.data.session,
+            candidateDisplayName:
+              data.data.candidateDisplayName ?? getCurrentUser()?.name ?? '',
           });
           setIsInterviewOpen(true);
           setNotice(null);
@@ -292,6 +294,8 @@ const MyApplications = () => {
               question: null,
               questionIndex: -1,
               session: interviewJson.data.session,
+              candidateDisplayName:
+                interviewJson.data.candidateDisplayName ?? getCurrentUser()?.name ?? '',
             });
             setIsInterviewOpen(true);
           }
@@ -541,6 +545,7 @@ const MyApplications = () => {
           question={interviewData.question}
           questionIndex={interviewData.questionIndex}
           session={interviewData.session}
+          candidateDisplayName={interviewData.candidateDisplayName}
           onAnswerSubmitted={(result) => {
             console.log('Answer submitted:', result);
             fetchApplications(); // Refresh to show next question or updated status
