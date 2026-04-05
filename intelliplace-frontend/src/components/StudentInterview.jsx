@@ -98,6 +98,8 @@ const StudentInterview = ({
   const ttsAudioRef = useRef(null);
   const spokenQuestionKeyRef = useRef(null);
   const [localStreamReady, setLocalStreamReady] = useState(false);
+  const recognitionRef = useRef(null);
+  const [isDictating, setIsDictating] = useState(false);
 
   const openingLines = useMemo(() => {
     const n =
@@ -450,6 +452,74 @@ const StudentInterview = ({
       stopTts();
     };
   }, [stopTts]);
+
+  // Speech-to-Text integration
+  useEffect(() => {
+    if (!isOpen || interviewFlowPhase !== 'qa' || submitted || !micOn || speakingQuestion) {
+      if (recognitionRef.current) {
+        try { recognitionRef.current.stop(); } catch(e) {}
+      }
+      setIsDictating(false);
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    let isCancelled = false;
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onstart = () => {
+      if (!isCancelled) setIsDictating(true);
+    };
+
+    recognition.onresult = (event) => {
+      if (isCancelled) return;
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        }
+      }
+      if (finalTranscript) {
+        setAnswerText((prev) => {
+          const f = finalTranscript.trim();
+          if (!f) return prev;
+          if (prev.length === 0) return f;
+          return prev + (prev.endsWith(' ') ? '' : ' ') + f;
+        });
+      }
+    };
+
+    recognition.onerror = (event) => {
+      console.warn('Speech recognition error:', event.error);
+    };
+
+    recognition.onend = () => {
+      if (isCancelled) return;
+      // Restart recognition if mic is still on and we should still be listening
+      if (micOn && interviewFlowPhase === 'qa' && !submitted && !speakingQuestion) {
+        try { recognition.start(); } catch(e) {}
+      } else {
+        setIsDictating(false);
+      }
+    };
+
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch(e) {
+      console.error('Failed to start speech recognition:', e);
+    }
+
+    return () => {
+      isCancelled = true;
+      try { recognition.stop(); } catch(e) {}
+      recognitionRef.current = null;
+    };
+  }, [isOpen, interviewFlowPhase, submitted, micOn, speakingQuestion]);
 
   const handleSubmit = async () => {
     if (!answerText.trim()) {
@@ -854,7 +924,18 @@ const StudentInterview = ({
 
                     {!submitted && (
                       <div className="flex min-h-0 flex-1 flex-col gap-3">
-                        <label className="text-xs font-medium text-zinc-400">Your answer</label>
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-medium text-zinc-400">Your answer</label>
+                          {isDictating && (
+                            <span className="flex items-center gap-1.5 text-xs font-medium text-blue-400">
+                              <span className="relative flex h-2 w-2">
+                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75"></span>
+                                <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500"></span>
+                              </span>
+                              Listening via Mic...
+                            </span>
+                          )}
+                        </div>
                         <textarea
                           value={answerText}
                           onChange={(e) => setAnswerText(e.target.value)}
