@@ -16,9 +16,11 @@ import {
   Briefcase,
   Volume2,
   VolumeX,
+  Square,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config.js';
 import { getCurrentUser } from '../utils/auth.js';
+import { DeepgramClient } from '@deepgram/sdk';
 
 function normalizeDisplayName(raw) {
   if (raw == null || raw === '') return '';
@@ -98,8 +100,16 @@ const StudentInterview = ({
   const ttsAudioRef = useRef(null);
   const spokenQuestionKeyRef = useRef(null);
   const [localStreamReady, setLocalStreamReady] = useState(false);
-  const recognitionRef = useRef(null);
-  const [isDictating, setIsDictating] = useState(false);
+  const speechUsedForAnswerRef = useRef(false);
+  const setAnswerTextRef = useRef(setAnswerText);
+  setAnswerTextRef.current = setAnswerText;
+  const [sttError, setSttError] = useState(null);
+  const deepgramConnRef = useRef(null);
+  const liveRecorderRef = useRef(null);
+  const liveStreamRef = useRef(null);
+  const [livePartialText, setLivePartialText] = useState('');
+  const [isLiveSttActive, setIsLiveSttActive] = useState(false);
+  const [isLiveSttConnecting, setIsLiveSttConnecting] = useState(false);
 
   const openingLines = useMemo(() => {
     const n =
@@ -149,6 +159,32 @@ const StudentInterview = ({
     setSpeakingQuestion(false);
   }, []);
 
+  const stopLiveVoice = useCallback(() => {
+    try {
+      const rec = liveRecorderRef.current;
+      if (rec && rec.state !== 'inactive') rec.stop();
+    } catch (_) {
+      /* ignore */
+    }
+    liveRecorderRef.current = null;
+    if (liveStreamRef.current) {
+      liveStreamRef.current.getTracks().forEach((t) => t.stop());
+      liveStreamRef.current = null;
+    }
+    const conn = deepgramConnRef.current;
+    if (conn) {
+      try {
+        conn.requestClose?.();
+      } catch (_) {
+        /* ignore */
+      }
+      deepgramConnRef.current = null;
+    }
+    setIsLiveSttActive(false);
+    setIsLiveSttConnecting(false);
+    setLivePartialText('');
+  }, []);
+
   useEffect(() => {
     if (!isOpen) {
       stopMedia();
@@ -162,14 +198,25 @@ const StudentInterview = ({
       setSubmitted(false);
       setError(null);
       setTtsError(null);
+      setSttError(null);
       spokenQuestionKeyRef.current = null;
+      speechUsedForAnswerRef.current = false;
       setMicOn(true);
       setVideoOn(true);
       setCandidateDisplayName(
         normalizeDisplayName(candidateDisplayNameProp) || normalizeDisplayName(getCurrentUser()?.name)
       );
+      stopLiveVoice();
     }
-  }, [isOpen, stopMedia, stopTts, candidateDisplayNameProp]);
+  }, [isOpen, stopMedia, stopTts, candidateDisplayNameProp, stopLiveVoice]);
+
+  useEffect(() => {
+    speechUsedForAnswerRef.current = false;
+  }, [currentQuestionIndex, currentQuestion]);
+
+  useEffect(() => {
+    stopLiveVoice();
+  }, [currentQuestionIndex, currentQuestion, stopLiveVoice]);
 
   const fetchSession = useCallback(
     async (opts = {}) => {
@@ -453,79 +500,97 @@ const StudentInterview = ({
     };
   }, [stopTts]);
 
-  // Speech-to-Text integration
-  useEffect(() => {
-    if (!isOpen || interviewFlowPhase !== 'qa' || submitted || !micOn || speakingQuestion) {
-      if (recognitionRef.current) {
-        try { recognitionRef.current.stop(); } catch(e) {}
-      }
-      setIsDictating(false);
-      return;
-    }
-
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    let isCancelled = false;
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-
-    recognition.onstart = () => {
-      if (!isCancelled) setIsDictating(true);
-    };
-
-    recognition.onresult = (event) => {
-      if (isCancelled) return;
-      let finalTranscript = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
-        }
-      }
-      if (finalTranscript) {
-        setAnswerText((prev) => {
-          const f = finalTranscript.trim();
-          if (!f) return prev;
-          if (prev.length === 0) return f;
-          return prev + (prev.endsWith(' ') ? '' : ' ') + f;
-        });
-      }
-    };
-
-    recognition.onerror = (event) => {
-      console.warn('Speech recognition error:', event.error);
-    };
-
-    recognition.onend = () => {
-      if (isCancelled) return;
-      // Restart recognition if mic is still on and we should still be listening
-      if (micOn && interviewFlowPhase === 'qa' && !submitted && !speakingQuestion) {
-        try { recognition.start(); } catch(e) {}
-      } else {
-        setIsDictating(false);
-      }
-    };
-
-    recognitionRef.current = recognition;
+  const startLiveVoice = useCallback(async () => {
+    if (isLiveSttActive || isLiveSttConnecting || submitting) return;
+    setSttError(null);
     try {
-      recognition.start();
-    } catch(e) {
-      console.error('Failed to start speech recognition:', e);
-    }
+      setIsLiveSttConnecting(true);
+      const token = localStorage.getItem('token');
+      const res = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/realtime-stt-token`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(json.message || 'Could not start live transcription');
+      }
+      const tok = json.data?.token;
+      if (!tok) throw new Error('No transcription token returned');
+      const dg = new DeepgramClient({ accessToken: tok });
+      const connection = await dg.listen.v1.connect({
+        model: 'nova-3',
+        language: 'en-US',
+        smart_format: 'true',
+        punctuate: 'true',
+        interim_results: 'true',
+        endpointing: '300',
+      });
+      deepgramConnRef.current = connection;
 
-    return () => {
-      isCancelled = true;
-      try { recognition.stop(); } catch(e) {}
-      recognitionRef.current = null;
-    };
-  }, [isOpen, interviewFlowPhase, submitted, micOn, speakingQuestion]);
+      connection.on('message', (data) => {
+        if (data?.type !== 'Results') return;
+        const alt = data?.channel?.alternatives?.[0];
+        const transcript = String(alt?.transcript || '').trim();
+        if (!transcript) return;
+        if (data.is_final || data.speech_final) {
+          setAnswerTextRef.current((prev) => {
+            if (!prev?.trim()) return transcript;
+            return `${prev.trimEnd()} ${transcript}`;
+          });
+          speechUsedForAnswerRef.current = true;
+          setLivePartialText('');
+        } else {
+          setLivePartialText(transcript);
+        }
+      });
+      connection.on('error', (err) => {
+        console.error('Deepgram live STT:', err);
+        setSttError('Live transcription error');
+      });
+      connection.on('close', () => {
+        setIsLiveSttActive(false);
+        setIsLiveSttConnecting(false);
+        setLivePartialText('');
+      });
+      connection.connect();
+      await connection.waitForOpen();
+
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      liveStreamRef.current = micStream;
+      let recorder;
+      try {
+        recorder = new MediaRecorder(micStream, { mimeType: 'audio/webm;codecs=opus' });
+      } catch (_) {
+        recorder = new MediaRecorder(micStream);
+      }
+      liveRecorderRef.current = recorder;
+      recorder.ondataavailable = async (e) => {
+        if (!e.data || e.data.size === 0) return;
+        try {
+          const ab = await e.data.arrayBuffer();
+          connection.sendMedia(ab);
+        } catch (_) {
+          /* ignore chunk errors */
+        }
+      };
+      recorder.start(250);
+      setIsLiveSttActive(true);
+      setIsLiveSttConnecting(false);
+    } catch (e) {
+      console.error('Live STT:', e);
+      setSttError(e.message || 'Could not start live voice');
+      setIsLiveSttActive(false);
+      setIsLiveSttConnecting(false);
+    }
+  }, [jobId, applicationId, isLiveSttActive, isLiveSttConnecting, submitting]);
 
   const handleSubmit = async () => {
     if (!answerText.trim()) {
       setError('Please enter your answer');
       return;
     }
+
+    stopLiveVoice();
 
     setSubmitting(true);
     setError(null);
@@ -546,6 +611,7 @@ const StudentInterview = ({
             questionIndex: currentQuestionIndex,
             answer: answerText,
             question: currentQuestion,
+            inputMode: speechUsedForAnswerRef.current ? 'speech' : 'text',
           }),
         }
       );
@@ -806,9 +872,9 @@ const StudentInterview = ({
                     No interview session found.
                   </div>
                 ) : session.status === 'COMPLETED' ? (
-                  <div className="flex flex-1 flex-col items-center justify-center gap-5 py-12 px-4 text-center">
+                  <div className="flex flex-1 flex-col items-center justify-center gap-5 py-10 px-4 text-center">
                     <CheckCircle className="h-16 w-16 text-emerald-500" strokeWidth={1.25} />
-                    <div>
+                    <div className="w-full max-w-md">
                       <p className="text-lg font-semibold text-white">
                         {session.mode === 'TECH' ? 'Technical interview complete' : 'Interview complete'}
                       </p>
@@ -816,6 +882,58 @@ const StudentInterview = ({
                         You have answered all questions in this session for this role. Thank you — you can leave when
                         you are ready.
                       </p>
+                      {session.overallEvaluation &&
+                        typeof session.overallEvaluation === 'object' &&
+                        session.overallEvaluation !== null && (
+                          <div className="mt-6 rounded-xl border border-emerald-800/40 bg-emerald-950/25 px-4 py-4 text-left">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-400">
+                              Overall result (Gemini)
+                            </p>
+                            {session.overallEvaluation.overallScore != null && (
+                              <p className="mt-2 text-3xl font-bold text-white">
+                                {session.overallEvaluation.overallScore}
+                                <span className="text-lg font-normal text-zinc-500">/10</span>
+                              </p>
+                            )}
+                            {session.overallEvaluation.verdict && (
+                              <p className="mt-1 text-xs font-medium capitalize text-zinc-400">
+                                {String(session.overallEvaluation.verdict).replace(/_/g, ' ')}
+                              </p>
+                            )}
+                            {session.overallEvaluation.executiveSummary && (
+                              <p className="mt-3 text-sm leading-relaxed text-zinc-200">
+                                {session.overallEvaluation.executiveSummary}
+                              </p>
+                            )}
+                            {Array.isArray(session.overallEvaluation.strengthsOverall) &&
+                              session.overallEvaluation.strengthsOverall.length > 0 && (
+                                <div className="mt-3">
+                                  <p className="text-xs font-medium text-zinc-500">Strengths</p>
+                                  <ul className="mt-1 list-inside list-disc text-left text-sm text-zinc-300">
+                                    {session.overallEvaluation.strengthsOverall.map((s, i) => (
+                                      <li key={i}>{s}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            {Array.isArray(session.overallEvaluation.risksOrGaps) &&
+                              session.overallEvaluation.risksOrGaps.length > 0 && (
+                                <div className="mt-3">
+                                  <p className="text-xs font-medium text-zinc-500">Risks / gaps</p>
+                                  <ul className="mt-1 list-inside list-disc text-left text-sm text-zinc-300">
+                                    {session.overallEvaluation.risksOrGaps.map((s, i) => (
+                                      <li key={i}>{s}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            {session.overallEvaluation.recommendation && (
+                              <p className="mt-4 text-sm font-medium text-emerald-200/90">
+                                {session.overallEvaluation.recommendation}
+                              </p>
+                            )}
+                          </div>
+                        )}
                     </div>
                   </div>
                 ) : !interviewStarted ? (
@@ -924,22 +1042,62 @@ const StudentInterview = ({
 
                     {!submitted && (
                       <div className="flex min-h-0 flex-1 flex-col gap-3">
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
                           <label className="text-xs font-medium text-zinc-400">Your answer</label>
-                          {isDictating && (
-                            <span className="flex items-center gap-1.5 text-xs font-medium text-blue-400">
-                              <span className="relative flex h-2 w-2">
-                                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75"></span>
-                                <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500"></span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {(isLiveSttActive || isLiveSttConnecting) && (
+                              <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
+                                <span className="relative flex h-2 w-2">
+                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
+                                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+                                </span>
+                                Live voice (ElevenLabs)
                               </span>
-                              Listening via Mic...
-                            </span>
-                          )}
+                            )}
+                            <button
+                              type="button"
+                              onClick={isLiveSttActive || isLiveSttConnecting ? stopLiveVoice : startLiveVoice}
+                              disabled={submitted || submitting}
+                              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-45 ${
+                                isLiveSttActive || isLiveSttConnecting
+                                  ? 'border-red-600 bg-red-950/40 text-red-200 hover:bg-red-950/60'
+                                  : 'border-zinc-600 text-zinc-200 hover:bg-zinc-700/60'
+                              }`}
+                            >
+                              {isLiveSttActive || isLiveSttConnecting ? (
+                                <>
+                                  <Square className="h-3.5 w-3.5 fill-current" />
+                                  Stop live voice
+                                </>
+                              ) : (
+                                <>
+                                  <Mic className="h-3.5 w-3.5" />
+                                  Start live voice
+                                </>
+                              )}
+                            </button>
+                          </div>
                         </div>
+                        {livePartialText ? (
+                          <p className="rounded-lg border border-zinc-700/80 bg-zinc-900/80 px-3 py-2 text-xs italic text-zinc-400">
+                            Live: {livePartialText}
+                          </p>
+                        ) : null}
+                        {sttError && (
+                          <div className="flex items-start gap-2 rounded-lg border border-amber-900/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+                            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>{sttError}</span>
+                          </div>
+                        )}
+                        <p className="text-[11px] leading-snug text-zinc-500">
+                          Start live voice to stream speech-to-text as you speak. When you are finished, stop live voice
+                          (optional), edit the text if needed, then submit — the next question appears only after you
+                          submit. Answers are scored with Gemini for a summary at the end.
+                        </p>
                         <textarea
                           value={answerText}
                           onChange={(e) => setAnswerText(e.target.value)}
-                          placeholder="Type your answer here…"
+                          placeholder="Type here, or use Start live voice for streaming transcription…"
                           rows={10}
                           className="min-h-[160px] flex-1 resize-none rounded-xl border border-zinc-700 bg-[#1b1b1f] px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         />
