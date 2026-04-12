@@ -37,6 +37,8 @@ const RecruitmentProcess = () => {
   const [codingTest, setCodingTest] = useState(null);
   const [interviews, setInterviews] = useState([]);
   const [gdTest, setGdTest] = useState(null);
+  const [aptitudeEligibleApplications, setAptitudeEligibleApplications] = useState([]);
+  const [codingEligibleApplications, setCodingEligibleApplications] = useState([]);
   const [gdEligibleApplications, setGdEligibleApplications] = useState([]);
   const [shortlistedApplications, setShortlistedApplications] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -183,6 +185,14 @@ const RecruitmentProcess = () => {
           const applicationsData = await applicationsRes.json();
           const allApplications = applicationsData.data?.applications || [];
           
+          setAptitudeEligibleApplications(allApplications.filter(app => 
+            ['SHORTLISTED', 'APTITUDE_STARTED'].includes(app.status)
+          ));
+
+          setCodingEligibleApplications(allApplications.filter(app => 
+            ['SHORTLISTED', 'APTITUDE_PASSED', 'CODING_STARTED'].includes(app.status)
+          ));
+
           const gdEligible = allApplications.filter(
             (app) => app.status === 'CODING_PASSED' || app.status === 'GD_PASSED' || app.status === 'GD_FAILED'
           );
@@ -439,6 +449,7 @@ const RecruitmentProcess = () => {
             {activeTab === 'aptitude' ? (
               <AptitudeTestContent
                 test={aptitudeTest}
+                applications={aptitudeEligibleApplications}
                 onCreate={() => setIsCreateAptitudeOpen(true)}
                 onEdit={() => setIsEditAptitudeOpen(true)}
                 onStart={() => {
@@ -454,6 +465,7 @@ const RecruitmentProcess = () => {
             ) : activeTab === 'coding' ? (
               <CodingTestContent
                 test={codingTest}
+                applications={codingEligibleApplications}
                 onCreate={() => setIsCreateCodingOpen(true)}
                 onEdit={() => setIsEditCodingOpen(true)}
                 onStart={() => {
@@ -614,8 +626,30 @@ const RecruitmentProcess = () => {
   );
 };
 
+// Reusable List Component
+const EligibleStudentsList = ({ applications, title }) => (
+  <div className="mt-8 border-t pt-6">
+    <h4 className="text-lg font-semibold text-gray-800 mb-4">{title} ({applications?.length || 0})</h4>
+    {applications && applications.length > 0 ? (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+         {applications.map(app => (
+            <div key={app.id} className="border p-3 rounded-lg bg-white shadow-sm flex flex-col justify-center">
+              <p className="font-semibold text-gray-800">{app.student?.name}</p>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-gray-500 truncate mr-2">{app.student?.email}</span>
+                <span className="text-xs font-semibold px-2 py-1 bg-indigo-50 text-indigo-700 rounded-full">{app.status}</span>
+              </div>
+            </div>
+         ))}
+      </div>
+    ) : (
+      <p className="text-gray-500 text-sm bg-gray-50 p-4 rounded text-center">No eligible candidates available at this stage.</p>
+    )}
+  </div>
+);
+
 // Aptitude Test Content Component
-const AptitudeTestContent = ({ test, onCreate, onEdit, onStart, onStop, onView }) => {
+const AptitudeTestContent = ({ test, applications, onCreate, onEdit, onStart, onStop, onView }) => {
   if (!test || !test.questions || test.questions.length === 0) {
     return (
       <div className="text-center py-12">
@@ -633,6 +667,7 @@ const AptitudeTestContent = ({ test, onCreate, onEdit, onStart, onStop, onView }
           <Plus className="w-5 h-5" />
           Create Aptitude Test
         </button>
+        <EligibleStudentsList applications={applications} title="Students Ready for Aptitude Test" />
       </div>
     );
   }
@@ -755,6 +790,8 @@ const AptitudeTestContent = ({ test, onCreate, onEdit, onStart, onStop, onView }
           </button>
         )}
       </div>
+
+      <EligibleStudentsList applications={applications} title="Students Ready for Aptitude Test" />
     </div>
   );
 };
@@ -762,6 +799,7 @@ const AptitudeTestContent = ({ test, onCreate, onEdit, onStart, onStop, onView }
 // Coding Test Content Component
 const CodingTestContent = ({
   test,
+  applications,
   onCreate,
   onEdit,
   onStart,
@@ -785,6 +823,7 @@ const CodingTestContent = ({
           <Plus className="w-5 h-5" />
           Create Coding Test
         </button>
+        <EligibleStudentsList applications={applications} title="Students Ready for Coding Test" />
       </div>
     );
   }
@@ -922,6 +961,8 @@ const CodingTestContent = ({
           </>
         )}
       </div>
+
+      <EligibleStudentsList applications={applications} title="Students Ready for Coding Test" />
     </div>
   );
 };

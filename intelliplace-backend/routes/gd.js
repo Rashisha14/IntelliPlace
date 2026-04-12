@@ -3,10 +3,20 @@ import multer from 'multer';
 import prisma from '../lib/prisma.js';
 import { authenticateToken, authorizeCompany, authorizeStudent } from '../middleware/auth.js';
 import { activeGDs, advanceSpeaker, broadcastDeepgramOutput } from '../lib/socket.js';
-import { createClient } from '@deepgram/sdk';
+import { DeepgramClient } from '@deepgram/sdk';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
+
+
+function stripEnvQuotes(value) {
+  if (value == null) return '';
+  const s = String(value).trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1).trim();
+  }
+  return s;
+}
 
 // Company: Start or create GD
 router.post('/:jobId/gd/start', authenticateToken, authorizeCompany, async (req, res) => {
@@ -109,16 +119,13 @@ router.post('/:jobId/gd/submit-speech', authenticateToken, authorizeStudent, upl
     // Deepgram STT
     if (process.env.DEEPGRAM_API_KEY) {
       try {
-        const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
-        const { result, error } = await deepgram.listen.prerecorded.transcribeFile(
-          file.buffer,
-          {
-            model: 'nova-2',
-            smart_format: true,
-          }
-        );
-        if (error) throw error;
-        transcribedText = result.results?.channels[0]?.alternatives[0]?.transcript || '';
+        const deepgram = new DeepgramClient({ apiKey: stripEnvQuotes(process.env.DEEPGRAM_API_KEY) });
+        const dg = await deepgram.listen.v1.media.transcribeFile(file.buffer, {
+          model: 'nova-3',
+          smart_format: 'true',
+          punctuate: 'true',
+        });
+        transcribedText = dg?.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() || '';
       } catch (err) {
         console.error('Deepgram conversion error:', err);
       }
