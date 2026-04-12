@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
-import { Mic, Hand, Users, Clock, Loader2, Square } from 'lucide-react';
+import { Mic, MicOff, Hand, Users, Clock, Loader2, Square } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import { getCurrentUser } from '../utils/auth';
 import Swal from 'sweetalert2';
@@ -11,9 +11,11 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isJoined, setIsJoined] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [isReviewing, setIsReviewing] = useState(false);
+  const [transcripts, setTranscripts] = useState([]);
 
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
+  const recognitionRef = useRef(null);
   const recordingTimeoutRef = useRef(null);
 
   const user = getCurrentUser();
@@ -33,6 +35,10 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
       setIsJoined(true);
     });
 
+    newSocket.on('gd_speaker_transcript', (data) => {
+      setTranscripts(prev => [...prev, data]);
+    });
+
     setSocket(newSocket);
 
     return () => {
@@ -40,6 +46,38 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
       if (isSpeaking) stopRecording();
     };
   }, [isOpen, jobId]);
+
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = true;
+      recognitionRef.current.interimResults = true;
+      recognitionRef.current.lang = 'en-US';
+      
+      recognitionRef.current.onresult = (event) => {
+        let currentTranscript = '';
+        for (let i = 0; i < event.results.length; i++) {
+          currentTranscript += event.results[i][0].transcript;
+        }
+        setLiveTranscript(currentTranscript);
+      };
+      
+      recognitionRef.current.onerror = (e) => {
+        console.error("Speech recognition error", e.error);
+      };
+    }
+  }, []);
+
+  useEffect(() => {
+    if (gdState?.status === 'PAUSED' || gdState?.status === 'COMPLETED') {
+      if (isSpeaking) {
+        stopRecording();
+      }
+      setIsSpeaking(false);
+      clearTimeout(recordingTimeoutRef.current);
+    }
+  }, [gdState?.status]);
 
   // Handle Prep Countdown
   useEffect(() => {
@@ -82,59 +120,56 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
   };
 
   const startRecording = async () => {
-    if (!navigator.mediaDevices) {
-      Swal.fire({ icon: 'error', title: 'Microphone not supported on this browser' });
+    if (!recognitionRef.current) {
+      Swal.fire({ icon: 'error', title: 'Speech Recognition not supported in this browser' });
       return;
     }
+    setLiveTranscript('');
+    setIsReviewing(false);
+    
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-
-      mediaRecorderRef.current.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
-      mediaRecorderRef.current.onstop = submitAudio;
-
-      mediaRecorderRef.current.start();
+      recognitionRef.current.start();
       setIsSpeaking(true);
 
       // Safety timeout: 90 seconds
       recordingTimeoutRef.current = setTimeout(() => {
-        if (mediaRecorderRef.current?.state === 'recording') {
+        if (isSpeaking) {
           stopRecording();
         }
       }, 90000);
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Microphone Access Denied' });
+      console.error(err);
     }
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
     }
     setIsSpeaking(false);
+    setIsReviewing(true);
     clearTimeout(recordingTimeoutRef.current);
   };
 
-  const submitAudio = async () => {
-    const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-    const formData = new FormData();
-    formData.append('audio', blob, 'speech.webm');
-
+  const submitSpeechText = async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/submit-speech`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-        body: formData,
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}` 
+        },
+        body: JSON.stringify({ text: liveTranscript }),
       });
       if (!res.ok) throw new Error('Submission failed');
+      
+      setIsReviewing(false);
+      setLiveTranscript('');
     } catch (err) {
       console.error(err);
-      Swal.fire({ icon: 'error', title: 'Speech parsing failed', text: err.message });
+      Swal.fire({ icon: 'error', title: 'Speech submission failed', text: err.message });
     }
   };
 
@@ -175,27 +210,55 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
               {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
             </div>
           </div>
+        ) : gdState.status === 'PAUSED' ? (
+          <div className="flex-1 flex flex-col items-center justify-center bg-yellow-50">
+            <Clock className="w-20 h-20 text-yellow-500 mb-6 animate-pulse" />
+            <h3 className="text-3xl font-bold text-gray-800 mb-4">Discussion Paused</h3>
+            <p className="text-xl text-gray-600">The company has temporarily paused the discussion.</p>
+            <p className="text-lg text-gray-500 mt-2">Please wait for them to resume.</p>
+          </div>
         ) : gdState.status === 'ACTIVE' ? (
           <div className="flex-1 flex p-6 gap-6 bg-gray-50">
             
             {/* Main Stage */}
             <div className="flex-col flex flex-1">
               {gdState.activeSpeaker?.studentId === user.id ? (
-                <div className={`flex-1 rounded-xl shadow-inner border-4 p-8 flex flex-col items-center justify-center transition-colors ${isSpeaking ? 'bg-red-50 border-red-500' : 'bg-green-50 border-green-500'}`}>
-                  <h3 className="text-3xl font-bold text-gray-800 mb-2">It's Your Turn!</h3>
-                  <p className="text-gray-600 mb-10 text-lg">Press and hold Spacebar, or hold the button below to speak.</p>
-                  
-                  <button 
-                    onMouseDown={startRecording}
-                    onMouseUp={stopRecording}
-                    onTouchStart={startRecording}
-                    onTouchEnd={stopRecording}
-                    className={`w-40 h-40 rounded-full flex flex-col items-center justify-center gap-3 transition-transform shadow-xl ${isSpeaking ? 'bg-red-600 scale-110 text-white shadow-red-200' : 'bg-green-600 hover:bg-green-700 text-white shadow-green-200 hover:scale-105'}`}
-                  >
-                    <Mic className={`w-16 h-16 ${isSpeaking ? 'animate-bounce' : ''}`} />
-                    <span className="font-bold text-lg">{isSpeaking ? 'RECORDING' : 'HOLD TO SPEAK'}</span>
-                  </button>
-                  {isSpeaking && <p className="text-red-600 font-bold mt-8 animate-pulse text-xl">Speaking... max 90s</p>}
+                <div className={`flex-1 rounded-xl shadow-inner border-4 p-8 flex flex-col items-center justify-center transition-colors ${isSpeaking ? 'bg-red-50 border-red-500' : isReviewing ? 'bg-blue-50 border-blue-500' : 'bg-green-50 border-green-500'}`}>
+                  {!isReviewing ? (
+                    <>
+                      <h3 className="text-3xl font-bold text-gray-800 mb-2">It's Your Turn!</h3>
+                      <p className="text-gray-600 mb-6 text-lg">Press and hold Spacebar, or hold the button below to speak.</p>
+                      
+                      <div className="w-full max-w-md h-32 bg-white rounded shadow-inner p-4 overflow-auto border text-gray-700 italic mb-6">
+                        {liveTranscript || 'Your words will appear here...'}
+                      </div>
+
+                      <button 
+                        onMouseDown={startRecording}
+                        onMouseUp={stopRecording}
+                        onTouchStart={startRecording}
+                        onTouchEnd={stopRecording}
+                        className={`w-32 h-32 rounded-full flex flex-col items-center justify-center gap-3 transition-transform shadow-xl ${isSpeaking ? 'bg-red-600 scale-110 text-white shadow-red-200' : 'bg-green-600 hover:bg-green-700 text-white shadow-green-200 hover:scale-105'}`}
+                      >
+                        <Mic className={`w-12 h-12 ${isSpeaking ? 'animate-bounce' : ''}`} />
+                        <span className="font-bold text-sm">{isSpeaking ? 'RECORDING' : 'HOLD TO SPEAK'}</span>
+                      </button>
+                      {isSpeaking && <p className="text-red-600 font-bold mt-4 animate-pulse">Speaking... max 90s</p>}
+                    </>
+                  ) : (
+                    <>
+                       <h3 className="text-2xl font-bold text-blue-900 mb-4">Review Your Submission</h3>
+                       <textarea 
+                          className="w-full max-w-lg h-40 bg-white border border-blue-300 rounded p-4 mb-6 shadow-inner text-gray-800 font-medium"
+                          value={liveTranscript}
+                          onChange={(e) => setLiveTranscript(e.target.value)}
+                       />
+                       <div className="flex gap-4">
+                         <button onClick={() => setIsReviewing(false)} className="px-6 py-3 bg-gray-400 text-white rounded font-bold hover:bg-gray-500">Discard & Re-Record</button>
+                         <button onClick={submitSpeechText} className="px-8 py-3 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow-lg">Upload Response</button>
+                       </div>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="flex-1 rounded-xl bg-white shadow-sm border p-8 flex flex-col items-center justify-center">
@@ -231,21 +294,42 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
               )}
             </div>
 
-            {/* Sidebar Queue */}
-            <div className="w-64 bg-white rounded-xl shadow-sm border p-4 flex flex-col">
-              <h4 className="font-bold border-b pb-3 mb-3 text-gray-700 flex items-center justify-between">
-                Speaker Queue <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">{gdState.queue.length}</span>
-              </h4>
-              <ul className="flex-1 overflow-auto space-y-2">
-                {gdState.queue.length === 0 ? (
-                  <p className="text-gray-400 text-sm text-center py-4">Queue is empty</p>
-                ) : gdState.queue.map((q, idx) => (
-                  <li key={idx} className={`p-3 rounded-lg text-sm border flex items-center gap-3 ${q.studentId === user.id ? 'bg-blue-50 border-blue-200 text-blue-900 font-bold' : 'bg-gray-50 border-gray-100 text-gray-700'}`}>
-                    <span className="opacity-50 font-mono">#{idx + 1}</span>
-                    {q.name} {q.studentId === user.id && '(You)'}
-                  </li>
-                ))}
-              </ul>
+            {/* Sidebar Queue & Transcripts */}
+            <div className="w-80 flex flex-col gap-4">
+              
+              {/* Queue */}
+              <div className="bg-white rounded-xl shadow-sm border p-4 flex flex-col max-h-[40%]">
+                <h4 className="font-bold border-b pb-3 mb-3 text-gray-700 flex items-center justify-between">
+                  Speaker Queue <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">{gdState.queue.length}</span>
+                </h4>
+                <ul className="flex-1 overflow-auto space-y-2">
+                  {gdState.queue.length === 0 ? (
+                    <p className="text-gray-400 text-sm text-center py-4">Queue is empty</p>
+                  ) : gdState.queue.map((q, idx) => (
+                    <li key={idx} className={`p-3 rounded-lg text-sm border flex items-center gap-3 ${q.studentId === user.id ? 'bg-blue-50 border-blue-200 text-blue-900 font-bold' : 'bg-gray-50 border-gray-100 text-gray-700'}`}>
+                      <span className="opacity-50 font-mono">#{idx + 1}</span>
+                      {q.name} {q.studentId === user.id && '(You)'}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {/* Transcripts */}
+              <div className="bg-white rounded-xl shadow-sm border p-4 flex flex-col flex-1 overflow-hidden">
+                <h4 className="font-bold border-b pb-3 mb-3 text-gray-700 flex items-center justify-between">
+                  Discussion Transcript <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">{transcripts.length} logs</span>
+                </h4>
+                <div className="flex-1 overflow-auto space-y-3 pr-2">
+                  {transcripts.map((t, idx) => (
+                     <div key={idx} className="bg-gray-50 rounded p-3 text-sm border border-gray-100 shadow-sm">
+                        <strong className={`block mb-1 ${t.studentId === user.id ? 'text-green-700' : 'text-indigo-700'}`}>{t.name} {t.studentId === user.id && '(You)'}</strong>
+                        <p className="text-gray-700 leading-relaxed">{t.text || <em className="text-gray-400">Silent / No text transcribed</em>}</p>
+                     </div>
+                  ))}
+                  {transcripts.length === 0 && <p className="text-gray-400 text-sm italic text-center mt-4">Transcripts will appear here as participants speak.</p>}
+                </div>
+              </div>
+
             </div>
             
           </div>

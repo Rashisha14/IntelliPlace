@@ -62,13 +62,15 @@ router.post('/:jobId/gd/start', authenticateToken, authorizeCompany, async (req,
       req.io.to(`gd_${jobId}`).emit('gd_state_update', state);
     }
 
+    const io = req.io;
+
     // Auto-advance to ACTIVE state when prep ends
     setTimeout(async () => {
       const liveState = activeGDs.get(jobId);
       if (liveState && liveState.status === 'PREP') {
         liveState.status = 'ACTIVE';
         await prisma.groupDiscussion.update({ where: { jobId }, data: { status: 'ACTIVE', startedAt: new Date() } });
-        req.io.to(`gd_${jobId}`).emit('gd_state_update', liveState);
+        io.to(`gd_${jobId}`).emit('gd_state_update', liveState);
       }
     }, gd.prepDuration * 1000);
 
@@ -101,49 +103,71 @@ router.post('/:jobId/gd/stop', authenticateToken, authorizeCompany, async (req, 
   }
 });
 
-// Student: Submit Audio (Speech to Text)
-router.post('/:jobId/gd/submit-speech', authenticateToken, authorizeStudent, upload.single('audio'), async (req, res) => {
+// Company: Pause GD
+router.post('/:jobId/gd/pause', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.jobId);
+    await prisma.groupDiscussion.update({ where: { jobId }, data: { status: 'PAUSED' } });
+    
+    const gdState = activeGDs.get(jobId);
+    if (gdState && gdState.status === 'ACTIVE') {
+      gdState.status = 'PAUSED';
+      if (req.io) req.io.to(`gd_${jobId}`).emit('gd_state_update', gdState);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error pausing GD:', error);
+    res.status(500).json({ success: false, message: 'Failed to pause GD' });
+  }
+});
+
+// Company: Resume GD
+router.post('/:jobId/gd/resume', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.jobId);
+    await prisma.groupDiscussion.update({ where: { jobId }, data: { status: 'ACTIVE' } });
+    
+    const gdState = activeGDs.get(jobId);
+    if (gdState && gdState.status === 'PAUSED') {
+      gdState.status = 'ACTIVE';
+      if (req.io) req.io.to(`gd_${jobId}`).emit('gd_state_update', gdState);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error resuming GD:', error);
+    res.status(500).json({ success: false, message: 'Failed to resume GD' });
+  }
+});
+
+// Student: Submit Audio (Speech to Text) or Manual Text Array
+router.post('/:jobId/gd/submit-speech', authenticateToken, authorizeStudent, express.json(), async (req, res) => {
   try {
     const jobId = parseInt(req.params.jobId);
     const studentId = req.user.id;
-    const file = req.file;
+    const { text } = req.body;
 
-    if (!file) {
-      // Just step down if no audio (auto skip/silent)
+    let transcribedText = text || '';
+
+    // If perfectly empty string, we can just jump skips
+    if (!transcribedText.trim()) {
       advanceSpeaker(jobId, req.io);
-      return res.json({ success: true, message: 'Skipped' });
-    }
-
-    let transcribedText = '';
-    
-    // Deepgram STT
-    if (process.env.DEEPGRAM_API_KEY) {
-      try {
-        const deepgram = new DeepgramClient({ apiKey: stripEnvQuotes(process.env.DEEPGRAM_API_KEY) });
-        const dg = await deepgram.listen.v1.media.transcribeFile(file.buffer, {
-          model: 'nova-3',
-          smart_format: 'true',
-          punctuate: 'true',
-        });
-        transcribedText = dg?.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() || '';
-      } catch (err) {
-        console.error('Deepgram conversion error:', err);
-      }
-    } else {
-      transcribedText = '[Deepgram API Key not configured. Audio recorded but not transcribed.]';
+      return res.json({ success: true, message: 'Skipped - no audio/text passed' });
     }
 
     // Save to DB
+    const gdDb = await prisma.groupDiscussion.findUnique({ where: { jobId } });
+    if (!gdDb) throw new Error('GD not found');
+
     const participant = await prisma.groupDiscussionParticipant.create({
       data: {
-        gdId: (await prisma.groupDiscussion.findUnique({ where: { jobId } })).id,
+        gdId: gdDb.id,
         studentId,
         status: 'SPEAKING_DONE',
         transcribedText,
       }
     });
 
-    // Broadcast output
+    // Broadcast output heavily
     broadcastDeepgramOutput(jobId, req.io, {
       studentId,
       name: req.user.name || 'Student',
@@ -156,8 +180,8 @@ router.post('/:jobId/gd/submit-speech', authenticateToken, authorizeStudent, upl
 
     res.json({ success: true, text: transcribedText });
   } catch (error) {
-    console.error('Error submitting speech:', error);
-    res.status(500).json({ success: false, message: 'Failed to submit speech' });
+    console.error('Error submitting speech payload:', error);
+    res.status(500).json({ success: false, message: 'Failed to submit voice payload' });
   }
 });
 

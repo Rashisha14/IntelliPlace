@@ -90,6 +90,28 @@ export default function CompanyGDManager({ jobId, initialGd, applications, token
     }
   };
 
+  const handlePauseGD = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/pause`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleResumeGD = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/resume`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleNextSpeaker = async () => {
     try {
       await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/next-speaker`, {
@@ -193,28 +215,61 @@ export default function CompanyGDManager({ jobId, initialGd, applications, token
           <Clock className="w-12 h-12" />
           {mins}:{secs.toString().padStart(2, '0')}
         </div>
-        <p className="text-gray-600 mb-4">Students are currently preparing. The discussion will transition to ACTIVE automatically when the timer reaches zero.</p>
-        <button onClick={handleStopGD} className="btn bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 inline-flex items-center gap-2">
+        <p className="text-gray-600 mb-6">Students are currently preparing. The discussion will transition to ACTIVE automatically when the timer reaches zero.</p>
+        <button onClick={handleStopGD} className="inline-flex items-center gap-2 px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium">
           <Square className="w-4 h-4" /> Cancel GD
         </button>
       </div>
     );
   }
 
-  if (gdState.status === 'ACTIVE') {
+  if (gdState.status === 'ACTIVE' || gdState.status === 'PAUSED') {
     return (
       <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-        <div className="flex justify-between items-center border-b pb-4 mb-4">
+        {/* Header with big stop button */}
+        <div className="flex justify-between items-center border-b pb-6 mb-6">
           <div>
-            <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-              <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span>
-              Live Group Discussion
+            <h3 className="text-2xl font-bold text-gray-800 flex items-center gap-3 mb-2">
+              Group Discussion Phase
             </h3>
-            <p className="text-gray-600 text-sm mt-1">Topic: {gdState.topic}</p>
+            <div className="flex items-center gap-3">
+              {gdState.status === 'PAUSED' ? (
+                <span className="px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm font-bold flex items-center gap-2">
+                  <div className="w-2 h-2 bg-yellow-600 rounded-full"></div> PAUSED
+                </span>
+              ) : (
+                <span className="px-3 py-1 bg-red-100 text-red-800 rounded-full text-sm font-bold flex items-center gap-2 animate-pulse">
+                  <div className="w-2 h-2 bg-red-600 rounded-full"></div> LIVE ACTIVE
+                </span>
+              )}
+              <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                Topic: {gdState.topic}
+              </span>
+            </div>
           </div>
-          <button onClick={handleStopGD} className="btn bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 items-center gap-2 flex">
-            <Square className="w-4 h-4"/> Stop GD
-          </button>
+          <div className="flex items-center gap-3">
+            {gdState.status === 'PAUSED' ? (
+              <button 
+                onClick={handleResumeGD} 
+                className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-md font-bold text-lg hover:scale-105 transition-transform"
+              >
+                <Play className="w-5 h-5"/> Resume GD
+              </button>
+            ) : (
+              <button 
+                onClick={handlePauseGD} 
+                className="inline-flex items-center gap-2 px-6 py-3 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 shadow-md font-bold text-lg hover:scale-105 transition-transform"
+              >
+                <Square className="w-5 h-5"/> Pause GD
+              </button>
+            )}
+            <button 
+              onClick={handleStopGD} 
+              className="inline-flex items-center gap-2 px-8 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 shadow-md font-bold text-lg hover:scale-105 transition-transform"
+            >
+              <Square className="w-5 h-5"/> End & Evaluate
+            </button>
+          </div>
         </div>
 
         <div className="grid md:grid-cols-3 gap-6">

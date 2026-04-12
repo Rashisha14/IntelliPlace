@@ -41,6 +41,12 @@ app.use(express.urlencoded({ extended: true }));
 // Serve uploaded files (CVs)
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
+// Socket.io injection for routes
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/dashboard', dashboardRoutes);
@@ -50,12 +56,6 @@ app.use('/api/applications', applicationsRoutes);
 app.use('/api/jobs', codingTestsRoutes);
 app.use('/api/jobs', interviewsRoutes);
 app.use('/api/jobs', gdRoutes);
-
-// Socket.io injection for routes if needed
-app.use((req, res, next) => {
-  req.io = io;
-  next();
-});
 
 // Health check
 app.get('/api/health', async (req, res) => {
