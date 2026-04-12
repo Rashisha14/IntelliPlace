@@ -664,7 +664,7 @@ const AptitudeTestContent = ({ test, applications, onCreate, onEdit, onStart, on
           <Plus className="w-5 h-5" />
           Create Aptitude Test
         </button>
-        <EligibleStudentsList applications={applications} title="Students Ready for Aptitude Test" />
+        <EligibleStudentsList applications={applications} title="Eligible" />
       </div>
     );
   }
@@ -788,7 +788,7 @@ const AptitudeTestContent = ({ test, applications, onCreate, onEdit, onStart, on
         )}
       </div>
 
-      <EligibleStudentsList applications={applications} title="Students Ready for Aptitude Test" />
+      <EligibleStudentsList applications={applications} title="Eligible" />
     </div>
   );
 };
@@ -820,7 +820,7 @@ const CodingTestContent = ({
           <Plus className="w-5 h-5" />
           Create Coding Test
         </button>
-        <EligibleStudentsList applications={applications} title="Students Ready for Coding Test" />
+        <EligibleStudentsList applications={applications} title="Eligible" />
       </div>
     );
   }
@@ -959,7 +959,7 @@ const CodingTestContent = ({
         )}
       </div>
 
-      <EligibleStudentsList applications={applications} title="Students Ready for Coding Test" />
+      <EligibleStudentsList applications={applications} title="Eligible" />
     </div>
   );
 };

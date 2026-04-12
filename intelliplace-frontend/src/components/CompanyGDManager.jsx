@@ -161,7 +161,7 @@ export default function CompanyGDManager({ jobId, initialGd, applications, token
         </div>
 
         <div className="mt-8 border-t pt-6">
-          <h4 className="text-lg font-semibold text-gray-800 mb-4">Students Ready for Group Discussion ({applications?.length || 0})</h4>
+          <h4 className="text-lg font-semibold text-gray-800 mb-4">Eligible ({applications?.length || 0})</h4>
           {applications && applications.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                {applications.map(app => (
