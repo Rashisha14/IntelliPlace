@@ -1,4 +1,6 @@
 import express from 'express';
+import http from 'http';
+import { Server } from 'socket.io';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import prisma from './lib/prisma.js';
@@ -9,12 +11,21 @@ import notificationsRoutes from './routes/notifications.js';
 import applicationsRoutes from './routes/applications.js';
 import codingTestsRoutes from './routes/codingTests.js';
 import interviewsRoutes from './routes/interviews.js';
+import gdRoutes from './routes/gd.js';
 import path from 'path';
 import bcrypt from 'bcryptjs';
 
 dotenv.config();
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    credentials: true,
+  }
+});
 const PORT = process.env.PORT || 5000;
 
 // Middleware
@@ -38,6 +49,13 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/applications', applicationsRoutes);
 app.use('/api/jobs', codingTestsRoutes);
 app.use('/api/jobs', interviewsRoutes);
+app.use('/api/jobs', gdRoutes);
+
+// Socket.io injection for routes if needed
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
 
 // Health check
 app.get('/api/health', async (req, res) => {
@@ -88,8 +106,12 @@ app.post('/api/init-db', async (req, res) => {
   }
 });
 
+// Import socket handlers
+import setupGDSockets from './lib/socket.js';
+setupGDSockets(io);
+
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🔧 Initialize DB: POST http://localhost:${PORT}/api/init-db`);

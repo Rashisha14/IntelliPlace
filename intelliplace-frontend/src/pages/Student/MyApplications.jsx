@@ -6,9 +6,10 @@ import Modal from '../../components/Modal';
 import StudentTakeTest from '../../components/StudentTakeTest';
 import StudentTakeCodingTest from '../../components/StudentTakeCodingTest';
 import StudentInterview from '../../components/StudentInterview';
+import StudentGroupDiscussion from '../../components/StudentGroupDiscussion';
 import { useNavigate } from 'react-router-dom';
 import { getCurrentUser } from '../../utils/auth';
-import { Play, Code, RefreshCw, Video } from 'lucide-react';
+import { Play, Code, RefreshCw, Video, Users } from 'lucide-react';
 
 /** Statuses where aptitude/coding/interview actions apply. Must include CODING_PASSED (set by backend after coding test). */
 const ELIGIBLE_STATUSES = [
@@ -63,6 +64,7 @@ const MyApplications = () => {
   const [notice, setNotice] = useState(null);
   const [isTestOpen, setIsTestOpen] = useState(false);
   const [isCodingTestOpen, setIsCodingTestOpen] = useState(false);
+  const [isGDOpen, setIsGDOpen] = useState(false);
   const [isInterviewOpen, setIsInterviewOpen] = useState(false);
   const [testJobId, setTestJobId] = useState(null);
   const [interviewData, setInterviewData] = useState(null); // { jobId, applicationId, question, questionIndex }
@@ -450,7 +452,20 @@ const MyApplications = () => {
                     </>
                   )}
                   
-                  {ELIGIBLE_STATUSES.includes(app.status?.toUpperCase()) &&
+                  {['CODE PASS', 'PASSED CODING', 'CODING_PASSED', 'GD_FAILED'].includes(app.status?.toUpperCase()) && (
+                    <button
+                      onClick={() => {
+                        setTestJobId(Number(app.jobId));
+                        setIsGDOpen(true);
+                      }}
+                      className="flex items-center gap-2 px-3 py-1 bg-orange-600 text-white rounded-md text-sm hover:bg-orange-700"
+                    >
+                      <Users className="w-4 h-4" />
+                      Join Group Discussion
+                    </button>
+                  )}
+
+                  {['GD_PASSED'].includes(app.status?.toUpperCase()) &&
                     (interviewSessionsByAppId[app.id] ||
                       CAN_JOIN_INTERVIEW_STATUS.includes(app.status?.toUpperCase())) && (
                     <button
@@ -529,6 +544,14 @@ const MyApplications = () => {
             }
           })();
         }}
+      />
+      
+      {/* Student Group Discussion Modal */}
+      <StudentGroupDiscussion
+        isOpen={isGDOpen && !!testJobId}
+        onClose={() => { setIsGDOpen(false); setTestJobId(null); fetchApplications(); }}
+        jobId={testJobId}
+        applicationId={applications.find(a => a.jobId === testJobId)?.id}
       />
       
       {/* Student Interview Modal */}

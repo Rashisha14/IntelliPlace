@@ -487,8 +487,8 @@ router.post('/:jobId/interviews/:applicationId/start', authenticateToken, author
       return res.status(404).json({ success: false, message: 'Application not found' });
     }
 
-    if (application.status !== 'CODING_PASSED') {
-      return res.status(403).json({ success: false, message: 'Only students who passed the coding test can be interviewed' });
+    if (application.status !== 'GD_PASSED') {
+      return res.status(403).json({ success: false, message: 'Only students who passed the Group Discussion can be interviewed' });
     }
 
     // Get or create interview

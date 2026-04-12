@@ -25,6 +25,7 @@ import CompanyViewTest from '../../components/CompanyViewTest';
 import CompanyStartInterview from '../../components/CompanyStartInterview';
 import ApplicationsList from '../../components/ApplicationsList';
 import Modal from '../../components/Modal';
+import CompanyGDManager from '../../components/CompanyGDManager';
 
 const RecruitmentProcess = () => {
   const navigate = useNavigate();
@@ -35,6 +36,8 @@ const RecruitmentProcess = () => {
   const [aptitudeTest, setAptitudeTest] = useState(null);
   const [codingTest, setCodingTest] = useState(null);
   const [interviews, setInterviews] = useState([]);
+  const [gdTest, setGdTest] = useState(null);
+  const [gdEligibleApplications, setGdEligibleApplications] = useState([]);
   const [shortlistedApplications, setShortlistedApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const isFetchingRef = useRef(false);
@@ -179,9 +182,15 @@ const RecruitmentProcess = () => {
         if (applicationsRes.ok) {
           const applicationsData = await applicationsRes.json();
           const allApplications = applicationsData.data?.applications || [];
+          
+          const gdEligible = allApplications.filter(
+            (app) => app.status === 'CODING_PASSED' || app.status === 'GD_PASSED' || app.status === 'GD_FAILED'
+          );
+          setGdEligibleApplications(gdEligible);
+
           // Filter applicants eligible for interview
           const shortlisted = allApplications.filter(
-            (app) => app.status === 'CODING_PASSED'
+            (app) => app.status === 'GD_PASSED'
           );
           setShortlistedApplications(shortlisted);
         } else {
@@ -398,6 +407,19 @@ const RecruitmentProcess = () => {
               </div>
             </button>
             <button
+              onClick={() => setActiveTab('gd')}
+              className={`flex-1 px-6 py-4 text-center font-medium transition-colors ${
+                activeTab === 'gd'
+                  ? 'text-orange-600 border-b-2 border-orange-600 bg-orange-50'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+              }`}
+            >
+              <div className="flex items-center justify-center gap-2">
+                <Users className="w-5 h-5" />
+                Group Discussion
+              </div>
+            </button>
+            <button
               onClick={() => setActiveTab('interview')}
               className={`flex-1 px-6 py-4 text-center font-medium transition-colors ${
                 activeTab === 'interview'
@@ -446,6 +468,13 @@ const RecruitmentProcess = () => {
                   setTestToStart({ type: 'coding' });
                   setIsStartConfirmOpen(true);
                 }}
+              />
+            ) : activeTab === 'gd' ? (
+              <CompanyGDManager 
+                jobId={jobId} 
+                initialGd={job?.groupDiscussion} 
+                applications={gdEligibleApplications} 
+                token={localStorage.getItem('token')}
               />
             ) : (
               <InterviewContent

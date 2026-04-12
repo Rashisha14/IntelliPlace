@@ -24,6 +24,7 @@ model Student {
   notifications Notification[]
   codingSubmissions CodingSubmission[]
   aptitudeSubmissions AptitudeSubmission[]
+  gdParticipants GroupDiscussionParticipant[]
 
   @@index([email])
   @@map("students")
@@ -69,6 +70,7 @@ model Job {
   notifications        Notification[]
   codingTest           CodingTest?
   aptitudeTest         AptitudeTest?
+  groupDiscussion      GroupDiscussion?
 
   @@index([companyId])
   @@map("jobs")
@@ -308,4 +310,43 @@ model AptitudeSubmission {
   @@index([testId])
   @@index([studentId])
   @@map("aptitude_submissions")
+}
+
+model GroupDiscussion {
+  id            Int            @id @default(autoincrement())
+  jobId         Int            @unique @map("job_id")
+  topic         String
+  status        String         @default("CREATED") // CREATED, PREP, ACTIVE, COMPLETED
+  prepDuration  Int            @default(120) // in seconds
+  startedAt     DateTime?      @map("started_at")
+  prepStartedAt DateTime?      @map("prep_started_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  
+  job           Job            @relation(fields: [jobId], references: [id])
+  participants  GroupDiscussionParticipant[]
+
+  @@map("group_discussions")
+}
+
+model GroupDiscussionParticipant {
+  id            Int            @id @default(autoincrement())
+  gdId          Int            @map("gd_id")
+  studentId     Int            @map("student_id")
+  status        String         @default("WAITING") // WAITING, IN_QUEUE, SPEAKING, DONE, FAILED, PASSED
+  joinedAt      DateTime       @default(now()) @map("joined_at")
+  queuePosition Int?           @map("queue_position")
+  audioUrl      String?        @map("audio_url")
+  transcribedText String?      @map("transcribed_text")
+  score         Float?
+  feedback      String?
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  
+  gd            GroupDiscussion @relation(fields: [gdId], references: [id])
+  student       Student        @relation(fields: [studentId], references: [id])
+
+  @@index([gdId])
+  @@index([studentId])
+  @@map("group_discussion_participants")
 }
