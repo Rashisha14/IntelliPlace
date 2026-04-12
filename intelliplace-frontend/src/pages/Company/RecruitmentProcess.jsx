@@ -185,24 +185,21 @@ const RecruitmentProcess = () => {
           const applicationsData = await applicationsRes.json();
           const allApplications = applicationsData.data?.applications || [];
           
-          setAptitudeEligibleApplications(allApplications.filter(app => 
-            ['SHORTLISTED', 'APTITUDE_STARTED'].includes(app.status)
-          ));
+          const getLevel = (status) => {
+            const s = status?.toUpperCase() || '';
+            if (['SHORTLISTED', 'APTITUDE_STARTED', 'FAILED APTITUDE', 'APTITUDE_FAILED'].includes(s)) return 1;
+            if (['APTITUDE_PASSED', 'CODING_STARTED', 'FAILED CODING', 'CODING_FAILED', 'CODE FAIL'].includes(s)) return 2;
+            if (['PASSED CODING', 'CODING_PASSED', 'CODE PASS', 'GD_FAILED'].includes(s)) return 3;
+            if (['GD_PASSED', 'INTERVIEW_SCHEDULED', 'INTERVIEW FAIL', 'FAILED INTERVIEW', 'SELECTED', 'HIRED', 'OFFERED', 'REJECTED'].includes(s)) return 4;
+            return 0; // PENDING, REVIEWING, APP FAIL
+          };
 
-          setCodingEligibleApplications(allApplications.filter(app => 
-            ['SHORTLISTED', 'APTITUDE_PASSED', 'CODING_STARTED'].includes(app.status)
-          ));
-
-          const gdEligible = allApplications.filter(
-            (app) => app.status === 'CODING_PASSED' || app.status === 'GD_PASSED' || app.status === 'GD_FAILED'
-          );
-          setGdEligibleApplications(gdEligible);
+          setAptitudeEligibleApplications(allApplications.filter(app => getLevel(app.status) >= 1));
+          setCodingEligibleApplications(allApplications.filter(app => getLevel(app.status) >= 2));
+          setGdEligibleApplications(allApplications.filter(app => getLevel(app.status) >= 3));
 
           // Filter applicants eligible for interview
-          const shortlisted = allApplications.filter(
-            (app) => app.status === 'GD_PASSED'
-          );
-          setShortlistedApplications(shortlisted);
+          setShortlistedApplications(allApplications.filter(app => getLevel(app.status) >= 4));
         } else {
           setShortlistedApplications([]);
         }
