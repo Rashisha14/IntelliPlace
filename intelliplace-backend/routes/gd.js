@@ -167,10 +167,13 @@ router.post('/:jobId/gd/submit-speech', authenticateToken, authorizeStudent, exp
       }
     });
 
+    const studentRecord = await prisma.student.findUnique({ where: { id: studentId }});
+    const finalSpeakerName = studentRecord?.name || req.user.name || 'Student';
+
     // Broadcast output heavily
     broadcastDeepgramOutput(jobId, req.io, {
       studentId,
-      name: req.user.name || 'Student',
+      name: finalSpeakerName,
       text: transcribedText,
       timestamp: new Date().toISOString()
     });
