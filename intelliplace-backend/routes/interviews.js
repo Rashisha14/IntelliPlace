@@ -1,10 +1,21 @@
 import express from 'express';
+import multer from 'multer';
 import prisma from '../lib/prisma.js';
 import { authenticateToken, authorizeCompany, authorizeStudent } from '../middleware/auth.js';
 import axios from 'axios';
-import { generateInterviewQuestion as generateInterviewQuestionGemini } from '../lib/gemini.js';
+import { DeepgramClient } from '@deepgram/sdk';
+import {
+  generateInterviewQuestion as generateInterviewQuestionGemini,
+  evaluateInterviewAnswerGemini,
+  evaluateInterviewOverallGemini,
+} from '../lib/gemini.js';
 
 const router = express.Router();
+
+const uploadInterviewAudio = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 },
+});
 const INTERVIEW_SERVICE_URL = process.env.INTERVIEW_SERVICE_URL || 'http://localhost:8001';
 const ELEVENLABS_API_BASE = process.env.ELEVENLABS_API_BASE || 'https://api.elevenlabs.io';
 /**
@@ -14,6 +25,7 @@ const ELEVENLABS_API_BASE = process.env.ELEVENLABS_API_BASE || 'https://api.elev
 const ELEVENLABS_VOICE_ID_DEFAULT = 'JBFqnCBsd6RMkjVDRZzb';
 const ELEVENLABS_MODEL_ID_DEFAULT = 'eleven_v3';
 const ELEVENLABS_OUTPUT_FORMAT_DEFAULT = 'mp3_44100_128';
+const DEEPGRAM_STT_MODEL_DEFAULT = 'nova-3';
 
 function stripEnvQuotes(value) {
   if (value == null) return '';
@@ -39,6 +51,15 @@ function buildSelfIntroductionQuestionRecord(displayName) {
     index: 0,
     timestamp: new Date().toISOString(),
   };
+}
+
+/** Parse synchronous STT JSON (single channel or multichannel). */
+function extractElevenLabsTranscriptText(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  if (typeof payload.text === 'string' && payload.text.trim()) return payload.text.trim();
+  const first = payload.transcripts?.[0];
+  if (first && typeof first.text === 'string') return first.text.trim();
+  return '';
 }
 
 function parseElevenLabsErrorBody(error) {
@@ -73,6 +94,15 @@ function buildConversationHistory(questions, answers) {
     .filter((t) => t.question && t.answer);
 }
 
+function safeJsonParse(raw, fallback = null) {
+  if (raw == null || raw === '') return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
 /** Same merge as GET student-session — client can advance without an extra round-trip. */
 function mergeSessionQuestionsWithAnswers(sessionRow) {
   if (!sessionRow) return null;
@@ -86,12 +116,79 @@ function mergeSessionQuestionsWithAnswers(sessionRow) {
       index: qIndex,
       answer: answer ? answer.answer : null,
       analysis: answer?.analysis || null,
+      answerInputMode: answer?.inputMode || null,
+      pairedQuestionText: answer?.questionText || q.question || null,
+      geminiEvaluation: answer?.geminiEvaluation || null,
     };
   });
   return {
     ...sessionRow,
     questions: questionsWithAnswers,
+    overallEvaluation: safeJsonParse(sessionRow.overallEvaluation, null),
   };
+}
+
+/**
+ * When every question has an answer and question count reached session cap, mark complete and attach Gemini overall evaluation.
+ */
+async function finalizeInterviewIfComplete(prismaClient, interview, sessionRow, job, application) {
+  if (!sessionRow || sessionRow.status !== 'ACTIVE') {
+    return { completed: false, sessionRow };
+  }
+  const mode = String(sessionRow.mode || '').toUpperCase();
+  if (mode !== 'TECH' && mode !== 'HR') {
+    return { completed: false, sessionRow };
+  }
+  const qArr = JSON.parse(sessionRow.questions || '[]');
+  const ansArr = JSON.parse(sessionRow.answers || '[]');
+  const cap = getMaxQuestionsForSession(sessionRow);
+  if (qArr.length < cap || !everyQuestionHasAnswer(qArr, ansArr)) {
+    return { completed: false, sessionRow };
+  }
+
+  const student = application?.student;
+  const turns = ansArr.map((a) => {
+    const qi = a.questionIndex;
+    const qObj = qArr.find((q, i) => (q.index !== undefined ? q.index : i) === qi);
+    return {
+      question: qObj?.question || a.questionText || '',
+      answer: typeof a.answer === 'string' ? a.answer : '',
+      score: a.geminiEvaluation?.score ?? null,
+      summary: a.geminiEvaluation?.summary ?? '',
+    };
+  });
+
+  let overallEvaluation = null;
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      overallEvaluation = await evaluateInterviewOverallGemini({
+        mode,
+        jobTitle: job?.title || '',
+        jobDescription: job?.description || '',
+        candidateName: student?.name || 'Candidate',
+        turns,
+      });
+    } catch (e) {
+      console.error('[Interview] overall Gemini evaluation:', e);
+    }
+  }
+
+  await prismaClient.interviewSession.update({
+    where: { id: sessionRow.id },
+    data: {
+      status: 'COMPLETED',
+      completedAt: new Date(),
+      overallEvaluation: overallEvaluation ? JSON.stringify(overallEvaluation) : null,
+    },
+  });
+  await prismaClient.interview.update({
+    where: { id: interview.id },
+    data: { status: 'COMPLETED' },
+  });
+  const completedRow = await prismaClient.interviewSession.findUnique({
+    where: { id: sessionRow.id },
+  });
+  return { completed: true, sessionRow: completedRow };
 }
 
 /** Max AI questions: TECH uses INTERVIEW_TECH_MAX_QUESTIONS (default 12), others use INTERVIEW_MAX_QUESTIONS (default 25). */
@@ -505,7 +602,7 @@ router.post('/:jobId/interviews/:applicationId/submit-answer', authenticateToken
     const userType = req.user.userType; // JWT uses userType (not .type)
     const jobId = parseInt(req.params.jobId);
     const applicationId = parseInt(req.params.applicationId);
-    const { answer, questionIndex, audio_data, video_frames, question } = req.body;
+    const { answer, questionIndex, audio_data, video_frames, question, inputMode } = req.body;
 
     // Get active interview session
     const interview = await prisma.interview.findUnique({
@@ -595,12 +692,42 @@ router.post('/:jobId/interviews/:applicationId/submit-answer', authenticateToken
       }
     }
 
-    // Add or update answer
+    // Add or update answer (pair question + answer for evaluation; inputMode = speech | text)
+    const resolvedInputMode =
+      inputMode === 'speech' || inputMode === 'text' ? inputMode : audio_data || video_frames ? 'speech' : 'text';
+    const answerTextFinal = answer || analysisResult?.transcribed_text || 'Audio/video submitted';
+
+    let geminiEvaluation = null;
+    if (
+      userType === 'student' &&
+      answerTextFinal &&
+      String(answerTextFinal).trim() &&
+      !audio_data &&
+      !video_frames &&
+      process.env.GEMINI_API_KEY
+    ) {
+      try {
+        geminiEvaluation = await evaluateInterviewAnswerGemini({
+          mode: session.mode,
+          jobTitle: interview.job?.title || '',
+          jobDescription: interview.job?.description || '',
+          questionText: questions[questionIdx]?.question || question || '',
+          answerText: String(answerTextFinal).trim(),
+          candidateName: interview.application?.student?.name || 'Candidate',
+        });
+      } catch (ge) {
+        console.error('[Interview] Gemini per-answer evaluation:', ge);
+      }
+    }
+
     const answerData = {
       questionIndex: questionIdx,
-      answer: answer || analysisResult?.transcribed_text || 'Audio/video submitted',
+      questionText: questions[questionIdx]?.question || question || null,
+      answer: answerTextFinal,
       timestamp: new Date().toISOString(),
       analysis: analysisResult,
+      inputMode: resolvedInputMode,
+      geminiEvaluation,
     };
 
     // Update existing answer or add new one
@@ -650,29 +777,18 @@ router.post('/:jobId/interviews/:applicationId/submit-answer', authenticateToken
     let sessionForClient = mergeSessionQuestionsWithAnswers(freshSessionRow);
 
     let interviewCompleted = false;
-    if (
-      freshSessionRow &&
-      String(freshSessionRow.mode).toUpperCase() === 'TECH' &&
-      freshSessionRow.status === 'ACTIVE'
-    ) {
-      const qArr = JSON.parse(freshSessionRow.questions || '[]');
-      const ansArr = JSON.parse(freshSessionRow.answers || '[]');
-      const cap = getMaxQuestionsForSession(freshSessionRow);
-      if (qArr.length >= cap && everyQuestionHasAnswer(qArr, ansArr)) {
-        await prisma.interviewSession.update({
-          where: { id: session.id },
-          data: { status: 'COMPLETED', completedAt: new Date() },
-        });
-        await prisma.interview.update({
-          where: { id: interview.id },
-          data: { status: 'COMPLETED' },
-        });
+    if (freshSessionRow?.status === 'ACTIVE') {
+      const fin = await finalizeInterviewIfComplete(
+        prisma,
+        interview,
+        freshSessionRow,
+        interview.job,
+        interview.application
+      );
+      if (fin.completed) {
         interviewCompleted = true;
         generationError = null;
-        const completedRow = await prisma.interviewSession.findUnique({
-          where: { id: session.id },
-        });
-        sessionForClient = mergeSessionQuestionsWithAnswers(completedRow);
+        sessionForClient = mergeSessionQuestionsWithAnswers(fin.sessionRow);
       }
     }
 
@@ -687,6 +803,7 @@ router.post('/:jobId/interviews/:applicationId/submit-answer', authenticateToken
         session: sessionForClient,
         generationError: interviewCompleted ? undefined : generationError || undefined,
         interviewCompleted,
+        overallEvaluation: sessionForClient?.overallEvaluation || undefined,
       },
     });
   } catch (error) {
@@ -792,6 +909,9 @@ router.get('/:jobId/interviews/:applicationId/student-session', authenticateToke
         index: qIndex,
         answer: answer ? answer.answer : null,
         analysis: answer?.analysis || null,
+        answerInputMode: answer?.inputMode || null,
+        pairedQuestionText: answer?.questionText || q.question || null,
+        geminiEvaluation: answer?.geminiEvaluation || null,
       };
     });
 
@@ -804,6 +924,7 @@ router.get('/:jobId/interviews/:applicationId/student-session', authenticateToke
         session: {
           ...session,
           questions: questionsWithAnswers,
+          overallEvaluation: safeJsonParse(session.overallEvaluation, null),
         },
         job: application.job,
         techQuestionCap: getMaxQuestionsForSession(session),
@@ -877,6 +998,9 @@ router.get('/:jobId/interviews/:applicationId/session', authenticateToken, autho
         index: qIndex,
         answer: answer ? answer.answer : null,
         analysis: answer?.analysis || null,
+        answerInputMode: answer?.inputMode || null,
+        pairedQuestionText: answer?.questionText || q.question || null,
+        geminiEvaluation: answer?.geminiEvaluation || null,
       };
     });
 
@@ -887,6 +1011,7 @@ router.get('/:jobId/interviews/:applicationId/session', authenticateToken, autho
         session: {
           ...session,
           questions: questionsWithAnswers,
+          overallEvaluation: safeJsonParse(session.overallEvaluation, null),
         },
       },
     });
@@ -1049,6 +1174,119 @@ router.post(
         success: false,
         message: providerMessage || 'Failed to generate speech',
       });
+    }
+  }
+);
+
+// Temporary token for browser live Deepgram STT — do not expose API key
+router.get(
+  '/:jobId/interviews/:applicationId/realtime-stt-token',
+  authenticateToken,
+  authorizeStudent,
+  async (req, res) => {
+    try {
+      const studentId = req.user.id;
+      const jobId = parseInt(req.params.jobId, 10);
+      const applicationId = parseInt(req.params.applicationId, 10);
+      const apiKey = stripEnvQuotes(process.env.DEEPGRAM_API_KEY);
+      if (!apiKey) {
+        return res.status(500).json({ success: false, message: 'Deepgram API key not configured' });
+      }
+      const application = await prisma.application.findFirst({
+        where: { id: applicationId, studentId, jobId },
+        select: { id: true },
+      });
+      if (!application) {
+        return res.status(404).json({ success: false, message: 'Application not found' });
+      }
+      const client = new DeepgramClient({ apiKey });
+      const created = await client.auth.v1.tokens.grant();
+      const token = created?.access_token;
+      if (!token) {
+        return res.status(500).json({ success: false, message: 'Could not create realtime transcription token' });
+      }
+      return res.json({ success: true, data: { token } });
+    } catch (err) {
+      console.error('[Interview] realtime-stt-token:', err);
+      const errMsg = err?.body?.err_msg || err?.message || '';
+      if (err?.statusCode === 400 && /invalid credentials|credential/i.test(String(errMsg))) {
+        return res.status(400).json({
+          success: false,
+          code: 'deepgram_invalid_key',
+          message:
+            'Deepgram rejected the API key (invalid credentials). In Deepgram Console → API Keys, create or copy the project secret key, set DEEPGRAM_API_KEY in intelliplace-backend/.env (no extra quotes/spaces), save, and fully restart node server.js.',
+        });
+      }
+      if (err?.statusCode === 403) {
+        return res.status(403).json({
+          success: false,
+          code: 'deepgram_forbidden',
+          message:
+            'Deepgram token grant is forbidden for this API key. Use a Deepgram key with Member/Admin permissions for this project (or generate a new key in the correct project), then restart backend.',
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        message: err.message || 'Failed to create transcription token',
+      });
+    }
+  }
+);
+
+// Speech-to-text for interview answers (Student) — Deepgram (batch upload fallback)
+router.post(
+  '/:jobId/interviews/:applicationId/transcribe',
+  authenticateToken,
+  authorizeStudent,
+  uploadInterviewAudio.single('audio'),
+  async (req, res) => {
+    try {
+      const studentId = req.user.id;
+      const jobId = parseInt(req.params.jobId, 10);
+      const applicationId = parseInt(req.params.applicationId, 10);
+
+      if (!req.file?.buffer?.length) {
+        return res.status(400).json({ success: false, message: 'Audio file is required (field name: audio)' });
+      }
+
+      const apiKey = stripEnvQuotes(process.env.DEEPGRAM_API_KEY);
+      if (!apiKey) {
+        return res.status(500).json({ success: false, message: 'Deepgram API key not configured' });
+      }
+
+      const application = await prisma.application.findFirst({
+        where: { id: applicationId, studentId, jobId },
+        select: { id: true },
+      });
+      if (!application) {
+        return res.status(404).json({ success: false, message: 'Application not found' });
+      }
+
+      const modelId = stripEnvQuotes(process.env.DEEPGRAM_STT_MODEL_ID) || DEEPGRAM_STT_MODEL_DEFAULT;
+      const client = new DeepgramClient({ apiKey });
+      const dg = await client.listen.v1.media.transcribeFile(req.file.buffer, {
+        model: modelId,
+        smart_format: 'true',
+        punctuate: 'true',
+      });
+      const text = dg?.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() || '';
+      if (!text) {
+        return res.status(422).json({
+          success: false,
+          message: 'No speech detected in the recording. Try speaking a little longer or check your microphone.',
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: {
+          text,
+          languageCode: dg?.results?.channels?.[0]?.detected_language || null,
+        },
+      });
+    } catch (error) {
+      console.error('Error transcribing interview audio:', error);
+      return res.status(500).json({ success: false, message: error.message || 'Transcription failed' });
     }
   }
 );

@@ -297,3 +297,170 @@ Rules:
 
   throw lastError || new Error('Gemini interview question generation failed');
 }
+
+/**
+ * Evaluate a single interview answer (Gemini).
+ * @returns {Promise<object|null>} Parsed JSON or null if API key missing / failure
+ */
+export async function evaluateInterviewAnswerGemini({
+  mode = 'HR',
+  jobTitle = '',
+  jobDescription = '',
+  questionText = '',
+  answerText = '',
+  candidateName = 'Candidate',
+}) {
+  if (!GEMINI_API_KEY) return null;
+  if (!String(answerText || '').trim()) return null;
+
+  const prompt = `You are an expert hiring interviewer evaluating ONE answer.
+
+**Interview mode:** ${mode}
+**Role:** ${jobTitle}
+**Job context (excerpt):** ${String(jobDescription || '').trim().slice(0, 4000)}
+
+**Candidate name:** ${candidateName}
+
+**Question:**
+${String(questionText || '').trim()}
+
+**Candidate's answer:**
+${String(answerText || '').trim()}
+
+Return ONLY valid JSON (no markdown) with this exact shape:
+{
+  "score": <integer 1-10>,
+  "summary": "<one sentence assessment>",
+  "strengths": ["<bullet>", "..."],
+  "gaps": ["<what was missing or weak>", "..."],
+  "relevance": "<one sentence: does the answer address the question?>"
+}
+
+Rules: Be constructive and fair. Reward specifics, structure, and honesty; penalize vagueness and evasion.`;
+
+  const makeRequest = async (url) => {
+    const body = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.35,
+        maxOutputTokens: 1024,
+        responseMimeType: 'application/json',
+      },
+    };
+    return axios.post(url, body, { headers: { 'Content-Type': 'application/json' }, timeout: 60000 });
+  };
+
+  let lastError = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      const url = `${GEMINI_BASE}/models/${model.trim()}:generateContent?key=${GEMINI_API_KEY}`;
+      const response = await makeRequest(url);
+      const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error('Empty evaluation from Gemini');
+      let jsonStr = text.trim();
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) jsonStr = jsonMatch[1].trim();
+      const parsed = JSON.parse(jsonStr);
+      const score = Number(parsed.score);
+      return {
+        score: Number.isFinite(score) ? Math.min(10, Math.max(1, Math.round(score))) : null,
+        summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+        strengths: Array.isArray(parsed.strengths) ? parsed.strengths.map(String) : [],
+        gaps: Array.isArray(parsed.gaps) ? parsed.gaps.map(String) : [],
+        relevance: typeof parsed.relevance === 'string' ? parsed.relevance : '',
+        evaluatedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      lastError = err;
+      if (err.response?.status === 404) continue;
+      console.error('[Gemini] evaluateInterviewAnswerGemini:', err.message || err);
+      return null;
+    }
+  }
+  if (lastError) console.error('[Gemini] evaluateInterviewAnswerGemini:', lastError.message || lastError);
+  return null;
+}
+
+/**
+ * Aggregate overall interview result from per-answer evaluations (Gemini).
+ */
+export async function evaluateInterviewOverallGemini({
+  mode = 'HR',
+  jobTitle = '',
+  jobDescription = '',
+  candidateName = 'Candidate',
+  turns = [],
+}) {
+  if (!GEMINI_API_KEY) return null;
+  if (!Array.isArray(turns) || turns.length === 0) return null;
+
+  const lines = turns
+    .map(
+      (t, i) =>
+        `--- Q${i + 1} ---\nQuestion: ${t.question || ''}\nAnswer: ${t.answer || ''}\nPer-answer score: ${t.score != null ? t.score : 'n/a'}\nPer-answer summary: ${t.summary || ''}`
+    )
+    .join('\n\n');
+
+  const prompt = `You are summarizing a full interview for hiring decision support.
+
+**Mode:** ${mode}
+**Role:** ${jobTitle}
+**Job context (excerpt):** ${String(jobDescription || '').trim().slice(0, 3000)}
+**Candidate:** ${candidateName}
+
+**Per-question record:**
+${lines}
+
+Return ONLY valid JSON (no markdown):
+{
+  "overallScore": <integer 1-10>,
+  "verdict": "<one of: strong_fit | moderate_fit | weak_fit | insufficient_signal>",
+  "executiveSummary": "<2-4 sentences for recruiters>",
+  "strengthsOverall": ["<themes across answers>"],
+  "risksOrGaps": ["<themes>"],
+  "recommendation": "<one sentence next step>"
+}`;
+
+  const makeRequest = async (url) => {
+    const body = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.4,
+        maxOutputTokens: 2048,
+        responseMimeType: 'application/json',
+      },
+    };
+    return axios.post(url, body, { headers: { 'Content-Type': 'application/json' }, timeout: 90000 });
+  };
+
+  let lastError = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      const url = `${GEMINI_BASE}/models/${model.trim()}:generateContent?key=${GEMINI_API_KEY}`;
+      const response = await makeRequest(url);
+      const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error('Empty overall evaluation from Gemini');
+      let jsonStr = text.trim();
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) jsonStr = jsonMatch[1].trim();
+      const parsed = JSON.parse(jsonStr);
+      const overallScore = Number(parsed.overallScore);
+      return {
+        overallScore: Number.isFinite(overallScore) ? Math.min(10, Math.max(1, Math.round(overallScore))) : null,
+        verdict: typeof parsed.verdict === 'string' ? parsed.verdict : 'insufficient_signal',
+        executiveSummary: typeof parsed.executiveSummary === 'string' ? parsed.executiveSummary : '',
+        strengthsOverall: Array.isArray(parsed.strengthsOverall) ? parsed.strengthsOverall.map(String) : [],
+        risksOrGaps: Array.isArray(parsed.risksOrGaps) ? parsed.risksOrGaps.map(String) : [],
+        recommendation: typeof parsed.recommendation === 'string' ? parsed.recommendation : '',
+        evaluatedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      lastError = err;
+      if (err.response?.status === 404) continue;
+      console.error('[Gemini] evaluateInterviewOverallGemini:', err.message || err);
+      return null;
+    }
+  }
+  if (lastError) console.error('[Gemini] evaluateInterviewOverallGemini:', lastError.message || lastError);
+  return null;
+}
