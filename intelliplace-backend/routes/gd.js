@@ -181,10 +181,12 @@ router.post('/:jobId/gd/submit-speech', authenticateToken, authorizeStudent, exp
     // Advance queue
     advanceSpeaker(jobId, req.io);
 
-    res.json({ success: true, text: transcribedText });
+    res.json({ success: true, text: transcribedText, broadcastedTo: `gd_${jobId}` });
   } catch (error) {
-    console.error('Error submitting speech payload:', error);
-    res.status(500).json({ success: false, message: 'Failed to submit voice payload' });
+    console.error('------- SUBMIT SPEECH ERROR -------');
+    console.error(error);
+    console.error('-----------------------------------');
+    res.status(500).json({ success: false, message: 'Failed to submit voice payload', error: error.message });
   }
 });
 
@@ -220,6 +222,43 @@ router.post('/:jobId/gd/evaluate', authenticateToken, authorizeCompany, async (r
   } catch (error) {
     console.error('Error evaluating GD:', error);
     res.status(500).json({ success: false, message: 'Failed to save evaluations' });
+  }
+});
+
+// Debug endpoint for Active GDs
+router.get('/debug-gds', (req, res) => {
+  const io = req.io;
+  const rooms = {};
+  if (io) {
+    for (const [id, room] of io.sockets.adapter.rooms.entries()) {
+      rooms[id] = Array.from(room); // array of socket ids
+    }
+  }
+  
+  const gdsObj = {};
+  for (const [key, val] of activeGDs.entries()) {
+    gdsObj[key] = val;
+  }
+  
+  res.json({
+    success: true,
+    activeGDs: gdsObj,
+    rooms,
+  });
+});
+
+// VERY IMPORTANT DEBUG ENDPOINT TO VERIFY SOCKET BROADCASTS
+router.get('/debug-force-emit', (req, res) => {
+  if (req.io) {
+    req.io.to('gd_1').emit('gd_speaker_transcript', {
+       studentId: 999,
+       name: 'TEST BROADCAST SYSTEM',
+       text: 'This is a forced test broadcast from the backend. If you see this, Sockets are perfectly working across devices.',
+       timestamp: new Date().toISOString()
+    });
+    res.json({ success: true, message: "Emitted successfully to gd_1" });
+  } else {
+    res.json({ success: false, message: "req.io not found" });
   }
 });
 
