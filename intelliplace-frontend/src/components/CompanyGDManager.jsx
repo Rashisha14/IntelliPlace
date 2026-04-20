@@ -373,9 +373,32 @@ export default function CompanyGDManager({ jobId, initialGd, applications, token
           ))}
         </div>
         
-        <button onClick={submitEvaluations} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 font-medium">
-          Save Evaluations
-        </button>
+        <div className="flex gap-4">
+          <button onClick={submitEvaluations} className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 font-medium">
+            Save Evaluations
+          </button>
+          
+          <button 
+            onClick={() => {
+              Swal.fire({
+                title: 'Restart Group Discussion?',
+                text: 'This will reset the session so you can host another GD for this job.',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#d33',
+                cancelButtonColor: '#3085d6',
+                confirmButtonText: 'Yes, restart'
+              }).then((result) => {
+                if (result.isConfirmed) {
+                  setGdState(prev => ({ ...prev, status: 'CREATED' }));
+                }
+              });
+            }} 
+            className="border border-gray-300 text-gray-700 px-6 py-2 rounded hover:bg-gray-50 font-medium"
+          >
+            Restart Group Discussion
+          </button>
+        </div>
       </div>
     );
   }
