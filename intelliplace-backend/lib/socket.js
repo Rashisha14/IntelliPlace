@@ -8,24 +8,43 @@ export default function setupGDSockets(io) {
     console.log('[Socket] User connected:', socket.id);
 
     socket.on('join_gd', async ({ jobId, userId, role }) => {
-      socket.join(`gd_${jobId}`);
-      console.log(`[Socket] ${role} ${userId} joined room gd_${jobId}`);
+      const parsedJobId = parseInt(jobId);
+      socket.join(`gd_${parsedJobId}`);
+      console.log(`[Socket] ${role} ${userId} joined room gd_${parsedJobId}`);
 
-      if (!activeGDs.has(jobId)) {
-        activeGDs.set(jobId, {
-          status: 'CREATED',
-          queue: [], // array of { studentId, name }
-          activeSpeaker: null,
-          prepEndTime: null,
-        });
+      if (!activeGDs.has(parsedJobId)) {
+        // Fetch from DB if missing in memory (e.g. after server restart)
+        try {
+          const gdDb = await prisma.groupDiscussion.findUnique({ where: { jobId: parsedJobId } });
+          if (gdDb) {
+            const prepEndTime = gdDb.prepStartedAt ? new Date(gdDb.prepStartedAt).getTime() + (gdDb.prepDuration * 1000) : null;
+            activeGDs.set(parsedJobId, {
+              status: gdDb.status,
+              queue: [],
+              activeSpeaker: null,
+              prepEndTime,
+              topic: gdDb.topic,
+            });
+          } else {
+            activeGDs.set(parsedJobId, {
+              status: 'CREATED',
+              queue: [],
+              activeSpeaker: null,
+              prepEndTime: null,
+            });
+          }
+        } catch (e) {
+          console.error("Error fetching GD from DB on join:", e);
+        }
       }
 
       // Send current state
-      socket.emit('gd_state_update', activeGDs.get(jobId));
+      socket.emit('gd_state_update', activeGDs.get(parsedJobId));
     });
 
     socket.on('request_speak', ({ jobId, studentId, studentName }) => {
-      const gd = activeGDs.get(jobId);
+      const parsedJobId = parseInt(jobId);
+      const gd = activeGDs.get(parsedJobId);
       if (!gd) return;
       
       // Allow multiple queue entries if they aren't back-to-back?
@@ -34,9 +53,9 @@ export default function setupGDSockets(io) {
       
       // If nobody is speaking and status is ACTIVE, auto-assign
       if (!gd.activeSpeaker && gd.status === 'ACTIVE' && gd.queue.length > 0) {
-        advanceSpeaker(jobId, io);
+        advanceSpeaker(parsedJobId, io);
       } else {
-        io.to(`gd_${jobId}`).emit('gd_state_update', gd);
+        io.to(`gd_${parsedJobId}`).emit('gd_state_update', gd);
       }
     });
 
