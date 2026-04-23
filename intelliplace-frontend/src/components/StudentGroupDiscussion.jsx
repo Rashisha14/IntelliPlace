@@ -121,7 +121,8 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
 
   const startRecording = async () => {
     if (!recognitionRef.current) {
-      Swal.fire({ icon: 'error', title: 'Speech Recognition not supported in this browser' });
+      Swal.fire({ icon: 'warning', title: 'Mic Blocked', text: 'Speech Recognition is blocked or not supported (likely due to HTTP network access). You will be put into manual text mode.' });
+      setIsReviewing(true);
       return;
     }
     setLiveTranscript('');
@@ -139,6 +140,8 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
       }, 90000);
     } catch (err) {
       console.error(err);
+      Swal.fire({ icon: 'warning', title: 'Mic Blocked', text: 'Browser microphone access is blocked. Switching to manual text mode.' });
+      setIsReviewing(true);
     }
   };
 

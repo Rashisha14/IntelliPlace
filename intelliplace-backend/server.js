@@ -111,8 +111,8 @@ import setupGDSockets from './lib/socket.js';
 setupGDSockets(io);
 
 // Start server
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on http://0.0.0.0:${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
   console.log(`🔧 Initialize DB: POST http://localhost:${PORT}/api/init-db`);
 });
