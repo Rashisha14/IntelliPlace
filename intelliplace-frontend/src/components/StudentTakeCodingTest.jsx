@@ -346,7 +346,13 @@ int main() {
         const totalCount = sub.totalCount;
         setSubmissions(prev => ({
           ...prev,
-          [questionId]: { ...sub, passedCount, totalCount }
+          [questionId]: {
+            ...sub,
+            passedCount,
+            totalCount,
+            results: Array.isArray(json.data.results) ? json.data.results : (sub.results || []),
+            testCaseResults: sub.testCaseResults ?? json.data.results ?? []
+          }
         }));
 
         const pts = testData.questions.find(q => q.id === questionId)?.points || 0;
@@ -447,6 +453,20 @@ int main() {
   const currentSubmission = currentQuestion ? submissions[currentQuestion.id] : null;
   const currentCodeValue = currentQuestion ? code[currentQuestion.id] || '' : '';
   const currentLangValue = currentQuestion ? selectedLanguage[currentQuestion.id] : null;
+  const currentTestCaseResults = useMemo(() => {
+    if (!currentSubmission) return [];
+    if (Array.isArray(currentSubmission.results)) return currentSubmission.results;
+    if (Array.isArray(currentSubmission.testCaseResults)) return currentSubmission.testCaseResults;
+    if (typeof currentSubmission.testCaseResults === 'string') {
+      try {
+        const parsed = JSON.parse(currentSubmission.testCaseResults);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }, [currentSubmission]);
   const allowedLangs = useMemo(() => {
     try {
       const raw = testData?.allowedLanguages;
@@ -522,85 +542,35 @@ int main() {
           </div>
         )}
 
-        {/* CONTENT - Split view: Problem | Editor */}
+        {/* CONTENT - Split view: Editor (left) | Task + tests (right) */}
         {loading ? (
           <div className="flex-1 flex items-center justify-center">
             <Loader className="w-8 h-8 animate-spin text-[#f97316]" />
           </div>
         ) : testData ? (
           <div className="flex-1 flex overflow-hidden min-h-0">
-            {/* LEFT: Problem description - LeetCode style */}
-            <div className="w-[45%] min-w-[320px] max-w-[560px] flex flex-col bg-[#1a1a1a] border-r border-[#3d3d3d] overflow-hidden">
-              {currentQuestion && (
-                <div className="flex-1 overflow-y-auto p-6">
-                  <div className="flex items-center gap-3 mb-4">
-                    <h2 className="text-xl font-semibold text-white">{currentQuestion.title}</h2>
-                    <span className={`px-2.5 py-0.5 rounded text-xs font-medium ${
-                      currentQuestion.difficulty === 'EASY' ? 'bg-[#22c55e]/20 text-[#22c55e]' :
-                      currentQuestion.difficulty === 'MEDIUM' ? 'bg-[#f97316]/20 text-[#f97316]' :
-                      'bg-red-500/20 text-red-400'
-                    }`}>
-                      {currentQuestion.difficulty}
-                    </span>
-                    <span className="text-sm text-[#737373]">{currentQuestion.points} pts</span>
-                  </div>
-                  <div className="prose prose-invert prose-sm max-w-none">
-                    <p className="text-[#d4d4d4] whitespace-pre-wrap leading-relaxed mb-4">
-                      {currentQuestion.description}
-                    </p>
-                    {currentQuestion.constraints && (
-                      <div className="mb-4">
-                        <h4 className="text-sm font-semibold text-white mb-2">Constraints</h4>
-                        <p className="text-sm text-[#a3a3a3] whitespace-pre-wrap">{currentQuestion.constraints}</p>
-                      </div>
-                    )}
-                    {(() => {
-                      const samples = currentQuestion.sampleCases && Array.isArray(currentQuestion.sampleCases) && currentQuestion.sampleCases.length > 0
-                        ? currentQuestion.sampleCases
-                        : (currentQuestion.sampleInput || currentQuestion.sampleOutput) ? [{ input: currentQuestion.sampleInput || '', output: currentQuestion.sampleOutput || '' }] : [];
-                      return samples.length > 0 && (
-                        <div className="space-y-4">
-                          <h4 className="text-sm font-semibold text-white">Example{samples.length > 1 ? 's' : ''}</h4>
-                          {samples.map((sc, idx) => (
-                            <div key={idx} className="rounded-lg overflow-hidden border border-[#3d3d3d]">
-                              {samples.length > 1 && (
-                                <div className="bg-[#262626] px-3 py-1.5 text-xs text-[#737373] border-b border-[#3d3d3d]">Example {idx + 1}</div>
-                              )}
-                              <div className="bg-[#262626] px-3 py-2 text-xs text-[#737373] border-b border-[#3d3d3d]">Input</div>
-                              <pre className="p-3 text-sm font-mono text-[#d4d4d4] bg-[#1a1a1a] overflow-x-auto">
-                                {sc.input || '(empty)'}
-                              </pre>
-                              <div className="bg-[#262626] px-3 py-2 text-xs text-[#737373] border-t border-b border-[#3d3d3d]">Output</div>
-                              <pre className="p-3 text-sm font-mono text-[#d4d4d4] bg-[#1a1a1a] overflow-x-auto">
-                                {sc.output || '(empty)'}
-                              </pre>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* RIGHT: Code editor + console - LeetCode style */}
-            <div className="flex-1 flex flex-col min-w-0 bg-[#1e1e1e]">
+            {/* LEFT: Editor workspace (matches screenshot style) */}
+            <div className="flex-1 flex flex-col min-w-0 bg-[#0b1020] border-r border-[#2a2f3b]">
               {/* Editor toolbar */}
-              <div className="flex-shrink-0 h-10 bg-[#252526] border-b border-[#3d3d3d] flex items-center justify-between px-3">
-                <select
-                  value={currentLangValue || ''}
-                  onChange={(e) => {
-                    const langId = parseInt(e.target.value);
-                    setSelectedLanguage(prev => ({ ...prev, [currentQuestion?.id]: langId }));
-                    setCode(prev => ({ ...prev, [currentQuestion?.id]: getDefaultCode(langId) }));
-                  }}
-                  className="bg-[#3d3d3d] text-[#d4d4d4] text-sm px-3 py-1.5 rounded border-0 focus:ring-1 focus:ring-[#f97316]"
-                >
-                  {allowedLangs.map(langId => (
-                    <option key={langId} value={langId}>{LANGUAGE_NAMES[langId]}</option>
-                  ))}
-                </select>
+              <div className="flex-shrink-0 h-11 bg-[#131a2c] border-b border-[#2a2f3b] flex items-center justify-between px-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[#aab2c5] px-2 py-1 rounded bg-[#1d2638] border border-[#2e3a52]">
+                    Task {currentQuestionIndex + 1}/{testData?.questions?.length || 1}
+                  </span>
+                  <select
+                    value={currentLangValue || ''}
+                    onChange={(e) => {
+                      const langId = parseInt(e.target.value, 10);
+                      setSelectedLanguage(prev => ({ ...prev, [currentQuestion?.id]: langId }));
+                      setCode(prev => ({ ...prev, [currentQuestion?.id]: getDefaultCode(langId) }));
+                    }}
+                    className="bg-[#1d2638] text-[#d4d4d4] text-sm px-3 py-1.5 rounded border border-[#2e3a52] focus:ring-1 focus:ring-[#3b82f6]"
+                  >
+                    {allowedLangs.map(langId => (
+                      <option key={langId} value={langId}>{LANGUAGE_NAMES[langId]}</option>
+                    ))}
+                  </select>
+                </div>
                 <div className="flex items-center gap-2">
                   {currentSubmission && (
                     <span className={`px-2 py-0.5 rounded text-xs font-medium ${
@@ -614,10 +584,10 @@ int main() {
                   <button
                     onClick={() => handleRunCode(currentQuestion?.id)}
                     disabled={running[currentQuestion?.id]}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded border border-[#525252] text-[#d4d4d4] hover:bg-[#3d3d3d] disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm rounded border border-[#2e3a52] text-[#d4d4d4] hover:bg-[#1d2638] disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {running[currentQuestion?.id] ? <Loader className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                    Run
+                    Run code
                   </button>
                   <button
                     onClick={() => handleSubmitQuestion(currentQuestion?.id)}
@@ -629,15 +599,15 @@ int main() {
                 </div>
               </div>
 
-              {/* Code editor - dark theme */}
-              <div className="flex-1 min-h-0 overflow-hidden p-2">
+              {/* Code editor */}
+              <div className="flex-1 min-h-0 overflow-hidden p-0.5">
                 <CodeEditorErrorBoundary
                   fallback={
                     <textarea
                       value={currentCodeValue}
                       onChange={(e) => setCode(prev => ({ ...prev, [currentQuestion?.id]: e.target.value }))}
                       placeholder="// Write your code here"
-                      className="w-full h-full min-h-[200px] p-4 bg-[#1e1e1e] text-[#d4d4d4] font-mono text-sm resize-none border-0 rounded focus:outline-none"
+                      className="w-full h-full min-h-[200px] p-4 bg-[#0b1020] text-[#d4d4d4] font-mono text-sm resize-none border-0 rounded-none focus:outline-none"
                     />
                   }
                 >
@@ -657,34 +627,105 @@ int main() {
                       indentOnInput: true,
                       tabSize: currentLangValue === 92 ? 4 : 2
                     }}
-                    className="h-full [&_.cm-editor]:h-full [&_.cm-scroller]:overflow-auto [&_.cm-content]:min-h-[200px] [&_.cm-gutters]:bg-[#252526] [&_.cm-gutters]:border-0"
+                    className="h-full [&_.cm-editor]:h-full [&_.cm-editor]:bg-[#0b1020] [&_.cm-scroller]:overflow-auto [&_.cm-content]:min-h-[200px] [&_.cm-gutters]:bg-[#131a2c] [&_.cm-gutters]:border-0"
                     style={{ height: '100%', minHeight: 200 }}
                   />
                 </CodeEditorErrorBoundary>
               </div>
+            </div>
 
-              {/* Console / Run output - LeetCode style */}
-              <div className="flex-shrink-0 border-t border-[#3d3d3d]">
-                {runOutput ? (
-                  <div className={`px-4 py-3 max-h-32 overflow-y-auto ${
-                    runOutput.status === 'passed' ? 'bg-[#134e2e]/40 text-[#4ade80]' :
-                    runOutput.status === 'failed' ? 'bg-amber-900/30 text-amber-300' :
-                    'bg-red-900/30 text-red-300'
+            {/* RIGHT: Task + Test Cases panel */}
+            <aside className="w-[360px] max-w-[42vw] bg-[#0f1527] text-[#d7deee] flex flex-col">
+              <div className="border-b border-[#2a2f3b] px-4 py-3">
+                <p className="text-xs text-[#8f9bb6]">Task</p>
+                <h3 className="text-2xl font-semibold leading-tight mt-1">
+                  {currentQuestion?.title || 'Coding Task'}
+                </h3>
+                <div className="flex items-center gap-2 mt-2">
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                    currentQuestion?.difficulty === 'EASY' ? 'bg-[#22c55e]/20 text-[#22c55e]' :
+                    currentQuestion?.difficulty === 'MEDIUM' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' :
+                    'bg-red-500/20 text-red-400'
                   }`}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-semibold text-sm">{runOutput.title}</span>
-                      <button onClick={() => setRunOutput(null)} className="text-xs opacity-70 hover:opacity-100">Dismiss</button>
-                    </div>
-                    <pre className="text-sm font-mono whitespace-pre-wrap break-words">{runOutput.message}</pre>
-                    {runOutput.details && <p className="text-xs mt-1 opacity-80">{runOutput.details}</p>}
-                  </div>
-                ) : (
-                  <div className="h-12 px-4 flex items-center text-sm text-[#737373]">
-                    Run your code to see output here
+                    {currentQuestion?.difficulty || 'MEDIUM'}
+                  </span>
+                  <span className="text-xs text-[#8f9bb6]">{currentQuestion?.points || 0} pts</span>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+                <div>
+                  <p className="text-sm whitespace-pre-wrap leading-relaxed text-[#cfd7ea]">
+                    {currentQuestion?.description}
+                  </p>
+                </div>
+                {currentQuestion?.constraints && (
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-[#8f9bb6] mb-1">Constraints</p>
+                    <p className="text-sm whitespace-pre-wrap text-[#b9c4dd]">{currentQuestion.constraints}</p>
                   </div>
                 )}
+
+                <div className="pt-1">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold">Test Cases</p>
+                    {currentSubmission?.passedCount != null && currentSubmission?.totalCount != null && (
+                      <span className={`text-xs font-medium ${
+                        currentSubmission.passedCount === currentSubmission.totalCount ? 'text-emerald-400' : 'text-amber-300'
+                      }`}>
+                        {currentSubmission.passedCount}/{currentSubmission.totalCount} passed
+                      </span>
+                    )}
+                  </div>
+
+                  {currentTestCaseResults.length > 0 ? (
+                    <div className="space-y-2">
+                      {currentTestCaseResults.map((tc, idx) => {
+                        const passed = !!tc.passed;
+                        return (
+                          <div
+                            key={`${idx}-${tc.status || 'case'}`}
+                            className={`rounded-md border px-3 py-2 ${
+                              passed
+                                ? 'border-emerald-700/40 bg-emerald-900/15'
+                                : 'border-rose-700/40 bg-rose-900/15'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-[#aeb9d3]">test case {idx + 1}</span>
+                              <span className={`text-xs font-medium ${passed ? 'text-emerald-400' : 'text-rose-300'}`}>
+                                {passed ? 'Passed' : 'Failed'}
+                              </span>
+                            </div>
+                            {!passed && (
+                              <div className="mt-2 text-xs text-[#d3dbf0] space-y-1">
+                                {tc.input != null && <p>Input: {String(tc.input)}</p>}
+                                {tc.expected != null && <p>Expected: {String(tc.expected)}</p>}
+                                {tc.actual != null && <p>Your output: {String(tc.actual)}</p>}
+                                {tc.error && <p className="text-rose-300">{String(tc.error)}</p>}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : runOutput ? (
+                    <div className={`rounded-md border px-3 py-2 text-sm ${
+                      runOutput.status === 'passed'
+                        ? 'border-emerald-700/40 bg-emerald-900/15 text-emerald-300'
+                        : runOutput.status === 'failed'
+                          ? 'border-amber-700/40 bg-amber-900/15 text-amber-200'
+                          : 'border-rose-700/40 bg-rose-900/15 text-rose-300'
+                    }`}>
+                      <p className="font-semibold text-xs mb-1">{runOutput.title}</p>
+                      <pre className="whitespace-pre-wrap break-words text-xs">{runOutput.message}</pre>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[#8f9bb6]">No test case results yet. Run code or submit to evaluate.</p>
+                  )}
+                </div>
               </div>
-            </div>
+            </aside>
           </div>
         ) : null}
 
