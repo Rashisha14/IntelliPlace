@@ -1,8 +1,7 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
-  Play,
   Loader,
   CheckCircle,
   AlertCircle,
@@ -15,57 +14,24 @@ import {
   User,
   Briefcase,
   Volume2,
-  VolumeX,
-  Square,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config.js';
 import { getCurrentUser } from '../utils/auth.js';
-import { DeepgramClient } from '@deepgram/sdk';
 
 function normalizeDisplayName(raw) {
   if (raw == null || raw === '') return '';
   return String(raw).trim().replace(/\s+/g, ' ');
 }
 
-/** Spoken in order after Start — uses the same name as the backend / login profile when available. */
-function buildAiOpeningLines(displayName) {
-  const n = normalizeDisplayName(displayName);
-  const hi = n ? `Hi, ${n} — ` : 'Hi — ';
-  return [
-    `${hi}I'm your AI interviewer for IntelliPlace. I'll run this like a real hiring conversation: we'll touch your background, how you think, and how you might fit this role.`,
-    "I'll read each question aloud. You'll see the same words as captions on the main screen so you can follow along.",
-    n
-      ? `${n}, we'll start with your introduction — your first question is in the panel on the right. I'll read it aloud right after this.`
-      : "We'll start with your introduction — your first question is in the panel on the right. I'll read it aloud right after this.",
-  ];
-}
-
-/** student-session merges `answer` onto each question object */
-function findNextUnansweredAfter(questions, answeredIndex) {
-  if (!Array.isArray(questions) || questions.length === 0) return null;
-  const ai = Number(answeredIndex);
-  if (Number.isNaN(ai)) return null;
-  const items = questions.map((q, i) => ({
-    question: q.question,
-    index: Number(q.index !== undefined ? q.index : i),
-    answer: q.answer,
-  }));
-  items.sort((a, b) => a.index - b.index);
-  for (const item of items) {
-    if (item.index <= ai) continue;
-    const hasAnswer = item.answer != null && String(item.answer).trim() !== '';
-    if (!hasAnswer) return item;
-  }
-  return null;
-}
-
+/**
+ * IntelliPlace student interview: Deepgram Voice Agent (wss) drives audio Q&A.
+ * Each completed user turn is POSTed to the backend for Gemini scoring + DB storage.
+ */
 const StudentInterview = ({
   isOpen,
   onClose,
   jobId,
   applicationId,
-  question,
-  questionIndex,
   onAnswerSubmitted,
   session: initialSession,
   candidateDisplayName: candidateDisplayNameProp,
@@ -74,66 +40,39 @@ const StudentInterview = ({
   const [candidateDisplayName, setCandidateDisplayName] = useState(
     () => normalizeDisplayName(candidateDisplayNameProp) || normalizeDisplayName(getCurrentUser()?.name)
   );
-  const [currentQuestion, setCurrentQuestion] = useState(question || null);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(
-    questionIndex !== undefined ? questionIndex : -1
-  );
-  const [interviewStarted, setInterviewStarted] = useState(false);
-  /** lobby = before Start; opening = AI intro audio; qa = normal questions */
-  const [interviewFlowPhase, setInterviewFlowPhase] = useState('lobby');
-  const [captionText, setCaptionText] = useState('');
   const [loadingSession, setLoadingSession] = useState(false);
-  const [answerText, setAnswerText] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState(null);
+  const [agentError, setAgentError] = useState(null);
 
   const [micOn, setMicOn] = useState(true);
   const [videoOn, setVideoOn] = useState(true);
   const [qaPanelOpen, setQaPanelOpen] = useState(true);
-  const [autoSpeakQuestion, setAutoSpeakQuestion] = useState(true);
-  const [speakingQuestion, setSpeakingQuestion] = useState(false);
-  const [ttsError, setTtsError] = useState(null);
 
   const localVideoRef = useRef(null);
   const streamRef = useRef(null);
-  const ttsAudioRef = useRef(null);
-  const spokenQuestionKeyRef = useRef(null);
   const [localStreamReady, setLocalStreamReady] = useState(false);
-  const speechUsedForAnswerRef = useRef(false);
-  const setAnswerTextRef = useRef(setAnswerText);
-  setAnswerTextRef.current = setAnswerText;
-  const [sttError, setSttError] = useState(null);
-  const deepgramConnRef = useRef(null);
-  const liveRecorderRef = useRef(null);
-  const liveStreamRef = useRef(null);
-  const [livePartialText, setLivePartialText] = useState('');
-  const [isLiveSttActive, setIsLiveSttActive] = useState(false);
-  const [isLiveSttConnecting, setIsLiveSttConnecting] = useState(false);
 
-  const openingLines = useMemo(() => {
-    const n =
-      normalizeDisplayName(candidateDisplayName) || normalizeDisplayName(getCurrentUser()?.name);
-    return buildAiOpeningLines(n);
-  }, [candidateDisplayName]);
+  const [voiceStarted, setVoiceStarted] = useState(false);
+  const [connectingAgent, setConnectingAgent] = useState(false);
+  const [agentToken, setAgentToken] = useState(null);
+  const [agentSettings, setAgentSettings] = useState(null);
+  const [wsUrl, setWsUrl] = useState('wss://agent.deepgram.com/v1/agent/converse');
+  const agentHostRef = useRef(null);
+  const agentElRef = useRef(null);
 
-  const questionsList = (() => {
-    if (!session?.questions) return [];
-    try {
-      return Array.isArray(session.questions)
-        ? session.questions
-        : JSON.parse(session.questions || '[]');
-    } catch {
-      return [];
-    }
-  })();
+  const lastAssistantRef = useRef(null);
+  const userPiecesRef = useRef([]);
+  const onStructuredMessageRef = useRef(() => {});
+  const autoFinalizingRef = useRef(false);
+  const [transcript, setTranscript] = useState([]);
 
-  const totalQuestions = questionsList.length;
-  const displayQNum =
-    currentQuestionIndex >= 0 ? Math.min(currentQuestionIndex + 1, Math.max(totalQuestions, 1)) : 0;
-  /** Hide misleading "of 1" while the interview can still add more questions */
-  const showQuestionTotal =
-    totalQuestions > 1 || session?.status !== 'ACTIVE' || !interviewStarted;
+  const [endingInterview, setEndingInterview] = useState(false);
+
+  const appendTranscript = useCallback((role, text) => {
+    const t = String(text || '').trim();
+    if (!t) return;
+    setTranscript((prev) => [...prev, { role, text: t, at: Date.now() }]);
+  }, []);
 
   const stopMedia = useCallback(() => {
     if (streamRef.current) {
@@ -146,77 +85,118 @@ const StudentInterview = ({
     setLocalStreamReady(false);
   }, []);
 
-  const stopTts = useCallback(() => {
-    const audio = ttsAudioRef.current;
-    if (!audio) return;
-    try {
-      audio.pause();
-    } catch (_) {
-      // no-op
-    }
-    audio.src = '';
-    ttsAudioRef.current = null;
-    setSpeakingQuestion(false);
-  }, []);
-
-  const stopLiveVoice = useCallback(() => {
-    try {
-      const rec = liveRecorderRef.current;
-      if (rec && rec.state !== 'inactive') rec.stop();
-    } catch (_) {
-      /* ignore */
-    }
-    liveRecorderRef.current = null;
-    if (liveStreamRef.current) {
-      liveStreamRef.current.getTracks().forEach((t) => t.stop());
-      liveStreamRef.current = null;
-    }
-    const conn = deepgramConnRef.current;
-    if (conn) {
+  const destroyAgent = useCallback(() => {
+    const el = agentElRef.current;
+    const host = agentHostRef.current;
+    if (el) {
       try {
-        conn.requestClose?.();
+        el.removeAttribute('config');
       } catch (_) {
         /* ignore */
       }
-      deepgramConnRef.current = null;
+      if (host?.contains(el)) {
+        try {
+          host.removeChild(el);
+        } catch (_) {
+          /* ignore */
+        }
+      }
     }
-    setIsLiveSttActive(false);
-    setIsLiveSttConnecting(false);
-    setLivePartialText('');
+    agentElRef.current = null;
+    setVoiceStarted(false);
+    setAgentToken(null);
+    setAgentSettings(null);
   }, []);
+
+  const postAgentAnswer = useCallback(
+    async (questionText, answerText) => {
+      const token = localStorage.getItem('token');
+      const res = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/agent-answer`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ questionText, answerText }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.message || 'Failed to save answer');
+      }
+      if (data.data?.session) {
+        setSession(data.data.session);
+      }
+      if (onAnswerSubmitted) {
+        onAnswerSubmitted(data.data);
+      }
+      if (data.data?.shouldEndInterview && !autoFinalizingRef.current) {
+        autoFinalizingRef.current = true;
+        setEndingInterview(true);
+        setAgentError(null);
+        destroyAgent();
+        try {
+          const resFin = await fetch(
+            `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/voice-session/complete`,
+            {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${token}`,
+              },
+            }
+          );
+          const dataFin = await resFin.json().catch(() => ({}));
+          if (resFin.ok && dataFin.data?.session) {
+            setSession(dataFin.data.session);
+            if (onAnswerSubmitted) onAnswerSubmitted(dataFin.data);
+          } else {
+            setAgentError(dataFin.message || 'Could not finalize interview after the planned number of answers');
+            autoFinalizingRef.current = false;
+          }
+        } catch (e) {
+          console.error(e);
+          setAgentError(e.message || 'Could not finalize interview');
+          autoFinalizingRef.current = false;
+        } finally {
+          setEndingInterview(false);
+        }
+      }
+    },
+    [jobId, applicationId, onAnswerSubmitted, destroyAgent]
+  );
 
   useEffect(() => {
     if (!isOpen) {
       stopMedia();
-      stopTts();
-      setInterviewStarted(false);
-      setInterviewFlowPhase('lobby');
-      setCaptionText('');
-      setCurrentQuestion(null);
-      setCurrentQuestionIndex(-1);
-      setAnswerText('');
-      setSubmitted(false);
+      destroyAgent();
+      setSession(null);
       setError(null);
-      setTtsError(null);
-      setSttError(null);
-      spokenQuestionKeyRef.current = null;
-      speechUsedForAnswerRef.current = false;
-      setMicOn(true);
-      setVideoOn(true);
+      setAgentError(null);
+      setTranscript([]);
+      lastAssistantRef.current = null;
+      userPiecesRef.current = [];
+      setConnectingAgent(false);
+      setEndingInterview(false);
+      autoFinalizingRef.current = false;
       setCandidateDisplayName(
         normalizeDisplayName(candidateDisplayNameProp) || normalizeDisplayName(getCurrentUser()?.name)
       );
-      stopLiveVoice();
     }
-  }, [isOpen, stopMedia, stopTts, candidateDisplayNameProp, stopLiveVoice]);
+  }, [isOpen, stopMedia, destroyAgent, candidateDisplayNameProp]);
 
   useEffect(() => {
-    speechUsedForAnswerRef.current = false;
-  }, [currentQuestionIndex, currentQuestion]);
+    if (isOpen && initialSession) {
+      setSession(initialSession);
+    }
+  }, [isOpen, initialSession]);
 
   useEffect(() => {
-    stopLiveVoice();
-  }, [currentQuestionIndex, currentQuestion, stopLiveVoice]);
+    if (!isOpen) return;
+    const cn = normalizeDisplayName(candidateDisplayNameProp);
+    if (cn) setCandidateDisplayName(cn);
+  }, [isOpen, candidateDisplayNameProp]);
 
   const fetchSession = useCallback(
     async (opts = {}) => {
@@ -252,63 +232,42 @@ const StudentInterview = ({
   );
 
   useEffect(() => {
-    if (isOpen && initialSession) {
-      setSession(initialSession);
-    }
-  }, [isOpen, initialSession]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const cn = normalizeDisplayName(candidateDisplayNameProp);
-    if (cn) setCandidateDisplayName(cn);
-  }, [isOpen, candidateDisplayNameProp]);
-
-  useEffect(() => {
     if (isOpen && jobId && applicationId && !session) {
       fetchSession();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-load when opening or target application changes
-  }, [isOpen, jobId, applicationId, fetchSession]);
-
+  }, [isOpen, jobId, applicationId, fetchSession, session]);
 
   useEffect(() => {
-    if (!isOpen || !interviewStarted) {
-      stopMedia();
-      return;
-    }
-    const needCamera = interviewFlowPhase === 'opening' || !!currentQuestion;
-    if (!needCamera) {
-      stopMedia();
-      return;
-    }
+    let cancelled = false;
+    (async () => {
+      try {
+        await import('@deepgram/browser-agent');
+      } catch (e) {
+        if (!cancelled) console.error('@deepgram/browser-agent:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
+  // Preview camera when modal open (before voice starts)
+  useEffect(() => {
+    if (!isOpen) return;
     let cancelled = false;
 
-    const setupMedia = async () => {
+    const setup = async () => {
       if (!navigator.mediaDevices?.getUserMedia) return;
-
       try {
-        if (streamRef.current) {
-          streamRef.current.getAudioTracks().forEach((t) => {
-            t.enabled = micOn;
-          });
-          streamRef.current.getVideoTracks().forEach((t) => {
-            t.enabled = videoOn;
-          });
-          return;
-        }
-
+        // Video-only preview: Deepgram Voice Agent opens its own microphone when the session starts.
         const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
+          audio: false,
           video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
         });
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
-        stream.getAudioTracks().forEach((t) => {
-          t.enabled = micOn;
-        });
         stream.getVideoTracks().forEach((t) => {
           t.enabled = videoOn;
         });
@@ -323,427 +282,216 @@ const StudentInterview = ({
       }
     };
 
-    setupMedia();
+    setup();
     return () => {
       cancelled = true;
     };
-  }, [isOpen, interviewStarted, interviewFlowPhase, currentQuestion, micOn, videoOn, stopMedia]);
+  }, [isOpen]);
 
   useEffect(() => {
     const stream = streamRef.current;
     if (!stream) return;
-    stream.getAudioTracks().forEach((t) => {
-      t.enabled = micOn;
-    });
     stream.getVideoTracks().forEach((t) => {
       t.enabled = videoOn;
     });
-  }, [micOn, videoOn]);
+  }, [videoOn]);
 
-  // If session ever has no unanswered question (e.g. race), poll for updates.
-  useEffect(() => {
-    if (!isOpen || !interviewStarted || currentQuestion || interviewFlowPhase === 'opening') return;
-    const id = setInterval(() => {
-      fetchSession({ silent: true });
-    }, 3000);
-    return () => clearInterval(id);
-  }, [isOpen, interviewStarted, currentQuestion, interviewFlowPhase, fetchSession]);
-
-  // When session updates (poll or submit), attach the next unanswered question — only after intro audio finished.
-  useEffect(() => {
-    if (!isOpen || !session || !interviewStarted || interviewFlowPhase !== 'qa' || currentQuestion) return;
-    try {
-      const questions = Array.isArray(session.questions)
-        ? session.questions
-        : JSON.parse(session.questions || '[]');
-      const unansweredQ = questions.find((q) => !q.answer);
-      if (unansweredQ) {
-        setCurrentQuestion(unansweredQ.question);
-        setCurrentQuestionIndex(
-          unansweredQ.index !== undefined ? unansweredQ.index : questions.indexOf(unansweredQ)
-        );
-        setError(null);
-      }
-    } catch (_) {
-      /* ignore */
-    }
-  }, [session, isOpen, interviewStarted, interviewFlowPhase, currentQuestion]);
-
-  const speakPlainText = useCallback(
-    async (text) => {
-      const t = text?.trim();
-      if (!t || !jobId || !applicationId) return;
-      stopTts();
-      setSpeakingQuestion(true);
-      setTtsError(null);
-
-      const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/tts`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ text: t.slice(0, 3000) }),
-      });
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        setSpeakingQuestion(false);
-        throw new Error(errJson.message || 'Failed to generate speech');
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      ttsAudioRef.current = audio;
-
-      await new Promise((resolve, reject) => {
-        audio.onended = () => {
-          URL.revokeObjectURL(url);
-          setSpeakingQuestion(false);
-          resolve();
-        };
-        audio.onerror = () => {
-          URL.revokeObjectURL(url);
-          setSpeakingQuestion(false);
-          reject(new Error('Could not play text-to-speech audio.'));
-        };
-        audio.play().catch((e) => {
-          URL.revokeObjectURL(url);
-          setSpeakingQuestion(false);
-          reject(e);
-        });
-      });
-    },
-    [jobId, applicationId, stopTts]
-  );
-
-  const playOpeningSequence = useCallback(async () => {
-    for (const line of openingLines) {
-      setCaptionText(line);
-      await speakPlainText(line);
-    }
-    setCaptionText('');
-  }, [speakPlainText, openingLines]);
-
-  const handleStartInterview = () => {
-    if (!session) {
-      setError('Interview session not loaded');
+  const handleStartVoiceAgent = async () => {
+    if (!session || session.status !== 'ACTIVE') {
+      setError('No active interview session');
       return;
     }
-
-    setInterviewStarted(true);
-    setInterviewFlowPhase('opening');
-    setCurrentQuestion(null);
-    setCurrentQuestionIndex(-1);
-    setAnswerText('');
-    setSubmitted(false);
     setError(null);
-    setTtsError(null);
-    setCaptionText('');
-    setQaPanelOpen(true);
-
-    (async () => {
-      try {
-        await playOpeningSequence();
-      } catch (err) {
-        console.error('Opening TTS:', err);
-        setTtsError(err.message || 'Could not play introduction audio.');
-      } finally {
-        await fetchSession({ silent: true });
-        setInterviewFlowPhase('qa');
-        spokenQuestionKeyRef.current = null;
-        setCaptionText('');
-      }
-    })();
-  };
-
-  const speakCurrentQuestion = useCallback(async () => {
-    if (!currentQuestion || !jobId || !applicationId) return;
-    setCaptionText(currentQuestion);
+    setAgentError(null);
+    setConnectingAgent(true);
     try {
-      await speakPlainText(currentQuestion);
-    } catch (err) {
-      console.error('TTS error:', err);
-      setTtsError(err.message || 'Failed to speak question');
-    }
-  }, [currentQuestion, jobId, applicationId, speakPlainText]);
-
-  useEffect(() => {
-    if (
-      !isOpen ||
-      !interviewStarted ||
-      interviewFlowPhase !== 'qa' ||
-      !currentQuestion ||
-      !autoSpeakQuestion
-    ) {
-      return;
-    }
-    setTtsError(null);
-    const key = `${currentQuestionIndex}:${currentQuestion}`;
-    if (spokenQuestionKeyRef.current === key) return;
-    spokenQuestionKeyRef.current = key;
-    speakCurrentQuestion();
-  }, [
-    isOpen,
-    interviewStarted,
-    interviewFlowPhase,
-    currentQuestion,
-    currentQuestionIndex,
-    autoSpeakQuestion,
-    speakCurrentQuestion,
-  ]);
-
-  useEffect(() => {
-    return () => {
-      stopTts();
-    };
-  }, [stopTts]);
-
-  const startLiveVoice = useCallback(async () => {
-    if (isLiveSttActive || isLiveSttConnecting || submitting) return;
-    setSttError(null);
-    try {
-      setIsLiveSttConnecting(true);
       const token = localStorage.getItem('token');
       const res = await fetch(
-        `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/realtime-stt-token`,
+        `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/voice-agent-config`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
-      const json = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(json.message || 'Could not start live transcription');
+        throw new Error(data.message || 'Could not load Voice Agent config');
       }
-      const tok = json.data?.token;
-      if (!tok) throw new Error('No transcription token returned');
-      const dg = new DeepgramClient({ accessToken: tok });
-      const connection = await dg.listen.v1.connect({
-        model: 'nova-3',
-        language: 'en-US',
-        smart_format: 'true',
-        punctuate: 'true',
-        interim_results: 'true',
-        endpointing: '300',
-      });
-      deepgramConnRef.current = connection;
-
-      connection.on('message', (data) => {
-        if (data?.type !== 'Results') return;
-        const alt = data?.channel?.alternatives?.[0];
-        const transcript = String(alt?.transcript || '').trim();
-        if (!transcript) return;
-        if (data.is_final || data.speech_final) {
-          setAnswerTextRef.current((prev) => {
-            if (!prev?.trim()) return transcript;
-            return `${prev.trimEnd()} ${transcript}`;
-          });
-          speechUsedForAnswerRef.current = true;
-          setLivePartialText('');
-        } else {
-          setLivePartialText(transcript);
-        }
-      });
-      connection.on('error', (err) => {
-        console.error('Deepgram live STT:', err);
-        setSttError('Live transcription error');
-      });
-      connection.on('close', () => {
-        setIsLiveSttActive(false);
-        setIsLiveSttConnecting(false);
-        setLivePartialText('');
-      });
-      connection.connect();
-      await connection.waitForOpen();
-
-      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      liveStreamRef.current = micStream;
-      let recorder;
-      try {
-        recorder = new MediaRecorder(micStream, { mimeType: 'audio/webm;codecs=opus' });
-      } catch (_) {
-        recorder = new MediaRecorder(micStream);
+      setAgentToken(data.data.token);
+      setAgentSettings(data.data.settings);
+      if (data.data.webSocketUrl) {
+        setWsUrl(data.data.webSocketUrl);
       }
-      liveRecorderRef.current = recorder;
-      recorder.ondataavailable = async (e) => {
-        if (!e.data || e.data.size === 0) return;
-        try {
-          const ab = await e.data.arrayBuffer();
-          connection.sendMedia(ab);
-        } catch (_) {
-          /* ignore chunk errors */
-        }
-      };
-      recorder.start(250);
-      setIsLiveSttActive(true);
-      setIsLiveSttConnecting(false);
+      setVoiceStarted(true);
     } catch (e) {
-      console.error('Live STT:', e);
-      setSttError(e.message || 'Could not start live voice');
-      setIsLiveSttActive(false);
-      setIsLiveSttConnecting(false);
+      console.error(e);
+      setAgentError(e.message || 'Failed to start Voice Agent');
+    } finally {
+      setConnectingAgent(false);
     }
-  }, [jobId, applicationId, isLiveSttActive, isLiveSttConnecting, submitting]);
+  };
 
-  const handleSubmit = async () => {
-    if (!answerText.trim()) {
-      setError('Please enter your answer');
-      return;
+  useEffect(() => {
+    onStructuredMessageRef.current = (ev) => {
+      const msg = ev.detail;
+      if (!msg || typeof msg !== 'object') return;
+
+      if (msg.type === 'Error') {
+        const detail = msg.description || msg.message || msg.code || 'Unknown error';
+        setAgentError(typeof detail === 'string' ? detail : JSON.stringify(detail));
+        return;
+      }
+      if (msg.type === 'Warning') {
+        console.warn('[Voice Agent]', msg.description || msg);
+        return;
+      }
+      if (msg.type !== 'ConversationText') return;
+
+      if (msg.role === 'user') {
+        const piece = String(msg.content || '').trim();
+        if (piece) {
+          userPiecesRef.current.push(piece);
+          appendTranscript('user', piece);
+        }
+        return;
+      }
+
+      if (msg.role === 'assistant') {
+        const text = String(msg.content || '').trim();
+        appendTranscript('assistant', text);
+
+        const ans = userPiecesRef.current.filter(Boolean).join(' ').trim();
+        const prevQ = lastAssistantRef.current;
+        if (prevQ && ans) {
+          postAgentAnswer(prevQ, ans).catch((e) => {
+            console.error('[Interview] agent-answer:', e);
+            setAgentError(e.message || 'Failed to save answer');
+          });
+        }
+        userPiecesRef.current = [];
+        lastAssistantRef.current = text;
+      }
+    };
+  }, [appendTranscript, postAgentAnswer]);
+
+  const agentSettingsKey =
+    agentSettings != null ? JSON.stringify(agentSettings) : '';
+
+  useLayoutEffect(() => {
+    if (!voiceStarted || !agentToken || !agentSettings) return;
+    const host = agentHostRef.current;
+    if (!host) return;
+
+    let cancelled = false;
+
+    let el = agentElRef.current;
+    if (!el) {
+      el = document.createElement('deepgram-agent');
+      el.setAttribute('url', wsUrl);
+      el.setAttribute('auth-scheme', 'bearer');
+      el.setAttribute('output-sample-rate', '24000');
+      el.setAttribute('idle-timeout-ms', '180000');
+      el.setAttribute('height', '200');
+      el.setAttribute('width', '200');
+      host.appendChild(el);
+      agentElRef.current = el;
     }
 
-    stopLiveVoice();
+    el.token = agentToken;
 
-    setSubmitting(true);
-    setError(null);
+    const structuredHandler = (e) => onStructuredMessageRef.current(e);
+    const onInvalid = () => setAgentError('Voice Agent: invalid authentication');
+    const onMicFail = () => setAgentError('Microphone permission denied or unavailable.');
+    const onFailedSetup = () => setAgentError('Voice Agent failed to start. Try again or check the browser console.');
+    const onSocketClose = (e) => {
+      if (e?.detail?.code && e.detail.code !== 1000) {
+        console.warn('[Voice Agent] socket closed', e.detail);
+      }
+    };
 
-    const answeredIndex = Number(currentQuestionIndex);
+    el.addEventListener('structured message', structuredHandler);
+    el.addEventListener('invalid auth', onInvalid);
+    el.addEventListener('failed to connect user media', onMicFail);
+    el.addEventListener('failed setup', onFailedSetup);
+    el.addEventListener('socket close', onSocketClose);
 
+    const applyConfig = () => {
+      if (cancelled) return;
+      try {
+        el.setAttribute('config', agentSettingsKey);
+      } catch (err) {
+        console.error('[Voice Agent] config:', err);
+        setAgentError('Interview settings are too large or invalid. Ask an admin to shorten job description in the database.');
+      }
+    };
+    requestAnimationFrame(() => {
+      requestAnimationFrame(applyConfig);
+    });
+
+    return () => {
+      cancelled = true;
+      el.removeEventListener('structured message', structuredHandler);
+      el.removeEventListener('invalid auth', onInvalid);
+      el.removeEventListener('failed to connect user media', onMicFail);
+      el.removeEventListener('failed setup', onFailedSetup);
+      el.removeEventListener('socket close', onSocketClose);
+      try {
+        el.removeAttribute('config');
+      } catch (_) {
+        /* ignore */
+      }
+      const h = agentHostRef.current;
+      if (h?.contains(el)) {
+        try {
+          h.removeChild(el);
+        } catch (_) {
+          /* ignore */
+        }
+      }
+      agentElRef.current = null;
+    };
+  }, [voiceStarted, agentToken, agentSettingsKey, wsUrl]);
+
+  const handleEndInterview = async () => {
+    setEndingInterview(true);
+    setAgentError(null);
+    destroyAgent();
     try {
       const token = localStorage.getItem('token');
-      const response = await fetch(
-        `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/submit-answer`,
+      const res = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/voice-session/complete`,
         {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({
-            questionIndex: currentQuestionIndex,
-            answer: answerText,
-            question: currentQuestion,
-            inputMode: speechUsedForAnswerRef.current ? 'speech' : 'text',
-          }),
         }
       );
-
-      const data = await response.json();
-
-      if (response.ok) {
-        // Stop submit spinner immediately — polling can take a while
-        setSubmitting(false);
-
-        const payload = data.data;
-        const nq = payload?.nextQuestion;
-
-        if (payload?.session) {
-          setSession(payload.session);
-        }
-
-        if (payload?.interviewCompleted || payload?.session?.status === 'COMPLETED') {
-          setSubmitted(false);
-          setError(null);
-          if (onAnswerSubmitted) onAnswerSubmitted(payload);
-          return;
-        }
-
-        const mergedQuestions = (() => {
-          const s = payload?.session;
-          if (!s?.questions) return null;
-          return Array.isArray(s.questions) ? s.questions : JSON.parse(s.questions || '[]');
-        })();
-
-        const advanceTo = (questionText, indexVal) => {
-          setCurrentQuestion(questionText);
-          setCurrentQuestionIndex(indexVal);
-          setAnswerText('');
-          setSubmitted(false);
-          setError(null);
-        };
-
-        // 1) Explicit next from API
-        if (nq?.question) {
-          advanceTo(nq.question, nq.index !== undefined ? nq.index : answeredIndex + 1);
-          fetchSession({ silent: true });
-          if (onAnswerSubmitted) onAnswerSubmitted(payload);
-          return;
-        }
-
-        // 2) Same response includes merged session — pick next unanswered (no extra GET)
-        if (mergedQuestions?.length) {
-          const next = findNextUnansweredAfter(mergedQuestions, answeredIndex);
-          if (next?.question) {
-            advanceTo(next.question, next.index);
-            if (onAnswerSubmitted) onAnswerSubmitted(payload);
-            return;
-          }
-        }
-
-        if (payload?.generationError) {
-          setError(payload.generationError);
-          setSubmitted(false);
-          if (onAnswerSubmitted) onAnswerSubmitted(payload);
-          return;
-        }
-
-        if (onAnswerSubmitted) onAnswerSubmitted(payload);
-
-        setSubmitted(true);
-
-        const pollMs = 1500;
-        const maxAttempts = 30;
-        let lastSessionStatus = session?.status;
-
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          if (attempt > 0) {
-            await new Promise((r) => setTimeout(r, pollMs));
-          }
-
-          try {
-            const res = await fetch(
-              `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/student-session`,
-              { headers: { Authorization: `Bearer ${token}` } }
-            );
-            if (!res.ok) continue;
-            const body = await res.json();
-            const sess = body.data?.session;
-            if (!sess) continue;
-            lastSessionStatus = sess.status;
-
-            const questions = Array.isArray(sess.questions)
-              ? sess.questions
-              : JSON.parse(sess.questions || '[]');
-            const next = findNextUnansweredAfter(questions, answeredIndex);
-
-            if (next?.question) {
-              setSession(sess);
-              advanceTo(next.question, next.index);
-              return;
-            }
-          } catch (pollErr) {
-            console.warn('[Interview] poll for next question:', pollErr);
-          }
-        }
-
-        setSubmitted(false);
-        setError(
-          lastSessionStatus === 'ACTIVE'
-            ? 'The next question is still loading. Wait a few seconds, or ask your interviewer to generate the next question.'
-            : 'No further questions in this session.'
-        );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.data?.session) {
+        setSession(data.data.session);
+        if (onAnswerSubmitted) onAnswerSubmitted(data.data);
       } else {
-        setError(data.message || 'Failed to submit answer');
+        setAgentError(data.message || 'Could not finalize interview');
       }
-    } catch (err) {
-      console.error('Error submitting answer:', err);
-      setError('Failed to submit answer. Please try again.');
+    } catch (e) {
+      console.error(e);
+      setAgentError(e.message || 'Could not finalize interview');
     } finally {
-      setSubmitting(false);
+      setEndingInterview(false);
     }
   };
 
   const handleLeave = () => {
+    destroyAgent();
     stopMedia();
-    stopTts();
     onClose();
   };
 
   if (!isOpen) return null;
 
   const modeLabel = session?.mode === 'TECH' ? 'Technical' : 'HR';
+  const overall = session?.overallEvaluation;
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-[#1b1b1f] text-zinc-100 shadow-2xl">
-      {/* Top meeting bar */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800/80 bg-[#252528] px-4">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600">
@@ -751,27 +499,18 @@ const StudentInterview = ({
           </div>
           <div className="min-w-0">
             <h1 className="truncate text-sm font-semibold tracking-tight text-white md:text-base">
-              IntelliPlace Interview
+              IntelliPlace Interview · Deepgram Voice Agent
             </h1>
             <p className="truncate text-xs text-zinc-400">
-              {session ? (
-                <>
-                  {modeLabel} ·{' '}
-                  {session.status === 'COMPLETED'
-                    ? 'Completed'
-                    : !interviewStarted
-                      ? 'Waiting to start'
-                      : interviewFlowPhase === 'opening'
-                        ? 'Introduction · AI interviewer speaking'
-                        : currentQuestion && totalQuestions > 0
-                          ? showQuestionTotal
-                            ? `Question ${displayQNum} of ${totalQuestions}`
-                            : `Question ${displayQNum}`
-                          : 'Preparing your first question…'}
-                </>
-              ) : (
-                'Connecting…'
-              )}
+              {session
+                ? `${modeLabel} · ${
+                    session.status === 'COMPLETED'
+                      ? 'Completed'
+                      : voiceStarted
+                        ? 'Voice session active'
+                        : 'Ready to start'
+                  }`
+                : 'Connecting…'}
             </p>
           </div>
         </div>
@@ -785,42 +524,18 @@ const StudentInterview = ({
         </button>
       </header>
 
-      {/* Main layout */}
       <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        {/* Video stage */}
         <div className="relative min-h-[42vh] flex-1 bg-[#0f0f12] lg:min-h-0">
-          {/* Remote / interviewer placeholder (main stage) */}
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-zinc-900 to-black">
             <div className="mb-4 flex h-28 w-28 items-center justify-center rounded-full bg-zinc-800 ring-4 ring-zinc-700/50">
               <User className="h-14 w-14 text-zinc-500" strokeWidth={1.25} />
             </div>
-            <p className="text-lg font-medium text-zinc-200">AI interviewer</p>
-            <p className="mt-1 max-w-md px-6 text-center text-sm text-zinc-500">
-              {interviewFlowPhase === 'opening'
-                ? 'Introduction: audio plays automatically. Follow along with captions below.'
-                : 'When the AI speaks, captions appear at the bottom of this screen. Use the side panel to read the question and type your answer.'}
+            <p className="text-lg font-medium text-zinc-200">AI interviewer (Deepgram Agent)</p>
+            <p className="mt-1 max-w-lg px-6 text-center text-sm text-zinc-500">
+              Speak naturally. The agent listens and responds over voice. Your answers are transcribed and saved;
+              after the interview ends, Gemini scores the full session for recruiters.
             </p>
           </div>
-
-          {captionText ? (
-            <div className="pointer-events-none absolute bottom-[calc(5.5rem+1rem)] left-0 right-0 z-20 flex justify-center px-4 sm:bottom-28">
-              <div className="max-h-[min(40vh,240px)] w-full max-w-3xl overflow-y-auto rounded-xl border border-zinc-700/80 bg-black/75 px-4 py-3 shadow-xl backdrop-blur-md">
-                <p className="text-center text-sm leading-relaxed text-zinc-100 sm:text-base">{captionText}</p>
-              </div>
-            </div>
-          ) : null}
-
-          {/* Picture-in-picture: self view */}
-          {!qaPanelOpen && session && (
-            <button
-              type="button"
-              onClick={() => setQaPanelOpen(true)}
-              className="absolute bottom-4 left-4 z-10 flex items-center gap-2 rounded-full border border-zinc-600 bg-zinc-900/90 px-4 py-2 text-xs font-medium text-white shadow-lg backdrop-blur-sm transition hover:bg-zinc-800"
-            >
-              <MessageSquare className="h-4 w-4" />
-              Open Q&amp;A
-            </button>
-          )}
 
           <div className="absolute bottom-4 right-4 z-10 w-[min(42vw,220px)] overflow-hidden rounded-xl border-2 border-zinc-600 bg-zinc-900 shadow-2xl aspect-video">
             <video
@@ -832,32 +547,25 @@ const StudentInterview = ({
             />
             {(!videoOn || !localStreamReady) && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-800">
-                <div className="mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-zinc-700">
-                  <User className="h-8 w-8 text-zinc-400" />
-                </div>
-                <span className="text-xs font-medium text-zinc-300">You</span>
-                {!videoOn && <span className="mt-1 text-[10px] text-zinc-500">Camera off</span>}
+                <User className="h-10 w-10 text-zinc-500" />
+                <span className="mt-2 text-xs text-zinc-400">You</span>
               </div>
             )}
-            <div className="absolute bottom-1 left-1 rounded bg-black/50 px-1.5 py-0.5 text-[10px] font-medium text-white">
-              You
-            </div>
           </div>
         </div>
 
-        {/* Q&A side panel */}
         <AnimatePresence>
           {qaPanelOpen && (
             <motion.aside
               initial={{ opacity: 0, x: 16 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 16 }}
-              className="flex w-full flex-col border-t border-zinc-800 bg-[#222226] lg:w-[400px] lg:border-l lg:border-t-0"
+              className="flex w-full flex-col border-t border-zinc-800 bg-[#222226] lg:w-[420px] lg:border-l lg:border-t-0"
             >
               <div className="border-b border-zinc-800 px-4 py-3">
-                <h2 className="text-sm font-semibold text-white">Questions & answers</h2>
+                <h2 className="text-sm font-semibold text-white">Live conversation</h2>
                 <p className="text-xs text-zinc-500">
-                  Expect a natural arc: a few questions about you first, then a gradual shift toward role-specific topics, with follow-ups that reference what you already said.
+                  Powered by Deepgram Voice Agent. Scores and feedback are generated when the interview ends.
                 </p>
               </div>
 
@@ -875,264 +583,126 @@ const StudentInterview = ({
                   <div className="flex flex-1 flex-col items-center justify-center gap-5 py-10 px-4 text-center">
                     <CheckCircle className="h-16 w-16 text-emerald-500" strokeWidth={1.25} />
                     <div className="w-full max-w-md">
-                      <p className="text-lg font-semibold text-white">
-                        {session.mode === 'TECH' ? 'Technical interview complete' : 'Interview complete'}
-                      </p>
-                      <p className="mt-3 text-sm leading-relaxed text-zinc-400">
-                        You have answered all questions in this session for this role. Thank you — you can leave when
-                        you are ready.
-                      </p>
-                      {session.overallEvaluation &&
-                        typeof session.overallEvaluation === 'object' &&
-                        session.overallEvaluation !== null && (
-                          <div className="mt-6 rounded-xl border border-emerald-800/40 bg-emerald-950/25 px-4 py-4 text-left">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-400">
-                              Overall result (Gemini)
+                      <p className="text-lg font-semibold text-white">Interview complete</p>
+                      {overall && typeof overall === 'object' && (
+                        <div className="mt-6 rounded-xl border border-emerald-800/40 bg-emerald-950/25 px-4 py-4 text-left">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-400">
+                            Overall (Gemini)
+                          </p>
+                          {overall.overallScore != null && (
+                            <p className="mt-2 text-3xl font-bold text-white">
+                              {overall.overallScore}
+                              <span className="text-lg font-normal text-zinc-500">/10</span>
                             </p>
-                            {session.overallEvaluation.overallScore != null && (
-                              <p className="mt-2 text-3xl font-bold text-white">
-                                {session.overallEvaluation.overallScore}
-                                <span className="text-lg font-normal text-zinc-500">/10</span>
-                              </p>
-                            )}
-                            {session.overallEvaluation.verdict && (
-                              <p className="mt-1 text-xs font-medium capitalize text-zinc-400">
-                                {String(session.overallEvaluation.verdict).replace(/_/g, ' ')}
-                              </p>
-                            )}
-                            {session.overallEvaluation.executiveSummary && (
-                              <p className="mt-3 text-sm leading-relaxed text-zinc-200">
-                                {session.overallEvaluation.executiveSummary}
-                              </p>
-                            )}
-                            {Array.isArray(session.overallEvaluation.strengthsOverall) &&
-                              session.overallEvaluation.strengthsOverall.length > 0 && (
-                                <div className="mt-3">
-                                  <p className="text-xs font-medium text-zinc-500">Strengths</p>
-                                  <ul className="mt-1 list-inside list-disc text-left text-sm text-zinc-300">
-                                    {session.overallEvaluation.strengthsOverall.map((s, i) => (
-                                      <li key={i}>{s}</li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            {Array.isArray(session.overallEvaluation.risksOrGaps) &&
-                              session.overallEvaluation.risksOrGaps.length > 0 && (
-                                <div className="mt-3">
-                                  <p className="text-xs font-medium text-zinc-500">Risks / gaps</p>
-                                  <ul className="mt-1 list-inside list-disc text-left text-sm text-zinc-300">
-                                    {session.overallEvaluation.risksOrGaps.map((s, i) => (
-                                      <li key={i}>{s}</li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            {session.overallEvaluation.recommendation && (
-                              <p className="mt-4 text-sm font-medium text-emerald-200/90">
-                                {session.overallEvaluation.recommendation}
-                              </p>
-                            )}
-                          </div>
-                        )}
-                    </div>
-                  </div>
-                ) : !interviewStarted ? (
-                  <div className="flex flex-1 flex-col items-center justify-center gap-6 py-8 text-center">
-                    <div>
-                      <p className="text-lg font-medium text-white">Ready to join</p>
-                      <p className="mt-2 text-sm text-zinc-400">
-                        {modeLabel} interview. When you start, the AI interviewer will introduce the session and then ask
-                        for your introduction — audio plays automatically with on-screen captions.
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleStartInterview}
-                      className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-8 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-blue-500"
-                    >
-                      <Play className="h-5 w-5" />
-                      Start interview
-                    </button>
-                  </div>
-                ) : interviewFlowPhase === 'opening' ? (
-                  <div className="flex flex-1 flex-col items-center justify-center gap-5 py-10 px-4 text-center">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-600/20">
-                      {speakingQuestion ? (
-                        <Loader className="h-7 w-7 animate-spin text-blue-400" />
-                      ) : (
-                        <Volume2 className="h-7 w-7 text-blue-400" />
+                          )}
+                          {overall.verdict && (
+                            <p className="mt-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                              {String(overall.verdict).replace(/_/g, ' ')}
+                            </p>
+                          )}
+                          {overall.executiveSummary && (
+                            <p className="mt-3 text-sm leading-relaxed text-zinc-200">{overall.executiveSummary}</p>
+                          )}
+                          {overall.hiringRationale && (
+                            <p className="mt-3 text-sm leading-relaxed text-zinc-300">{overall.hiringRationale}</p>
+                          )}
+                          {overall.recommendation && (
+                            <p className="mt-4 text-xs text-emerald-300/90">{overall.recommendation}</p>
+                          )}
+                        </div>
                       )}
                     </div>
-                    <div>
-                      <p className="text-lg font-medium text-white">AI interviewer · introduction</p>
-                      <p className="mt-2 text-sm leading-relaxed text-zinc-400">
-                        Listen to the introduction on the main screen. When it finishes, your first written question
-                        will appear here so you can answer in your own words.
-                      </p>
-                    </div>
-                    {ttsError && (
-                      <div className="flex w-full max-w-sm items-start gap-2 rounded-lg border border-amber-900/40 bg-amber-950/30 px-3 py-2 text-sm text-amber-200">
-                        <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>{ttsError}</span>
-                      </div>
-                    )}
                   </div>
-                ) : currentQuestion ? (
+                ) : (
                   <>
-                    <div className="mb-4 rounded-xl border border-zinc-700/80 bg-zinc-800/50 p-4">
-                      <p className="text-xs font-medium uppercase tracking-wide text-blue-400">
-                        Question {displayQNum}
-                        {showQuestionTotal && totalQuestions > 0 ? ` of ${totalQuestions}` : ''}
-                      </p>
-                      <p className="mt-2 text-sm leading-relaxed text-zinc-100">{currentQuestion}</p>
-                      <div className="mt-3 flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={speakCurrentQuestion}
-                          disabled={speakingQuestion}
-                          className="inline-flex items-center gap-2 rounded-md border border-zinc-600 px-2.5 py-1 text-xs text-zinc-200 hover:bg-zinc-700/60 disabled:opacity-50"
-                        >
-                          {speakingQuestion ? (
-                            <>
-                              <Loader className="h-3.5 w-3.5 animate-spin" />
-                              Speaking...
-                            </>
-                          ) : (
-                            <>
-                              <Volume2 className="h-3.5 w-3.5" />
-                              Read aloud
-                            </>
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setAutoSpeakQuestion((v) => !v)}
-                          className={`inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs ${
-                            autoSpeakQuestion
-                              ? 'border-blue-500 text-blue-300'
-                              : 'border-zinc-600 text-zinc-300'
-                          }`}
-                        >
-                          {autoSpeakQuestion ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
-                          Auto-read {autoSpeakQuestion ? 'On' : 'Off'}
-                        </button>
-                      </div>
-                    </div>
-
                     {error && (
                       <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-900/50 bg-red-950/40 px-3 py-2 text-sm text-red-200">
                         <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                         <span>{error}</span>
                       </div>
                     )}
-
-                    {ttsError && (
+                    {(agentError || connectingAgent || endingInterview) && (
                       <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-900/40 bg-amber-950/30 px-3 py-2 text-sm text-amber-200">
                         <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>{ttsError}</span>
+                        <span>
+                          {endingInterview
+                            ? 'Wrapping up interview and generating evaluation…'
+                            : connectingAgent
+                              ? 'Connecting to Voice Agent…'
+                              : agentError}
+                        </span>
                       </div>
                     )}
 
-                    {submitted && (
-                      <div className="mb-4 flex items-center gap-2 rounded-lg border border-emerald-900/50 bg-emerald-950/40 px-3 py-2 text-sm text-emerald-200">
-                        <CheckCircle className="h-4 w-4 shrink-0" />
-                        Answer submitted. Loading next question…
-                      </div>
-                    )}
-
-                    {!submitted && (
-                      <div className="flex min-h-0 flex-1 flex-col gap-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <label className="text-xs font-medium text-zinc-400">Your answer</label>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {(isLiveSttActive || isLiveSttConnecting) && (
-                              <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
-                                <span className="relative flex h-2 w-2">
-                                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75"></span>
-                                  <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
-                                </span>
-                                Live voice (ElevenLabs)
-                              </span>
-                            )}
-                            <button
-                              type="button"
-                              onClick={isLiveSttActive || isLiveSttConnecting ? stopLiveVoice : startLiveVoice}
-                              disabled={submitted || submitting}
-                              className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition disabled:opacity-45 ${
-                                isLiveSttActive || isLiveSttConnecting
-                                  ? 'border-red-600 bg-red-950/40 text-red-200 hover:bg-red-950/60'
-                                  : 'border-zinc-600 text-zinc-200 hover:bg-zinc-700/60'
-                              }`}
-                            >
-                              {isLiveSttActive || isLiveSttConnecting ? (
-                                <>
-                                  <Square className="h-3.5 w-3.5 fill-current" />
-                                  Stop live voice
-                                </>
-                              ) : (
-                                <>
-                                  <Mic className="h-3.5 w-3.5" />
-                                  Start live voice
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                        {livePartialText ? (
-                          <p className="rounded-lg border border-zinc-700/80 bg-zinc-900/80 px-3 py-2 text-xs italic text-zinc-400">
-                            Live: {livePartialText}
-                          </p>
-                        ) : null}
-                        {sttError && (
-                          <div className="flex items-start gap-2 rounded-lg border border-amber-900/40 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
-                            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                            <span>{sttError}</span>
-                          </div>
-                        )}
-                        <p className="text-[11px] leading-snug text-zinc-500">
-                          Start live voice to stream speech-to-text as you speak. When you are finished, stop live voice
-                          (optional), edit the text if needed, then submit — the next question appears only after you
-                          submit. Answers are scored with Gemini for a summary at the end.
+                    {!voiceStarted ? (
+                      <div className="flex flex-1 flex-col items-center justify-center gap-4 py-8 text-center">
+                        <Volume2 className="h-12 w-12 text-blue-500 opacity-90" />
+                        <p className="text-sm text-zinc-300">
+                          When you continue, we request a short-lived token and connect to Deepgram&apos;s Voice Agent.
+                          Allow the microphone when prompted.
                         </p>
-                        <textarea
-                          value={answerText}
-                          onChange={(e) => setAnswerText(e.target.value)}
-                          placeholder="Type here, or use Start live voice for streaming transcription…"
-                          rows={10}
-                          className="min-h-[160px] flex-1 resize-none rounded-xl border border-zinc-700 bg-[#1b1b1f] px-3 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
                         <button
                           type="button"
-                          onClick={handleSubmit}
-                          disabled={submitting || !answerText.trim()}
-                          className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 text-sm font-semibold text-white transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-45"
+                          onClick={handleStartVoiceAgent}
+                          disabled={connectingAgent || session.status !== 'ACTIVE'}
+                          className="inline-flex items-center gap-2 rounded-full bg-blue-600 px-8 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-blue-500 disabled:opacity-50"
                         >
-                          {submitting ? (
-                            <>
-                              <Loader className="h-4 w-4 animate-spin" />
-                              Submitting…
-                            </>
+                          {connectingAgent ? <Loader className="h-5 w-5 animate-spin" /> : null}
+                          Start voice interview
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex min-h-0 flex-1 flex-col gap-3">
+                        <p className="text-xs text-zinc-500">
+                          Interview in progress. Use <span className="text-zinc-300">End interview</span> when the
+                          agent has finished and you are done speaking.
+                        </p>
+                        <div
+                          ref={agentHostRef}
+                          className="flex min-h-[200px] items-center justify-center rounded-xl border border-zinc-700/80 bg-zinc-900/50 p-4"
+                        >
+                          <span className="text-xs text-zinc-500">Agent animation / audio</span>
+                        </div>
+                        <div className="min-h-0 flex-1 overflow-y-auto rounded-xl border border-zinc-700/80 bg-[#1b1b1f] p-3">
+                          {transcript.length === 0 ? (
+                            <p className="text-xs text-zinc-500">Transcript appears as you and the agent speak…</p>
                           ) : (
-                            <>
-                              <CheckCircle className="h-4 w-4" />
-                              Submit answer
-                            </>
+                            <ul className="space-y-3 text-sm">
+                              {transcript.map((line, i) => (
+                                <li
+                                  key={`${line.at}-${i}`}
+                                  className={
+                                    line.role === 'assistant'
+                                      ? 'rounded-lg border border-blue-900/40 bg-blue-950/20 px-3 py-2 text-zinc-200'
+                                      : 'rounded-lg border border-zinc-700/60 bg-zinc-900/80 px-3 py-2 text-zinc-300'
+                                  }
+                                >
+                                  <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                                    {line.role === 'assistant' ? 'Interviewer' : 'You'}
+                                  </span>
+                                  <p className="mt-1 whitespace-pre-wrap leading-relaxed">{line.text}</p>
+                                </li>
+                              ))}
+                            </ul>
                           )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleEndInterview}
+                          disabled={endingInterview}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-emerald-700/60 bg-emerald-950/40 py-3 text-sm font-semibold text-emerald-100 transition hover:bg-emerald-950/60 disabled:opacity-50"
+                        >
+                          {endingInterview ? (
+                            <Loader className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <CheckCircle className="h-4 w-4" />
+                          )}
+                          End interview &amp; save results
                         </button>
                       </div>
                     )}
                   </>
-                ) : (
-                  <div className="flex flex-1 flex-col items-center justify-center gap-4 py-12 text-center">
-                    <Loader className="h-10 w-10 animate-spin text-blue-500" />
-                    <div>
-                      <p className="text-sm font-medium text-zinc-200">Waiting for the first question</p>
-                      <p className="mt-2 text-xs text-zinc-500">
-                        The interviewer generates questions after the session starts. This screen refreshes every few
-                        seconds.
-                      </p>
-                    </div>
-                  </div>
                 )}
               </div>
             </motion.aside>
@@ -1140,18 +710,24 @@ const StudentInterview = ({
         </AnimatePresence>
       </div>
 
-      {/* Bottom control bar (Zoom-style) */}
       <footer className="flex h-[72px] shrink-0 items-center justify-center gap-2 border-t border-zinc-800 bg-[#2d2d32] px-4 pb-2">
         <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
           <button
             type="button"
-            onClick={() => setMicOn((m) => !m)}
-            title={micOn ? 'Mute' : 'Unmute'}
+            onClick={() => !voiceStarted && setMicOn((m) => !m)}
+            disabled={voiceStarted}
+            title={
+              voiceStarted
+                ? 'Microphone is used by the Voice Agent'
+                : micOn
+                  ? 'Preview: camera only until voice starts'
+                  : ''
+            }
             className={`flex h-12 w-12 items-center justify-center rounded-full transition ${
-              micOn ? 'bg-zinc-700 hover:bg-zinc-600' : 'bg-white text-zinc-900 hover:bg-zinc-200'
-            }`}
+              voiceStarted ? 'cursor-not-allowed opacity-50' : ''
+            } ${micOn && !voiceStarted ? 'bg-zinc-700 hover:bg-zinc-600' : 'bg-zinc-700'}`}
           >
-            {micOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+            {voiceStarted ? <Mic className="h-5 w-5" /> : micOn ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
           </button>
           <button
             type="button"
@@ -1166,7 +742,7 @@ const StudentInterview = ({
           <button
             type="button"
             onClick={() => setQaPanelOpen((o) => !o)}
-            title={qaPanelOpen ? 'Hide Q&A panel' : 'Show Q&A panel'}
+            title={qaPanelOpen ? 'Hide panel' : 'Show panel'}
             className={`flex h-12 w-12 items-center justify-center rounded-full transition ${
               qaPanelOpen ? 'bg-blue-600 hover:bg-blue-500' : 'bg-zinc-700 hover:bg-zinc-600'
             }`}

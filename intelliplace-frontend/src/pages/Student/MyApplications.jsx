@@ -565,8 +565,6 @@ const MyApplications = () => {
           }}
           jobId={interviewData.jobId}
           applicationId={interviewData.applicationId}
-          question={interviewData.question}
-          questionIndex={interviewData.questionIndex}
           session={interviewData.session}
           candidateDisplayName={interviewData.candidateDisplayName}
           onAnswerSubmitted={(result) => {

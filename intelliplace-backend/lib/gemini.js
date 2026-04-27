@@ -327,13 +327,24 @@ ${String(questionText || '').trim()}
 **Candidate's answer:**
 ${String(answerText || '').trim()}
 
+Evaluate specifically on these dimensions (0-10 each):
+- clarity
+- technical_accuracy
+- relevance
+- depth
+
 Return ONLY valid JSON (no markdown) with this exact shape:
 {
-  "score": <integer 1-10>,
-  "summary": "<one sentence assessment>",
-  "strengths": ["<bullet>", "..."],
-  "gaps": ["<what was missing or weak>", "..."],
-  "relevance": "<one sentence: does the answer address the question?>"
+  "score": <integer 0-10>,
+  "feedback": "<short constructive feedback, max 220 chars>",
+  "criteria": {
+    "clarity": <number 0-10>,
+    "technicalAccuracy": <number 0-10>,
+    "relevance": <number 0-10>,
+    "depth": <number 0-10>
+  },
+  "strengths": ["<short bullet>", "..."],
+  "improvements": ["<short bullet>", "..."]
 }
 
 Rules: Be constructive and fair. Reward specifics, structure, and honesty; penalize vagueness and evasion.`;
@@ -362,12 +373,27 @@ Rules: Be constructive and fair. Reward specifics, structure, and honesty; penal
       if (jsonMatch) jsonStr = jsonMatch[1].trim();
       const parsed = JSON.parse(jsonStr);
       const score = Number(parsed.score);
+      const c = parsed.criteria && typeof parsed.criteria === 'object' ? parsed.criteria : {};
+      const toScore = (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return null;
+        return Math.min(10, Math.max(0, Math.round(n)));
+      };
       return {
-        score: Number.isFinite(score) ? Math.min(10, Math.max(1, Math.round(score))) : null,
-        summary: typeof parsed.summary === 'string' ? parsed.summary : '',
+        score: Number.isFinite(score) ? Math.min(10, Math.max(0, Math.round(score))) : null,
+        feedback: typeof parsed.feedback === 'string' ? parsed.feedback.trim().slice(0, 220) : '',
+        criteria: {
+          clarity: toScore(c.clarity),
+          technicalAccuracy: toScore(c.technicalAccuracy ?? c.technical_accuracy),
+          relevance: toScore(c.relevance),
+          depth: toScore(c.depth),
+        },
         strengths: Array.isArray(parsed.strengths) ? parsed.strengths.map(String) : [],
-        gaps: Array.isArray(parsed.gaps) ? parsed.gaps.map(String) : [],
-        relevance: typeof parsed.relevance === 'string' ? parsed.relevance : '',
+        improvements: Array.isArray(parsed.improvements)
+          ? parsed.improvements.map(String)
+          : Array.isArray(parsed.gaps)
+            ? parsed.gaps.map(String)
+            : [],
         evaluatedAt: new Date().toISOString(),
       };
     } catch (err) {
@@ -462,5 +488,161 @@ Return ONLY valid JSON (no markdown):
     }
   }
   if (lastError) console.error('[Gemini] evaluateInterviewOverallGemini:', lastError.message || lastError);
+  return null;
+}
+
+/**
+ * Full interview evaluation in one call: per-answer scores + overall (for Voice Agent flow — run at end only).
+ * @param {object} params
+ * @param {Array<{ questionIndex: number, question: string, answer: string }>} params.turns
+ */
+export async function evaluateInterviewSessionEndGemini({
+  mode = 'TECH',
+  jobTitle = '',
+  jobDescription = '',
+  resumeExcerpt = '',
+  requiredSkillsText = '',
+  candidateSkillsText = '',
+  candidateName = 'Candidate',
+  turns = [],
+}) {
+  if (!GEMINI_API_KEY) return null;
+  if (!Array.isArray(turns) || turns.length === 0) return null;
+
+  const sorted = [...turns].sort((a, b) => (a.questionIndex ?? 0) - (b.questionIndex ?? 0));
+  const transcript = sorted
+    .map(
+      (t, i) =>
+        `--- Turn ${i + 1} (questionIndex=${t.questionIndex}) ---\nQuestion: ${t.question || ''}\nAnswer: ${t.answer || ''}`
+    )
+    .join('\n\n');
+
+  const prompt = `You are an expert hiring panel evaluating a completed voice interview transcript.
+
+**Mode:** ${mode}
+**Role / job title:** ${jobTitle}
+**Job description (excerpt):** ${String(jobDescription || '').trim().slice(0, 6000)}
+**Required skills context:** ${String(requiredSkillsText || '').trim().slice(0, 2000)}
+**Candidate skills (stated):** ${String(candidateSkillsText || '').trim().slice(0, 2000)}
+**Resume excerpt (if any):** ${String(resumeExcerpt || '').trim().slice(0, 4000)}
+**Candidate name:** ${candidateName}
+
+**Full transcript (evaluate every Q&A pair):**
+${transcript}
+
+Return ONLY valid JSON (no markdown) with this exact shape:
+{
+  "perAnswerEvaluations": [
+    {
+      "questionIndex": <number matching questionIndex from transcript>,
+      "score": <integer 0-10 overall for this answer>,
+      "feedback": "<short constructive feedback, max 240 chars>",
+      "criteria": {
+        "clarity": <0-10>,
+        "technicalAccuracy": <0-10>,
+        "relevance": <0-10>,
+        "depth": <0-10>
+      }
+    }
+  ],
+  "overall": {
+    "overallScore": <integer 0-10>,
+    "verdict": "<one of: strong_fit | moderate_fit | weak_fit | insufficient_signal>",
+    "hiringRationale": "<3-5 sentences: why this verdict, key evidence from their answers>",
+    "executiveSummary": "<2-4 sentences for recruiters>",
+    "strengthsOverall": ["<themes>"],
+    "risksOrGaps": ["<themes>"],
+    "recommendation": "<one sentence next step>"
+  }
+}
+
+Rules: One perAnswerEvaluations entry per turn in the transcript (same questionIndex values). Be fair; reward specifics and relevance to the role; penalize vagueness.`;
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const makeRequest = async (url) => {
+    const body = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.35,
+        maxOutputTokens: 8192,
+        responseMimeType: 'application/json',
+      },
+    };
+    return axios.post(url, body, { headers: { 'Content-Type': 'application/json' }, timeout: 120000 });
+  };
+
+  let lastError = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      const url = `${GEMINI_BASE}/models/${model.trim()}:generateContent?key=${GEMINI_API_KEY}`;
+      let response = null;
+      const maxAttempts = 4;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          response = await makeRequest(url);
+          break;
+        } catch (reqErr) {
+          const status = reqErr?.response?.status;
+          const retriable = status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+          if (!retriable || attempt === maxAttempts) {
+            throw reqErr;
+          }
+          const retryAfterRaw = reqErr?.response?.headers?.['retry-after'];
+          const retryAfterSec = Number.parseInt(retryAfterRaw, 10);
+          const backoffMs = Number.isFinite(retryAfterSec)
+            ? Math.min(retryAfterSec * 1000, 20000)
+            : Math.min(1000 * (2 ** (attempt - 1)), 12000);
+          const jitterMs = Math.floor(Math.random() * 250);
+          await sleep(backoffMs + jitterMs);
+        }
+      }
+
+      const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error('Empty session-end evaluation from Gemini');
+      let jsonStr = text.trim();
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) jsonStr = jsonMatch[1].trim();
+      const parsed = JSON.parse(jsonStr);
+      const list = Array.isArray(parsed.perAnswerEvaluations) ? parsed.perAnswerEvaluations : [];
+      const toScore = (v) => {
+        const n = Number(v);
+        if (!Number.isFinite(n)) return null;
+        return Math.min(10, Math.max(0, Math.round(n)));
+      };
+      const perAnswerEvaluations = list.map((row) => ({
+        questionIndex: Number(row.questionIndex),
+        score: toScore(row.score),
+        feedback: typeof row.feedback === 'string' ? row.feedback.trim().slice(0, 240) : '',
+        criteria:
+          row.criteria && typeof row.criteria === 'object'
+            ? {
+                clarity: toScore(row.criteria.clarity),
+                technicalAccuracy: toScore(row.criteria.technicalAccuracy ?? row.criteria.technical_accuracy),
+                relevance: toScore(row.criteria.relevance),
+                depth: toScore(row.criteria.depth),
+              }
+            : {},
+      }));
+      const o = parsed.overall && typeof parsed.overall === 'object' ? parsed.overall : {};
+      const overallScore = toScore(o.overallScore);
+      const overall = {
+        overallScore: overallScore != null ? overallScore : null,
+        verdict: typeof o.verdict === 'string' ? o.verdict : 'insufficient_signal',
+        hiringRationale: typeof o.hiringRationale === 'string' ? o.hiringRationale : '',
+        executiveSummary: typeof o.executiveSummary === 'string' ? o.executiveSummary : '',
+        strengthsOverall: Array.isArray(o.strengthsOverall) ? o.strengthsOverall.map(String) : [],
+        risksOrGaps: Array.isArray(o.risksOrGaps) ? o.risksOrGaps.map(String) : [],
+        recommendation: typeof o.recommendation === 'string' ? o.recommendation : '',
+        evaluatedAt: new Date().toISOString(),
+      };
+      return { perAnswerEvaluations, overall };
+    } catch (err) {
+      lastError = err;
+      if (err.response?.status === 404) continue;
+      console.error('[Gemini] evaluateInterviewSessionEndGemini:', err.message || err);
+      return null;
+    }
+  }
+  if (lastError) console.error('[Gemini] evaluateInterviewSessionEndGemini:', lastError.message || lastError);
   return null;
 }

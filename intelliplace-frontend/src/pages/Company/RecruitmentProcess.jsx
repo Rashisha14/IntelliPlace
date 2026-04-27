@@ -974,7 +974,7 @@ const InterviewContent = ({ interviews, applications, job, jobId, onStartIntervi
             Interview Management
           </h3>
           <p className="text-sm text-gray-600">
-            Conduct AI-powered interviews for shortlisted candidates
+            Conduct AI-powered interviews and review candidate Q&A with Gemini evaluation
           </p>
         </div>
         <button
@@ -1041,7 +1041,7 @@ const InterviewContent = ({ interviews, applications, job, jobId, onStartIntervi
                       className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                     >
                       <Video className="w-4 h-4" />
-                      {existingInterview ? 'Continue Interview' : 'Start Interview'}
+                      {existingInterview ? 'View Q&A / Evaluate' : 'Start Interview'}
                     </button>
                   </div>
                 </div>
@@ -1070,7 +1070,7 @@ const InterviewContent = ({ interviews, applications, job, jobId, onStartIntervi
                 key={interview.id}
                 className="bg-gray-50 rounded-lg p-4 border border-gray-200"
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-4">
                   <div>
                     <div className="flex items-center gap-3 mb-2">
                       <span
@@ -1108,6 +1108,15 @@ const InterviewContent = ({ interviews, applications, job, jobId, onStartIntervi
                       )}
                     </div>
                   </div>
+                  {interview.application && (
+                    <button
+                      onClick={() => onStartInterview(interview.application)}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors"
+                    >
+                      <Video className="w-4 h-4" />
+                      View Q&A / Evaluate
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

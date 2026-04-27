@@ -23,6 +23,8 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
   const [message, setMessage] = useState(null);
   const [interviewStatus, setInterviewStatus] = useState('STOPPED');
   const [showControls, setShowControls] = useState(true);
+  const [evaluatingAi, setEvaluatingAi] = useState(false);
+  const [aiEval, setAiEval] = useState(null);
 
   useEffect(() => {
     if (isOpen && applicationId) {
@@ -47,32 +49,23 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
           setSession(sessionData);
           setMode(sessionData.mode);
           setInterviewStatus(sessionData.status || 'ACTIVE');
-          
-          const questionsList = Array.isArray(sessionData.questions) 
-            ? sessionData.questions 
+
+          const questionsList = Array.isArray(sessionData.questions)
+            ? sessionData.questions
             : JSON.parse(sessionData.questions || '[]');
           setQuestions(questionsList);
-          
-          const answers = Array.isArray(sessionData.answers)
-            ? sessionData.answers
-            : JSON.parse(sessionData.answers || '[]');
-          
-          const questionsWithAnswers = questionsList.map((q, idx) => {
-            const answerData = answers.find(a => a.questionIndex === (q.index !== undefined ? q.index : idx));
-            return {
-              ...q,
-              answer: answerData?.answer || null,
-              analysis: answerData?.analysis || null,
-            };
-          });
-          
-          setQuestions(questionsWithAnswers);
-          
-          const unansweredQ = questionsWithAnswers.find(q => !q.answer);
+
+          const oe =
+            sessionData.overallEvaluation && typeof sessionData.overallEvaluation === 'object'
+              ? sessionData.overallEvaluation
+              : null;
+          setAiEval(oe);
+
+          const unansweredQ = questionsList.find((q) => !q.answer);
           if (unansweredQ) {
             setCurrentQuestion(unansweredQ);
-          } else if (questionsWithAnswers.length > 0) {
-            setCurrentQuestion(questionsWithAnswers[questionsWithAnswers.length - 1]);
+          } else if (questionsList.length > 0) {
+            setCurrentQuestion(questionsList[questionsList.length - 1]);
           }
         }
       } else if (res.status === 404) {
@@ -216,6 +209,50 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
     }
   };
 
+  const handleEvaluateWithAi = async () => {
+    setEvaluatingAi(true);
+    setMessage(null);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/voice-session/evaluate`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      const data = await res.json();
+      if (res.ok) {
+        if (data.data?.overallEvaluation) {
+          setAiEval(data.data.overallEvaluation);
+        }
+        if (data.data?.session) {
+          const s = data.data.session;
+          setSession(s);
+          const qList = Array.isArray(s.questions) ? s.questions : JSON.parse(s.questions || '[]');
+          setQuestions(qList);
+          const oe =
+            s.overallEvaluation && typeof s.overallEvaluation === 'object' ? s.overallEvaluation : null;
+          if (oe) setAiEval(oe);
+        }
+        setMessage({ type: 'success', text: data.data?.message || 'AI evaluation updated.' });
+        if (onRefresh) onRefresh();
+      } else {
+        setMessage({ type: 'error', text: data.message || 'Evaluation failed' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Evaluation failed' });
+    } finally {
+      setEvaluatingAi(false);
+    }
+  };
+
+  const hasAnyAnswer = questions.some((q) => !!q.answer);
+  const canRunAiEval =
+    session &&
+    hasAnyAnswer &&
+    (interviewStatus === 'COMPLETED' || interviewStatus === 'STOPPED');
+
   if (!isOpen) return null;
 
   return (
@@ -351,6 +388,79 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
                 </div>
               </div>
 
+              {canRunAiEval && (
+                <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium text-violet-900">AI evaluation (Gemini)</p>
+                      <p className="text-sm text-violet-800/90 mt-1">
+                        Score the full Q&amp;A transcript, per-answer feedback, and a hiring verdict. Run after the
+                        candidate has finished or the session is stopped.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleEvaluateWithAi}
+                      disabled={evaluatingAi}
+                      className="inline-flex items-center gap-2 shrink-0 px-4 py-2 bg-violet-700 text-white rounded-lg hover:bg-violet-800 disabled:opacity-50"
+                    >
+                      {evaluatingAi ? <Loader className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      Evaluate with AI
+                    </button>
+                  </div>
+                  {aiEval && typeof aiEval === 'object' && (
+                    <div className="rounded-md border border-violet-100 bg-white p-4 text-left text-gray-800 space-y-3">
+                      {aiEval.overallScore != null && (
+                        <p>
+                          <span className="text-sm text-gray-500">Overall score</span>
+                          <span className="ml-2 text-2xl font-bold text-violet-700">{aiEval.overallScore}</span>
+                          <span className="text-gray-500">/10</span>
+                        </p>
+                      )}
+                      {aiEval.verdict && (
+                        <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          {String(aiEval.verdict).replace(/_/g, ' ')}
+                        </p>
+                      )}
+                      {aiEval.executiveSummary && (
+                        <p className="text-sm leading-relaxed">{aiEval.executiveSummary}</p>
+                      )}
+                      {aiEval.hiringRationale && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-600 mb-1">Rationale</p>
+                          <p className="text-sm leading-relaxed text-gray-700">{aiEval.hiringRationale}</p>
+                        </div>
+                      )}
+                      {Array.isArray(aiEval.strengthsOverall) && aiEval.strengthsOverall.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-600 mb-1">Strengths</p>
+                          <ul className="list-disc list-inside text-sm text-gray-700">
+                            {aiEval.strengthsOverall.map((s, i) => (
+                              <li key={i}>{s}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {Array.isArray(aiEval.risksOrGaps) && aiEval.risksOrGaps.length > 0 && (
+                        <div>
+                          <p className="text-xs font-semibold text-gray-600 mb-1">Risks / gaps</p>
+                          <ul className="list-disc list-inside text-sm text-gray-700">
+                            {aiEval.risksOrGaps.map((s, i) => (
+                              <li key={i}>{s}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {aiEval.recommendation && (
+                        <p className="text-sm font-medium text-violet-900 border-t border-gray-100 pt-3">
+                          {aiEval.recommendation}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="border border-gray-200 rounded-lg overflow-hidden">
                 <button
                   type="button"
@@ -481,6 +591,14 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
                                   {q.analysis?.overall_score !== undefined && (
                                     <p className="text-xs text-blue-600 mt-1">
                                       Score: {q.analysis.overall_score.toFixed(1)}/10
+                                    </p>
+                                  )}
+                                  {q.geminiEvaluation?.score != null && (
+                                    <p className="text-xs text-violet-700 mt-1">
+                                      AI score: {q.geminiEvaluation.score}/10
+                                      {q.geminiEvaluation.feedback
+                                        ? ` — ${q.geminiEvaluation.feedback}`
+                                        : ''}
                                     </p>
                                   )}
                                 </div>
