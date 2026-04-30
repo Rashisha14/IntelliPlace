@@ -2,6 +2,19 @@ import { motion } from 'framer-motion';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import Modal from '../../components/Modal';
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+} from 'chart.js';
+import { Doughnut, Bar } from 'react-chartjs-2';
+
+ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title);
 
 const UsersTable = ({ type, data, onSearch, loading }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,6 +59,80 @@ const UsersTable = ({ type, data, onSearch, loading }) => {
       default:
         return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const getStudentChartData = (applications) => {
+    if (!applications || applications.length === 0) return null;
+    
+    const counts = { PENDING: 0, REVIEWING: 0, HIRED: 0, REJECTED: 0, OFFERED: 0 };
+    applications.forEach(app => {
+      if (counts[app.status] !== undefined) counts[app.status]++;
+      else counts[app.status] = 1;
+    });
+
+    const labels = Object.keys(counts).filter(k => counts[k] > 0);
+    const data = labels.map(k => counts[k]);
+    
+    const colorMap = {
+      PENDING: '#FCD34D',
+      REVIEWING: '#93C5FD',
+      HIRED: '#86EFAC',
+      REJECTED: '#FCA5A5',
+      OFFERED: '#6EE7B7'
+    };
+
+    return {
+      labels,
+      datasets: [
+        {
+          data,
+          backgroundColor: labels.map(l => colorMap[l] || '#D1D5DB'),
+          borderWidth: 1,
+        },
+      ],
+    };
+  };
+
+  const getCompanyJobStatusData = (jobs) => {
+    if (!jobs || jobs.length === 0) return null;
+    
+    const counts = { OPEN: 0, CLOSED: 0 };
+    jobs.forEach(job => {
+      if (counts[job.status] !== undefined) counts[job.status]++;
+      else counts[job.status] = 1;
+    });
+
+    const labels = Object.keys(counts).filter(k => counts[k] > 0);
+    const data = labels.map(k => counts[k]);
+
+    return {
+      labels,
+      datasets: [
+        {
+          data,
+          backgroundColor: labels.map(l => l === 'OPEN' ? '#86EFAC' : '#FCA5A5'),
+          borderWidth: 1,
+        },
+      ],
+    };
+  };
+
+  const getCompanyApplicationsData = (jobs) => {
+    if (!jobs || jobs.length === 0) return null;
+    
+    const labels = jobs.map(j => j.title.length > 12 ? j.title.substring(0, 12) + '...' : j.title);
+    const data = jobs.map(j => j._count?.applications || 0);
+
+    return {
+      labels,
+      datasets: [
+        {
+          label: 'Applications',
+          data,
+          backgroundColor: '#93C5FD',
+        },
+      ],
+    };
   };
 
   const renderStudentRow = (student) => (
@@ -208,13 +295,100 @@ const UsersTable = ({ type, data, onSearch, loading }) => {
           open={true}
           title={`Details - ${type === 'students' ? selectedUser.name : selectedUser.companyName}`}
           message={
-            <div className="text-xs overflow-auto max-h-60 space-y-2">
-              {Object.entries(selectedUser).map(([key, value]) => (
-                <div key={key} className="flex">
-                  <span className="font-semibold mr-2 capitalize">{key.replace(/([A-Z])/g, ' $1')}:</span>
-                  <span className="break-all">{typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+            <div className="text-sm overflow-auto max-h-[75vh] space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Object.entries(selectedUser)
+                  .filter(([key]) => key !== 'applications' && key !== 'jobs' && key !== 'id')
+                  .map(([key, value]) => (
+                  <div key={key} className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                    <div className="text-gray-500 text-xs font-semibold uppercase tracking-wider mb-1">
+                      {key.replace(/([A-Z])/g, ' $1')}
+                    </div>
+                    <div className="text-gray-900 font-medium break-words">
+                      {value === null || value === undefined || value === '' ? '-' : 
+                       (key === 'createdAt' || key === 'updatedAt') ? new Date(value).toLocaleString() : 
+                       String(value)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              
+              {selectedUser.applications && (
+                <div className="mt-6 border-t pt-4">
+                  <h4 className="font-bold text-gray-800 mb-4">Application Status Overview</h4>
+                  {selectedUser.applications.length > 0 ? (
+                    <div className="h-64 w-full flex justify-center mb-6">
+                      <Doughnut data={getStudentChartData(selectedUser.applications)} options={{ maintainAspectRatio: false }} />
+                    </div>
+                  ) : null}
+                  <h4 className="font-bold text-gray-800 mb-3 border-b pb-2">Applications ({selectedUser.applications.length})</h4>
+                  {selectedUser.applications.length > 0 ? (
+                    <div className="space-y-2">
+                      {selectedUser.applications.map(app => (
+                        <div key={app.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-100">
+                          <div>
+                            <div className="font-medium text-gray-900">{app.job?.title || `Application #${app.id}`}</div>
+                            {app.job?.company?.companyName && (
+                              <div className="text-gray-500 text-xs">{app.job.company.companyName}</div>
+                            )}
+                            <div className="text-gray-400 text-xs mt-1">{new Date(app.createdAt).toLocaleDateString()}</div>
+                          </div>
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(app.status)}`}>
+                            {app.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 text-sm italic">No applications found.</p>
+                  )}
                 </div>
-              ))}
+              )}
+
+              {selectedUser.jobs && (
+                <div className="mt-6 border-t pt-4">
+                  <h4 className="font-bold text-gray-800 mb-4">Jobs & Applications Overview</h4>
+                  {selectedUser.jobs.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                      <div className="h-64 w-full flex flex-col items-center">
+                        <span className="text-xs font-semibold text-gray-500 mb-2">Job Statuses</span>
+                        <Doughnut data={getCompanyJobStatusData(selectedUser.jobs)} options={{ maintainAspectRatio: false }} />
+                      </div>
+                      <div className="h-64 w-full flex flex-col items-center">
+                        <span className="text-xs font-semibold text-gray-500 mb-2">Applications per Job</span>
+                        <Bar 
+                          data={getCompanyApplicationsData(selectedUser.jobs)} 
+                          options={{ 
+                            maintainAspectRatio: false,
+                            scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
+                            plugins: { legend: { display: false } }
+                          }} 
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                  <h4 className="font-bold text-gray-800 mb-3 border-b pb-2">Jobs Posted ({selectedUser.jobs.length})</h4>
+                  {selectedUser.jobs.length > 0 ? (
+                    <div className="space-y-3">
+                      {selectedUser.jobs.map(job => (
+                        <div key={job.id} className="bg-gray-50 p-3 rounded-lg border border-gray-100">
+                          <div className="flex justify-between items-start mb-2">
+                            <span className="font-medium text-gray-900">{job.title}</span>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${job.status === 'OPEN' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
+                              {job.status}
+                            </span>
+                          </div>
+                          <div className="text-gray-500 text-xs">
+                            Posted: {new Date(job.createdAt).toLocaleDateString()}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-gray-500 text-sm italic">No jobs posted.</p>
+                  )}
+                </div>
+              )}
             </div>
           }
           type="info"

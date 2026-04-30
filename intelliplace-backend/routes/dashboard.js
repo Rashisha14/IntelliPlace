@@ -68,6 +68,16 @@ router.get('/admin/students', authorizeAdmin, async (req, res) => {
               id: true,
               status: true,
               createdAt: true,
+              job: {
+                select: {
+                  title: true,
+                  company: {
+                    select: {
+                      companyName: true,
+                    },
+                  },
+                },
+              },
             }
           }
         },
@@ -127,6 +137,9 @@ router.get('/admin/companies', authorizeAdmin, async (req, res) => {
               title: true,
               status: true,
               createdAt: true,
+              _count: {
+                select: { applications: true }
+              }
             }
           }
         },
