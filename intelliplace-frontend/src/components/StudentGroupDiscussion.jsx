@@ -47,27 +47,9 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
     };
   }, [isOpen, jobId]);
 
-  useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      recognitionRef.current = new SpeechRecognition();
-      recognitionRef.current.continuous = true;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = 'en-US';
-      
-      recognitionRef.current.onresult = (event) => {
-        let currentTranscript = '';
-        for (let i = 0; i < event.results.length; i++) {
-          currentTranscript += event.results[i][0].transcript;
-        }
-        setLiveTranscript(currentTranscript);
-      };
-      
-      recognitionRef.current.onerror = (e) => {
-        console.error("Speech recognition error", e.error);
-      };
-    }
-  }, []);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
   useEffect(() => {
     if (gdState?.status === 'PAUSED' || gdState?.status === 'COMPLETED') {
@@ -94,7 +76,7 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
   // Spacebar recording logic
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.code === 'Space' && gdState?.activeSpeaker?.studentId === user.id && !e.repeat && !isSpeaking) {
+      if (e.code === 'Space' && gdState?.activeSpeaker?.studentId === user.id && !e.repeat && !isSpeaking && !isTranscribing) {
         e.preventDefault();
         startRecording();
       }
@@ -112,7 +94,7 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [gdState?.activeSpeaker, isSpeaking]);
+  }, [gdState?.activeSpeaker, isSpeaking, isTranscribing]);
 
   const requestToSpeak = () => {
     if (!socket) return;
@@ -120,17 +102,50 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
   };
 
   const startRecording = async () => {
-    if (!recognitionRef.current) {
-      Swal.fire({ icon: 'warning', title: 'Mic Blocked', text: 'Speech Recognition is blocked or not supported (likely due to HTTP network access). You will be put into manual text mode.' });
-      setIsReviewing(true);
-      return;
-    }
-    setLiveTranscript('');
-    setIsReviewing(false);
-    
     try {
-      recognitionRef.current.start();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        setIsTranscribing(true);
+        try {
+          const formData = new FormData();
+          formData.append('audio', audioBlob, 'speech.webm');
+          
+          const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/transcribe-audio`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem('token')}`
+            },
+            body: formData
+          });
+          
+          const data = await res.json();
+          if (data.success) {
+            setLiveTranscript(data.text);
+          } else {
+            Swal.fire('Transcription Error', data.message, 'error');
+          }
+        } catch (err) {
+          console.error(err);
+          Swal.fire('Network Error', 'Could not transcribe audio', 'error');
+        } finally {
+          setIsTranscribing(false);
+          setIsReviewing(true);
+        }
+      };
+
+      recorder.start();
+      mediaRecorderRef.current = recorder;
       setIsSpeaking(true);
+      setLiveTranscript('');
+      setIsReviewing(false);
 
       // Safety timeout: 90 seconds
       recordingTimeoutRef.current = setTimeout(() => {
@@ -146,13 +161,11 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
   };
 
   const stopRecording = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {}
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(t => t.stop());
     }
     setIsSpeaking(false);
-    setIsReviewing(true);
     clearTimeout(recordingTimeoutRef.current);
   };
 
@@ -233,18 +246,26 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
                       <p className="text-gray-600 mb-6 text-lg">Press and hold Spacebar, or hold the button below to speak.</p>
                       
                       <div className="w-full max-w-md h-32 bg-white rounded shadow-inner p-4 overflow-auto border text-gray-700 italic mb-6">
-                        {liveTranscript || 'Your words will appear here...'}
+                        {isTranscribing ? (
+                          <div className="flex flex-col items-center justify-center h-full text-blue-600">
+                            <Loader2 className="w-6 h-6 animate-spin mb-2" />
+                            <span>Transcribing audio with Deepgram...</span>
+                          </div>
+                        ) : (
+                          liveTranscript || (isSpeaking ? 'Recording... release to transcribe' : 'Your words will appear here...')
+                        )}
                       </div>
 
                       <button 
-                        onMouseDown={startRecording}
-                        onMouseUp={stopRecording}
-                        onTouchStart={startRecording}
-                        onTouchEnd={stopRecording}
-                        className={`w-32 h-32 rounded-full flex flex-col items-center justify-center gap-3 transition-transform shadow-xl ${isSpeaking ? 'bg-red-600 scale-110 text-white shadow-red-200' : 'bg-green-600 hover:bg-green-700 text-white shadow-green-200 hover:scale-105'}`}
+                        onMouseDown={!isTranscribing ? startRecording : undefined}
+                        onMouseUp={!isTranscribing ? stopRecording : undefined}
+                        onTouchStart={!isTranscribing ? startRecording : undefined}
+                        onTouchEnd={!isTranscribing ? stopRecording : undefined}
+                        disabled={isTranscribing}
+                        className={`w-32 h-32 rounded-full flex flex-col items-center justify-center gap-3 transition-transform shadow-xl ${isTranscribing ? 'bg-gray-400 cursor-not-allowed text-white' : isSpeaking ? 'bg-red-600 scale-110 text-white shadow-red-200' : 'bg-green-600 hover:bg-green-700 text-white shadow-green-200 hover:scale-105'}`}
                       >
                         <Mic className={`w-12 h-12 ${isSpeaking ? 'animate-bounce' : ''}`} />
-                        <span className="font-bold text-sm">{isSpeaking ? 'RECORDING' : 'HOLD TO SPEAK'}</span>
+                        <span className="font-bold text-sm">{isTranscribing ? 'WAIT' : isSpeaking ? 'RECORDING' : 'HOLD TO SPEAK'}</span>
                       </button>
                       {isSpeaking && <p className="text-red-600 font-bold mt-4 animate-pulse">Speaking... max 90s</p>}
                     </>

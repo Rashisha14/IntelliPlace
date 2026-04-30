@@ -139,6 +139,34 @@ router.post('/:jobId/gd/resume', authenticateToken, authorizeCompany, async (req
   }
 });
 
+// Student: Transcribe Audio using Deepgram
+router.post('/:jobId/gd/transcribe-audio', authenticateToken, authorizeStudent, upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No audio file provided' });
+    }
+
+    const apiKey = stripEnvQuotes(process.env.DEEPGRAM_API_KEY);
+    if (!apiKey) {
+      return res.status(500).json({ success: false, message: 'Deepgram API key not configured' });
+    }
+
+    const client = new DeepgramClient({ apiKey });
+    const { result, error } = await client.listen.prerecorded.transcribeFile(
+      req.file.buffer,
+      { model: 'nova-2', smart_format: true }
+    );
+
+    if (error) throw error;
+
+    const transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+    res.json({ success: true, text: transcript });
+  } catch (error) {
+    console.error('Error transcribing audio:', error);
+    res.status(500).json({ success: false, message: 'Failed to transcribe audio', error: error.message });
+  }
+});
+
 // Student: Submit Audio (Speech to Text) or Manual Text Array
 router.post('/:jobId/gd/submit-speech', authenticateToken, authorizeStudent, express.json(), async (req, res) => {
   try {
