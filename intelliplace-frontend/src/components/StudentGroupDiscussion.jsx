@@ -221,10 +221,10 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
             <p className="text-lg text-gray-500 mt-2">Please wait for them to resume.</p>
           </div>
         ) : gdState.status === 'ACTIVE' ? (
-          <div className="flex-1 flex p-6 gap-6 bg-gray-50">
+          <div className="flex-1 flex p-6 gap-6 bg-gray-50 min-h-0 overflow-hidden">
             
             {/* Main Stage */}
-            <div className="flex-col flex flex-1">
+            <div className="flex-col flex flex-1 min-h-0 overflow-y-auto pr-2">
               {gdState.activeSpeaker?.studentId === user.id ? (
                 <div className={`flex-1 rounded-xl shadow-inner border-4 p-8 flex flex-col items-center justify-center transition-colors ${isSpeaking ? 'bg-red-50 border-red-500' : isReviewing ? 'bg-blue-50 border-blue-500' : 'bg-green-50 border-green-500'}`}>
                   {!isReviewing ? (
@@ -298,14 +298,14 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
             </div>
 
             {/* Sidebar Queue & Transcripts */}
-            <div className="w-80 flex flex-col gap-4">
+            <div className="w-80 flex flex-col gap-4 min-h-0">
               
               {/* Queue */}
-              <div className="bg-white rounded-xl shadow-sm border p-4 flex flex-col max-h-[40%]">
+              <div className="bg-white rounded-xl shadow-sm border p-4 flex flex-col max-h-[40%] min-h-0">
                 <h4 className="font-bold border-b pb-3 mb-3 text-gray-700 flex items-center justify-between">
                   Speaker Queue <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">{gdState.queue.length}</span>
                 </h4>
-                <ul className="flex-1 overflow-auto space-y-2">
+                <ul className="flex-1 overflow-y-auto min-h-0 space-y-2">
                   {gdState.queue.length === 0 ? (
                     <p className="text-gray-400 text-sm text-center py-4">Queue is empty</p>
                   ) : gdState.queue.map((q, idx) => (
@@ -318,11 +318,11 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId, applica
               </div>
 
               {/* Transcripts */}
-              <div className="bg-white rounded-xl shadow-sm border p-4 flex flex-col flex-1 overflow-hidden">
+              <div className="bg-white rounded-xl shadow-sm border p-4 flex flex-col flex-1 min-h-0">
                 <h4 className="font-bold border-b pb-3 mb-3 text-gray-700 flex items-center justify-between">
                   Discussion Transcript <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">{transcripts.length} logs</span>
                 </h4>
-                <div className="flex-1 overflow-auto space-y-3 pr-2">
+                <div className="flex-1 overflow-y-auto min-h-0 space-y-3 pr-2">
                   {transcripts.map((t, idx) => (
                      <div key={idx} className="bg-gray-50 rounded p-3 text-sm border border-gray-100 shadow-sm">
                         <strong className={`block mb-1 ${t.studentId === user.id ? 'text-green-700' : 'text-indigo-700'}`}>{t.name} {t.studentId === user.id && '(You)'}</strong>
