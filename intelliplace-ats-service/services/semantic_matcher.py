@@ -26,11 +26,11 @@ class SemanticMatcher:
         job_description_pdf_text=None
     ) -> float:
         """Compute semantic similarity between resume and job description (0-1)."""
-        resume = (resume_text or "").strip()[:4000]
+        resume = (resume_text or "").strip()[:5000]
         job = (job_description or "").strip()
         if job_description_pdf_text:
             job += " " + (job_description_pdf_text or "").strip()
-        job = job[:4000] or "job"
+        job = job[:5000] or "job"
 
         model = self._get_model()
         if model is not None:
@@ -48,7 +48,29 @@ class SemanticMatcher:
             sim = cosine_similarity(matrix[0:1], matrix[1:2])[0][0]
             return float(max(0, min(1, sim)))
         except Exception:
-            return 0.5
+            return 0.0
+
+    def compute_pair_similarity(self, text_a: str, text_b: str) -> float:
+        """Symmetric similarity between two arbitrary texts (0-1)."""
+        a = (text_a or "").strip()[:5000]
+        b = (text_b or "").strip()[:5000]
+        if not a or not b:
+            return 0.0
+        model = self._get_model()
+        if model is not None:
+            try:
+                emb = model.encode([a, b])
+                sim = cosine_similarity([emb[0]], [emb[1]])[0][0]
+                return float(max(0, min(1, (sim + 1) / 2)))
+            except Exception:
+                pass
+        vectorizer = TfidfVectorizer(max_features=500, stop_words="english")
+        try:
+            matrix = vectorizer.fit_transform([a, b])
+            sim = cosine_similarity(matrix[0:1], matrix[1:2])[0][0]
+            return float(max(0, min(1, sim)))
+        except Exception:
+            return 0.0
 
     def compute_role_similarity(self, resume_text: str, job_title: str) -> float:
         """Compute similarity between resume and job title/role (0-1)."""
