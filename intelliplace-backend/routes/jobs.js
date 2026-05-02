@@ -30,6 +30,26 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const router = express.Router();
+const ELIGIBILITY_FILTERS = {
+  SHORTLISTED_ONLY: ['SHORTLISTED'],
+  APTITUDE_PASSED: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS'],
+  CODING_PASSED: ['CODING_PASSED', 'PASSED CODING', 'CODE PASS'],
+  GD_PASSED: ['GD_PASSED'],
+  ALL_APPLICANTS: null,
+};
+const aptitudeEligibilityByJob = new Map();
+
+function normalizeEligibilityFilter(value, fallback = 'SHORTLISTED_ONLY') {
+  const key = String(value || '').toUpperCase();
+  return ELIGIBILITY_FILTERS[key] !== undefined ? key : fallback;
+}
+
+function buildEligibilityWhere(jobId, eligibilityFilter) {
+  const normalized = normalizeEligibilityFilter(eligibilityFilter);
+  const statuses = ELIGIBILITY_FILTERS[normalized];
+  if (!statuses) return { jobId };
+  return { jobId, status: { in: statuses } };
+}
 
 const storage = multer.memoryStorage();
 
@@ -376,8 +396,6 @@ router.post('/:jobId/shortlist', authenticateToken, authorizeCompany, async (req
     const job = await prisma.job.findUnique({ where: { id: jobId } });
     if (!job || job.companyId !== companyId) return res.status(404).json({ success: false, message: 'Job not found or access denied' });
 
-    await prisma.job.update({ where: { id: jobId }, data: { status: 'CLOSED' } });
-
     const applications = await prisma.application.findMany({ where: { jobId }, include: { student: true } });
 
     let shortlisted = 0;
@@ -471,9 +489,6 @@ router.post('/:jobId/shortlist-all', authenticateToken, authorizeCompany, async 
     if (!job || job.companyId !== companyId) {
       return res.status(404).json({ success: false, message: 'Job not found or access denied' });
     }
-
-    // Close the job
-    await prisma.job.update({ where: { id: jobId }, data: { status: 'CLOSED' } });
 
     // Get all applications for this job
     const applications = await prisma.application.findMany({ 
@@ -1087,12 +1102,12 @@ router.post('/:jobId/aptitude-test/start', authenticateToken, authorizeCompany, 
       data: { status: 'STARTED', startedAt: new Date() }
     });
 
-    // Get all shortlisted applications for this job
+    const eligibilityFilter = normalizeEligibilityFilter(req.body?.eligibilityFilter, 'SHORTLISTED_ONLY');
+    aptitudeEligibilityByJob.set(jobId, eligibilityFilter);
+
+    // Get eligible applications for this job
     const shortlistedApplications = await prisma.application.findMany({
-      where: {
-        jobId: jobId,
-        status: 'SHORTLISTED'
-      },
+      where: buildEligibilityWhere(jobId, eligibilityFilter),
       include: {
         student: true
       }
@@ -1187,6 +1202,7 @@ router.post('/:jobId/aptitude-test/start', authenticateToken, authorizeCompany, 
       data: { test: updated },
       notified: notifiedCount,
       totalShortlisted: shortlistedApplications.length,
+      eligibilityFilter,
       errors: notificationErrors.length > 0 ? notificationErrors : undefined
     });
   } catch (error) {
@@ -1216,9 +1232,10 @@ router.post('/:jobId/aptitude-test/stop', authenticateToken, authorizeCompany, a
       data: { status: 'CLOSED' }
     });
 
-    // Auto-fail students who didn't take the test
+    const eligibilityFilter = aptitudeEligibilityByJob.get(jobId) || 'SHORTLISTED_ONLY';
+    // Auto-fail students in the selected cohort who didn't take the test
     const participants = await prisma.application.findMany({
-      where: { jobId, status: 'SHORTLISTED' }
+      where: buildEligibilityWhere(jobId, eligibilityFilter)
     });
 
     for (const applicant of participants) {
@@ -1415,8 +1432,6 @@ router.post('/:jobId/shortlist-ats', authenticateToken, authorizeCompany, async 
       return res.status(404).json({ success: false, message: 'Job not found or access denied' });
     }
 
-    await prisma.job.update({ where: { id: jobId }, data: { status: 'CLOSED' } });
-
     const applications = await prisma.application.findMany({ 
       where: { jobId }, 
       include: { student: true } 
@@ -1431,11 +1446,25 @@ router.post('/:jobId/shortlist-ats', authenticateToken, authorizeCompany, async 
     const ATS_SERVICE_URL = process.env.ATS_SERVICE_URL || 'http://localhost:8000';
     console.log(` [ATS] Connecting to ATS service at ${ATS_SERVICE_URL}`);
     
-    const requiredSkills = job.requiredSkills 
-      ? (typeof job.requiredSkills === 'string' 
-          ? job.requiredSkills.split(',').map(s => s.trim()).filter(s => s)
-          : job.requiredSkills)
-      : [];
+    let requiredSkills = [];
+    if (job.requiredSkills) {
+      try {
+        if (typeof job.requiredSkills === 'string') {
+          const parsed = JSON.parse(job.requiredSkills);
+          if (Array.isArray(parsed)) {
+            requiredSkills = parsed.map((s) => String(s).trim()).filter(Boolean);
+          } else {
+            requiredSkills = String(job.requiredSkills).split(',').map((s) => s.trim()).filter(Boolean);
+          }
+        } else if (Array.isArray(job.requiredSkills)) {
+          requiredSkills = job.requiredSkills.map((s) => String(s).trim()).filter(Boolean);
+        } else {
+          requiredSkills = String(job.requiredSkills).split(',').map((s) => s.trim()).filter(Boolean);
+        }
+      } catch {
+        requiredSkills = String(job.requiredSkills).split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
 
     let processed = 0;
     let shortlisted = 0;
@@ -1519,10 +1548,17 @@ router.post('/:jobId/shortlist-ats', authenticateToken, authorizeCompany, async 
         console.log(`   [ATS] ${studentName}: Sending to AI service for evaluation...`);
         const atsRequest = {
           resume_text: resumeText,
-          job_description: job.description,
+          job_title: job.title || 'Role',
+          job_description: job.description || '',
           required_skills: requiredSkills,
           min_experience_years: 0,
-          education_requirement: null
+          education_requirement: null,
+          min_cgpa: typeof job.minCgpa === 'number' ? job.minCgpa : null,
+          candidate_cgpa: typeof appCgpa === 'number' ? appCgpa : null,
+          candidate_backlogs: typeof appBacklog === 'number' ? appBacklog : null,
+          allow_backlogs: job.allowBacklog === true,
+          max_backlogs: typeof job.maxBacklog === 'number' ? job.maxBacklog : null,
+          use_gemini_rerank: true
         };
 
         const atsResponse = await axios.post(
@@ -1620,6 +1656,69 @@ router.post('/:jobId/shortlist-ats', authenticateToken, authorizeCompany, async 
       message: 'Server error during ATS shortlisting',
       error: error.message 
     });
+  }
+});
+
+// Manually shortlist one ATS review candidate
+router.post('/:jobId/applications/:applicationId/manual-shortlist', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId, 10);
+    const applicationId = parseInt(req.params.applicationId, 10);
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) {
+      return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+    }
+
+    const application = await prisma.application.findFirst({
+      where: { id: applicationId, jobId },
+      include: { student: true }
+    });
+    if (!application) {
+      return res.status(404).json({ success: false, message: 'Application not found' });
+    }
+
+    const currentStatus = String(application.status || '').toUpperCase();
+    if (currentStatus !== 'REVIEW' && currentStatus !== 'REVIEWING') {
+      return res.status(400).json({
+        success: false,
+        message: `Only REVIEW applications can be manually shortlisted (current: ${application.status})`
+      });
+    }
+
+    const decisionReason = 'Manually shortlisted after ATS review by recruiter';
+    const updated = await prisma.application.update({
+      where: { id: application.id },
+      data: {
+        status: 'SHORTLISTED',
+        decisionReason
+      }
+    });
+
+    try {
+      await prisma.notification.create({
+        data: {
+          studentId: application.studentId,
+          title: 'Application Shortlisted',
+          message: `Your application for ${job.title} has been manually shortlisted after review.`,
+          decisionReason,
+          jobId,
+          applicationId: application.id
+        }
+      });
+    } catch (nerr) {
+      console.error('Failed to create notification for manual shortlist:', nerr);
+    }
+
+    return res.json({
+      success: true,
+      message: 'Candidate manually shortlisted',
+      data: { application: updated }
+    });
+  } catch (error) {
+    console.error('Error manually shortlisting review candidate:', error);
+    res.status(500).json({ success: false, message: 'Server error while manually shortlisting candidate' });
   }
 });
 

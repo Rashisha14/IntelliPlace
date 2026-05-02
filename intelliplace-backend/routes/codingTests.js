@@ -5,6 +5,28 @@ import { executeWithTestCases, JUDGE0_LANGUAGES } from '../lib/judge0.js';
 
 const router = express.Router();
 
+const ELIGIBILITY_FILTERS = {
+  SHORTLISTED_ONLY: ['SHORTLISTED'],
+  APTITUDE_PASSED: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS'],
+  CODING_PASSED: ['CODING_PASSED', 'PASSED CODING', 'CODE PASS'],
+  GD_PASSED: ['GD_PASSED'],
+  ALL_APPLICANTS: null,
+};
+
+const codingEligibilityByJob = new Map();
+
+function normalizeEligibilityFilter(value, fallback = 'APTITUDE_PASSED') {
+  const key = String(value || '').toUpperCase();
+  return ELIGIBILITY_FILTERS[key] !== undefined ? key : fallback;
+}
+
+function buildEligibilityWhere(jobId, eligibilityFilter) {
+  const normalized = normalizeEligibilityFilter(eligibilityFilter);
+  const statuses = ELIGIBILITY_FILTERS[normalized];
+  if (!statuses) return { jobId };
+  return { jobId, status: { in: statuses } };
+}
+
 const authorizeCompany = (req, res, next) => {
   if (!req.user || req.user.userType !== 'company') {
     return res.status(403).json({ success: false, message: 'Company access required' });
@@ -158,13 +180,13 @@ router.get('/:jobId/coding-test/status', authenticateToken, async (req, res) => 
       return res.json({ success: true, data: { exists: false } });
     }
 
-    // For students, check if they're shortlisted
+    // For students, check if they satisfy selected eligibility filter
     if (userType === 'student') {
+      const eligibilityFilter = codingEligibilityByJob.get(jobId) || 'APTITUDE_PASSED';
       const application = await prisma.application.findFirst({
         where: {
-          jobId: jobId,
+          ...buildEligibilityWhere(jobId, eligibilityFilter),
           studentId: req.user.id,
-          status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
         }
       });
 
@@ -229,12 +251,12 @@ router.get('/:jobId/coding-test', authenticateToken, async (req, res) => {
 
     // For students, only show test if it's started
     if (userType === 'student') {
-      // Check if student has applied and is shortlisted
+      // Check if student satisfies selected eligibility filter
+      const eligibilityFilter = codingEligibilityByJob.get(jobId) || 'APTITUDE_PASSED';
       const application = await prisma.application.findFirst({
         where: {
-          jobId: jobId,
+          ...buildEligibilityWhere(jobId, eligibilityFilter),
           studentId: req.user.id,
-          status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
         }
       });
 
@@ -339,12 +361,12 @@ router.post('/:jobId/coding-test/start', authenticateToken, authorizeCompany, as
       throw dbError;
     }
 
-    // Get all shortlisted applications for this job
+    const eligibilityFilter = normalizeEligibilityFilter(req.body?.eligibilityFilter, 'APTITUDE_PASSED');
+    codingEligibilityByJob.set(jobId, eligibilityFilter);
+
+    // Get all eligible applications for this job
     const shortlistedApplications = await prisma.application.findMany({
-      where: {
-        jobId: jobId,
-        status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
-      },
+      where: buildEligibilityWhere(jobId, eligibilityFilter),
       include: {
         student: true
       }
@@ -446,10 +468,11 @@ router.post('/:jobId/coding-test/start', authenticateToken, authorizeCompany, as
 
     res.json({
       success: true,
-      message: `Coding test started. ${notifiedCount} shortlisted students notified.`,
+      message: `Coding test started. ${notifiedCount} eligible students notified.`,
       data: testData,
       notified: notifiedCount,
       totalShortlisted: shortlistedApplications.length,
+      eligibilityFilter,
       errors: notificationErrors.length > 0 ? notificationErrors : undefined
     });
   } catch (error) {
@@ -490,12 +513,10 @@ router.post('/:jobId/coding-test/stop', authenticateToken, authorizeCompany, asy
       }
     });
 
-    // Evaluate all students who are APTITUDE_PASSED
+    const eligibilityFilter = codingEligibilityByJob.get(jobId) || 'APTITUDE_PASSED';
+    // Evaluate all students from selected eligibility cohort.
     const participants = await prisma.application.findMany({
-      where: { 
-        jobId, 
-        status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
-      }
+      where: buildEligibilityWhere(jobId, eligibilityFilter)
     });
 
     for (const applicant of participants) {
@@ -720,11 +741,11 @@ router.post('/:jobId/coding-test/run-sample', authenticateToken, authorizeStuden
       return res.status(400).json({ success: false, message: 'Coding test has not started yet' });
     }
 
+    const eligibilityFilter = codingEligibilityByJob.get(jobId) || 'APTITUDE_PASSED';
     const application = await prisma.application.findFirst({
       where: { 
-        jobId, 
+        ...buildEligibilityWhere(jobId, eligibilityFilter),
         studentId: req.user.id, 
-        status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
       }
     });
     if (!application) {
@@ -919,11 +940,11 @@ router.post('/:jobId/coding-test/finish', authenticateToken, authorizeStudent, a
 
     const job = await prisma.job.findUnique({ where: { id: jobId } });
 
+    const eligibilityFilter = codingEligibilityByJob.get(jobId) || 'APTITUDE_PASSED';
     const application = await prisma.application.findFirst({
       where: { 
-        jobId: jobId, 
+        ...buildEligibilityWhere(jobId, eligibilityFilter),
         studentId: studentId,
-        status: { in: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS', 'SHORTLISTED'] }
       }
     });
 
