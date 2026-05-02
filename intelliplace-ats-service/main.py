@@ -15,6 +15,14 @@ from services.resume_parser import ResumeParser
 from services.semantic_matcher import SemanticMatcher
 from services.scoring_engine import ScoringEngine
 from services.explanation_generator import ExplanationGenerator
+from services.skill_normalizer import SkillNormalizer
+from services.gemini_reranker import GeminiReranker
+from services.skill_evidence import (
+    blend_skill_match,
+    semantic_skill_alignment,
+    text_coverage_score,
+)
+from services.signals import competitive_signal_score
 
 app = FastAPI(
     title="IntelliPlace ATS Service",
@@ -31,15 +39,28 @@ class ResumeEvaluationRequest(BaseModel):
     required_skills: List[str] = Field(default=[], description="List of required technical skills")
     min_experience_years: Optional[float] = Field(default=0.0, description="Minimum years of experience required")
     education_requirement: Optional[str] = Field(default=None, description="Required education degree (e.g., 'Bachelor', 'Master')")
+    min_cgpa: Optional[float] = Field(default=None, description="Minimum CGPA cutoff")
+    candidate_cgpa: Optional[float] = Field(default=None, description="Candidate CGPA")
+    candidate_backlogs: Optional[int] = Field(default=None, description="Active backlogs count")
+    allow_backlogs: Optional[bool] = Field(default=None, description="Whether backlogs are allowed")
+    max_backlogs: Optional[int] = Field(default=None, description="Maximum allowed backlogs when allowed")
+    use_gemini_rerank: Optional[bool] = Field(default=False, description="Enable optional Gemini reranking")
 
 
 class FeatureScores(BaseModel):
-    semantic_similarity: float = Field(..., ge=0.0, le=1.0)
-    role_similarity: float = Field(..., ge=0.0, le=1.0)
+    semantic: float = Field(..., ge=0.0, le=1.0)
+    skills: float = Field(..., ge=0.0, le=1.0)
+    experience: float = Field(..., ge=0.0, le=1.0)
+    projects: float = Field(..., ge=0.0, le=1.0)
+    education: float = Field(..., ge=0.0, le=1.0)
+
+
+class InternalFeatureScores(BaseModel):
+    semantic_score: float = Field(..., ge=0.0, le=1.0)
     skill_match_ratio: float = Field(..., ge=0.0, le=1.0)
     experience_score: float = Field(..., ge=0.0, le=1.0)
     project_score: float = Field(..., ge=0.0, le=1.0)
-    education_match_score: float = Field(..., ge=0.0, le=1.0)
+    education_score: float = Field(..., ge=0.0, le=1.0)
 
 
 class ResumeEvaluationResponse(BaseModel):
@@ -48,6 +69,8 @@ class ResumeEvaluationResponse(BaseModel):
     feature_scores: FeatureScores
     explanation: str = Field(..., description="Human-readable explanation of the evaluation")
     parsed_resume: dict = Field(..., description="Structured resume data extracted by NLP")
+    matched_skills: List[str] = Field(default=[], description="Normalized skills matched to requirements")
+    gemini_rerank: Optional[dict] = Field(default=None, description="Optional Gemini rerank result")
 
 
 # Initialize services (singleton pattern)
@@ -55,6 +78,8 @@ resume_parser = ResumeParser()
 semantic_matcher = SemanticMatcher()
 scoring_engine = ScoringEngine()
 explanation_generator = ExplanationGenerator()
+skill_normalizer = SkillNormalizer()
+gemini_reranker = GeminiReranker()
 
 
 @app.get("/")
@@ -88,74 +113,177 @@ async def evaluate_resume(request: ResumeEvaluationRequest):
         parsed_resume = resume_parser.parse(request.resume_text)
         
         # STEP 2: Semantic Matching
-        # Compute similarity with job description (includes PDF text if available)
-        semantic_similarity = semantic_matcher.compute_similarity(
+        semantic_score = semantic_matcher.compute_similarity(
             request.resume_text,
             request.job_description,
             request.job_description_pdf_text
         )
-        
-        # Compute role/title similarity
         role_similarity = semantic_matcher.compute_role_similarity(
             request.resume_text,
             request.job_title
         )
-        
+        # Light title blend — JD similarity stays primary.
+        semantic_score = min(1.0, max(0.0, (0.92 * semantic_score) + (0.08 * role_similarity)))
+
         # STEP 3: Feature Engineering
-        skill_match_ratio = scoring_engine.calculate_skill_match(
-            parsed_resume.get('skills', []),
-            request.required_skills
+        normalized_resume_skills = skill_normalizer.normalize_skills(parsed_resume.get('skills', []))
+        normalized_required_skills = skill_normalizer.normalize_skills(request.required_skills)
+
+        resume_lower = (request.resume_text or "").lower()
+        list_skill_ratio = scoring_engine.calculate_skill_match(
+            normalized_resume_skills, normalized_required_skills
         )
-        
+        text_cov = text_coverage_score(
+            resume_lower, request.required_skills or [], skill_normalizer
+        )
+        sem_skill_align = semantic_skill_alignment(
+            semantic_matcher, request.resume_text, request.required_skills or []
+        )
+        required_nonempty = bool(normalized_required_skills)
+        skill_match_ratio = blend_skill_match(
+            list_skill_ratio,
+            text_cov,
+            sem_skill_align,
+            required_nonempty,
+        )
+
+        min_exp = request.min_experience_years
+        if min_exp is None:
+            min_exp = 0.0
+        is_fresher_role = min_exp <= 0
+
         experience_score = scoring_engine.calculate_experience_score(
             parsed_resume.get('experience_years', 0),
-            request.min_experience_years
+            min_exp
         )
-        
+
+        jd_for_projects = (request.job_description or "").strip()
+        if request.job_description_pdf_text:
+            jd_for_projects = (jd_for_projects + " " + (request.job_description_pdf_text or "")).strip()
+        project_relevance = semantic_matcher.compute_pair_similarity(
+            parsed_resume.get("project_text") or request.resume_text,
+            jd_for_projects or request.job_description or "role",
+        )
+        signal_score = competitive_signal_score(resume_lower)
+
         project_score = scoring_engine.calculate_project_score(
             parsed_resume.get('project_count', 0),
-            parsed_resume.get('internship_count', 0)
+            parsed_resume.get('internship_count', 0),
+            project_relevance=project_relevance,
+            signal_score=signal_score,
         )
         
-        education_match_score = scoring_engine.calculate_education_match(
+        education_score = scoring_engine.calculate_education_match(
             parsed_resume.get('education_degree', ''),
             request.education_requirement
         )
-        
+
+        # Keyword stuffing penalty
+        stuffing_penalty = scoring_engine.calculate_keyword_stuffing_penalty(
+            request.resume_text,
+            normalized_resume_skills
+        )
+
+        matched_skills = []
+        req_set = set(normalized_required_skills)
+        res_set = set(normalized_resume_skills)
+        for rs in sorted(req_set):
+            if rs in res_set or any(rs in s or s in rs for s in res_set):
+                matched_skills.append(rs)
+
         # STEP 4: Weighted Scoring
-        feature_scores = FeatureScores(
-            semantic_similarity=semantic_similarity,
-            role_similarity=role_similarity,
+        internal_scores = InternalFeatureScores(
+            semantic_score=semantic_score,
             skill_match_ratio=skill_match_ratio,
             experience_score=experience_score,
             project_score=project_score,
-            education_match_score=education_match_score
+            education_score=education_score
         )
         
-        final_score = scoring_engine.compute_final_score(feature_scores)
+        weight_profile = (
+            scoring_engine.FRESHER_WEIGHTS if is_fresher_role else scoring_engine.WEIGHTS
+        )
+        final_score = scoring_engine.compute_final_score(
+            internal_scores,
+            stuffing_penalty=stuffing_penalty,
+            weights=weight_profile,
+        )
+
+        # STEP 4.5: Rule-based hard filters
+        passes_filters, filter_reasons = scoring_engine.apply_rule_based_filters(
+            candidate_cgpa=request.candidate_cgpa,
+            min_cgpa=request.min_cgpa,
+            candidate_backlogs=request.candidate_backlogs,
+            allow_backlogs=request.allow_backlogs,
+            max_backlogs=request.max_backlogs,
+            resume_degree=parsed_resume.get('education_degree', ''),
+            required_degree=request.education_requirement,
+        )
         
         # STEP 5: Decision Logic
-        if final_score >= 0.75:
+        if not passes_filters:
+            decision = "REJECTED"
+            final_score = min(final_score, 0.55)
+        elif final_score >= 0.68:
             decision = "SHORTLISTED"
-        elif final_score >= 0.60:
+        elif final_score >= 0.45:
             decision = "REVIEW"
         else:
             decision = "REJECTED"
-        
+
+        gemini_data = None
+        if request.use_gemini_rerank:
+            reranked = gemini_reranker.rerank(
+                resume_text=request.resume_text,
+                job_description=request.job_description
+            )
+            if reranked:
+                refined_10, feedback = reranked
+                refined_score = refined_10 / 10.0
+                gemini_weight = 0.35
+                if 0.42 <= final_score <= 0.78:
+                    gemini_weight = 0.42
+                final_score = min(
+                    1.0,
+                    max(0.0, (1.0 - gemini_weight) * final_score + gemini_weight * refined_score),
+                )
+                gemini_data = {"refined_score_10": refined_10, "feedback": feedback}
+                if passes_filters:
+                    if final_score >= 0.68:
+                        decision = "SHORTLISTED"
+                    elif final_score >= 0.45:
+                        decision = "REVIEW"
+                    else:
+                        decision = "REJECTED"
+
+        external_scores = FeatureScores(
+            semantic=semantic_score,
+            skills=skill_match_ratio,
+            experience=experience_score,
+            projects=project_score,
+            education=education_score,
+        )
+
         # Generate explanation
         explanation = explanation_generator.generate(
             final_score=final_score,
-            feature_scores=feature_scores,
+            feature_scores=internal_scores,
             decision=decision,
             parsed_resume=parsed_resume
         )
+        if filter_reasons:
+            explanation += "\n\nRule-based filters:\n- " + "\n- ".join(filter_reasons)
+        if stuffing_penalty > 0:
+            explanation += f"\n\nKeyword stuffing penalty applied: -{stuffing_penalty * 100:.1f}%"
         
         return ResumeEvaluationResponse(
             final_score=final_score,
             decision=decision,
-            feature_scores=feature_scores,
+            feature_scores=external_scores,
             explanation=explanation,
-            parsed_resume=parsed_resume
+            parsed_resume=parsed_resume,
+            matched_skills=matched_skills,
+            gemini_rerank=gemini_data
         )
         
     except Exception as e:
