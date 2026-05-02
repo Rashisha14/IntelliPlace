@@ -60,6 +60,8 @@ const StudentTakeCodingTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
   const [submitting, setSubmitting] = useState(false);
   const [running, setRunning] = useState({});
   const [runOutput, setRunOutput] = useState(null);
+  const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState(false);
+  const [submitResultMessage, setSubmitResultMessage] = useState(null);
 
   const containerRef = useRef(null);
   const timerRef = useRef(null);
@@ -201,7 +203,7 @@ const StudentTakeCodingTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
       setTimeLeft(t => {
         if (t <= 1) {
           clearInterval(timerRef.current);
-          handleFinalSubmit();
+          handleFinalSubmit({ autoSubmitted: true, reason: 'time_up' });
           return 0;
         }
         return t - 1;
@@ -383,7 +385,7 @@ int main() {
   };
 
   /* ---------------- FINAL SUBMIT ---------------- */
-  const handleFinalSubmit = async () => {
+  const handleFinalSubmit = async ({ autoSubmitted = false, reason = 'manual' } = {}) => {
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
@@ -432,15 +434,15 @@ int main() {
     clearInterval(timerRef.current);
     document.exitFullscreen?.();
     
-    Swal.fire({
-      icon: 'success',
-      title: 'Test Submitted',
-      text: 'Your solutions have been submitted',
-      confirmButtonColor: '#2563eb'
-    }).then(() => {
-      onSubmitted?.();
-      onClose();
-    });
+    const submitText = autoSubmitted
+      ? 'Time is over. Your test has been submitted automatically.'
+      : 'Your test has been submitted successfully.';
+    setSubmitResultMessage(submitText);
+  };
+
+  const handleManualFinalSubmit = async () => {
+    if (submittingRef.current) return;
+    setShowSubmitConfirmModal(true);
   };
 
   const formatTime = s => {
@@ -475,6 +477,26 @@ int main() {
       return [];
     }
   }, [testData?.allowedLanguages]);
+  const currentSampleCases = useMemo(() => {
+    if (!currentQuestion) return [];
+    if (Array.isArray(currentQuestion.sampleCases) && currentQuestion.sampleCases.length > 0) {
+      return currentQuestion.sampleCases
+        .map((sc) => ({
+          input: sc?.input ?? '',
+          output: sc?.output ?? '',
+        }))
+        .filter((sc) => String(sc.input).trim() || String(sc.output).trim());
+    }
+    if (currentQuestion.sampleInput || currentQuestion.sampleOutput) {
+      return [
+        {
+          input: currentQuestion.sampleInput || '',
+          output: currentQuestion.sampleOutput || '',
+        },
+      ];
+    }
+    return [];
+  }, [currentQuestion]);
   const editorExtensions = useMemo(
     () => getLanguageExtension(currentLangValue || 54),
     [currentLangValue]
@@ -667,6 +689,34 @@ int main() {
                 )}
 
                 <div className="pt-1">
+                  <p className="text-sm font-semibold mb-2">Sample Test Cases</p>
+                  {currentSampleCases.length > 0 ? (
+                    <div className="space-y-2">
+                      {currentSampleCases.map((sc, idx) => (
+                        <div
+                          key={`sample-${idx}`}
+                          className="rounded-md border border-[#2f4b85] bg-[#11203f] px-3 py-2"
+                        >
+                          <p className="text-xs text-[#9fb4df] mb-1">sample {idx + 1}</p>
+                          <div className="space-y-1 text-xs text-[#d6e1fb]">
+                            <p>
+                              <span className="text-[#8fb0ff]">Input:</span>{' '}
+                              <span className="whitespace-pre-wrap break-words">{String(sc.input || '(none)')}</span>
+                            </p>
+                            <p>
+                              <span className="text-[#8fb0ff]">Output:</span>{' '}
+                              <span className="whitespace-pre-wrap break-words">{String(sc.output || '(none)')}</span>
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-[#8f9bb6]">No sample test cases provided for this question.</p>
+                  )}
+                </div>
+
+                <div className="pt-1">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-sm font-semibold">Test Cases</p>
                     {currentSubmission?.passedCount != null && currentSubmission?.totalCount != null && (
@@ -749,7 +799,7 @@ int main() {
               </button>
             </div>
             <button
-              onClick={handleFinalSubmit}
+                  onClick={handleManualFinalSubmit}
               disabled={submitting}
               className="px-6 py-2.5 rounded text-sm font-semibold bg-[#22c55e] text-white hover:bg-[#16a34a] disabled:opacity-50"
             >
@@ -786,6 +836,66 @@ int main() {
                   className="px-4 py-2 bg-[#22c55e] text-white rounded hover:bg-[#16a34a]"
                 >
                   Submit Now
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SUBMIT CONFIRM MODAL (inside fullscreen UI) */}
+        {showSubmitConfirmModal && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[10000]">
+            <div className="bg-[#262626] border border-[#3d3d3d] rounded-lg p-6 w-[440px]">
+              <h3 className="font-semibold flex gap-2 mb-3 text-white">
+                <AlertTriangle className="text-amber-400" />
+                Submit test now?
+              </h3>
+              <p className="text-sm text-[#a3a3a3] mb-6">
+                After submitting, you cannot make further changes.
+              </p>
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setShowSubmitConfirmModal(false)}
+                  className="px-4 py-2 rounded border border-[#525252] text-[#d4d4d4] hover:bg-[#3d3d3d]"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setShowSubmitConfirmModal(false);
+                    await handleFinalSubmit({ autoSubmitted: false, reason: 'manual' });
+                  }}
+                  className="px-4 py-2 bg-[#22c55e] text-white rounded hover:bg-[#16a34a]"
+                >
+                  Yes, submit
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SUBMIT RESULT MODAL (inside fullscreen UI) */}
+        {submitResultMessage && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[10000]">
+            <div className="bg-[#262626] border border-[#3d3d3d] rounded-lg p-6 w-[460px]">
+              <h3 className="font-semibold flex gap-2 mb-3 text-white">
+                <CheckCircle className="text-emerald-400" />
+                Test Submitted
+              </h3>
+              <p className="text-sm text-[#a3a3a3] mb-6">{submitResultMessage}</p>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => {
+                    const done = submitResultMessage;
+                    setSubmitResultMessage(null);
+                    if (done) {
+                      onSubmitted?.();
+                      onClose();
+                    }
+                  }}
+                  className="px-4 py-2 bg-[#2563eb] text-white rounded hover:bg-[#1d4ed8]"
+                >
+                  OK
                 </button>
               </div>
             </div>
