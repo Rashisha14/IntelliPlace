@@ -1,143 +1,338 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Design tokens and reusable UI utility classes */
+/* ─── Design Tokens ──────────────────────────────────────────── */
 :root {
-  --brand-500: #ef4444;
-  /* red-600-ish */
-  --brand-600: #dc2626;
-  --muted-600: #6b7280;
-  --bg-card: #ffffff;
-  --glass: rgba(255, 255, 255, 0.6);
-  --success-500: #10b981;
+  --primary:       #6366f1;
+  --primary-dark:  #4f46e5;
+  --primary-light: #e0e7ff;
+  --success:       #14b8a6;
+  --warning:       #f59e0b;
+  --danger:        #f43f5e;
+  --sidebar-bg:    #0f172a;
+  --sidebar-border:#1e293b;
+  --card-border:   #e2e8f0;
 }
 
-@layer components {
-  .card {
-    @apply bg-white border border-gray-200 rounded-xl shadow-sm p-6;
-  }
-
-  .btn {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors;
-  }
-
-  .btn-primary {
-    @apply btn bg-[var(--brand-500)] text-white hover:bg-[var(--brand-600)];
-  }
-
-  .btn-ghost {
-    @apply btn bg-white border border-gray-200 text-gray-700 hover:bg-gray-50;
-  }
-
-  .btn-warning {
-    @apply btn bg-amber-500 text-white hover:bg-amber-600;
-  }
-
-  .input {
-    @apply w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--brand-500)] focus:border-[var(--brand-500)];
-  }
-
-  .tag {
-    @apply px-3 py-1 text-sm bg-gray-100 text-gray-800 rounded-full;
-  }
-}
-
-/* Hide scrollbars globally */
+/* ─── Base Reset ─────────────────────────────────────────────── */
 * {
-  scrollbar-width: none;
-  /* Firefox */
-  -ms-overflow-style: none;
-  /* IE and Edge */
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
 }
+*::-webkit-scrollbar { width: 5px; height: 5px; }
+*::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
 
-*::-webkit-scrollbar {
-  display: none;
-  /* Chrome, Safari, Opera */
-}
+html, body { overflow-x: hidden; height: 100%; font-family: 'Inter', sans-serif; }
+#root { height: 100%; }
 
-html,
-body {
-  overflow-x: hidden;
-  height: 100%;
-}
+/* ─── Component Classes ──────────────────────────────────────── */
+@layer components {
 
-#root {
-  height: 100%;
-}
-
-@layer utilities {
-  .animate-blob {
-    animation: blob 7s infinite;
+  /* Cards */
+  .card {
+    @apply bg-white border border-slate-200 rounded-xl shadow-[0_1px_4px_rgba(0,0,0,0.04)] p-6;
+  }
+  .card-hover {
+    @apply card transition-all duration-200 hover:shadow-[0_4px_16px_rgba(99,102,241,0.1)] hover:-translate-y-0.5;
   }
 
-  .animation-delay-2000 {
-    animation-delay: 2s;
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-offset-2 select-none;
+  }
+  .btn-primary {
+    @apply btn bg-indigo-600 text-white hover:bg-indigo-700 focus:ring-indigo-500 shadow-sm;
+  }
+  .btn-success {
+    @apply btn bg-teal-600 text-white hover:bg-teal-700 focus:ring-teal-500 shadow-sm;
+  }
+  .btn-ghost {
+    @apply btn bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 focus:ring-slate-300;
+  }
+  .btn-danger {
+    @apply btn bg-rose-600 text-white hover:bg-rose-700 focus:ring-rose-500 shadow-sm;
+  }
+  .btn-warning {
+    @apply btn bg-amber-500 text-white hover:bg-amber-600 focus:ring-amber-500 shadow-sm;
+  }
+  .btn-sm {
+    @apply px-3 py-1.5 text-xs;
+  }
+  .btn-lg {
+    @apply px-6 py-3 text-base;
   }
 
-  .animation-delay-4000 {
-    animation-delay: 4s;
+  /* Inputs */
+  .input {
+    @apply w-full px-3.5 py-2 bg-white border border-slate-200 rounded-lg text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400 transition-all;
+  }
+
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
+  }
+  .badge-green  { @apply badge bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200; }
+  .badge-red    { @apply badge bg-rose-50 text-rose-700 ring-1 ring-rose-200; }
+  .badge-yellow { @apply badge bg-amber-50 text-amber-700 ring-1 ring-amber-200; }
+  .badge-blue   { @apply badge bg-blue-50 text-blue-700 ring-1 ring-blue-200; }
+  .badge-purple { @apply badge bg-violet-50 text-violet-700 ring-1 ring-violet-200; }
+  .badge-gray   { @apply badge bg-slate-100 text-slate-600 ring-1 ring-slate-200; }
+
+  /* Page header */
+  .page-header {
+    @apply mb-8 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4;
+  }
+  .page-title {
+    @apply text-2xl font-bold text-slate-900 tracking-tight;
+  }
+  .page-subtitle {
+    @apply text-sm text-slate-500 mt-0.5;
+  }
+
+  /* KPI stat card */
+  .stat-card {
+    @apply card-hover flex flex-col gap-4;
+  }
+  .stat-icon {
+    @apply p-3 rounded-lg inline-flex items-center justify-center;
+  }
+  .stat-value {
+    @apply text-3xl font-bold text-slate-900;
+  }
+  .stat-label {
+    @apply text-sm font-medium text-slate-500;
+  }
+
+  /* Section title */
+  .section-title {
+    @apply text-lg font-semibold text-slate-800 mb-5;
+  }
+
+  /* Divider */
+  .divider {
+    @apply border-t border-slate-100 my-6;
+  }
+
+  /* Table */
+  .table-header {
+    @apply text-xs font-semibold text-slate-500 uppercase tracking-wider px-4 py-3 bg-slate-50;
+  }
+  .table-cell {
+    @apply px-4 py-3 text-sm text-slate-700;
+  }
+  .table-row {
+    @apply border-b border-slate-100 hover:bg-slate-50 transition-colors;
   }
 }
 
-@keyframes blob {
-  0% {
-    transform: translate(0px, 0px) scale(1);
-  }
-
-  33% {
-    transform: translate(30px, -50px) scale(1.1);
-  }
-
-  66% {
-    transform: translate(-20px, 20px) scale(0.9);
-  }
-
-  100% {
-    transform: translate(0px, 0px) scale(1);
-  }
+/* ─── Sidebar transitions ────────────────────────────────────── */
+.sidebar-link {
+  @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 relative;
+}
+.sidebar-link:not(.active) {
+  @apply text-slate-400 hover:text-white hover:bg-white/5;
+}
+.sidebar-link.active {
+  @apply text-white bg-indigo-600;
 }
 
-.text-gradient {
-  background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+/* ─── Status badges helper ───────────────────────────────────── */
+.status-pending       { @apply badge-yellow; }
+.status-reviewing     { @apply badge-blue; }
+.status-shortlisted   { @apply badge-green; }
+.status-passed        { @apply badge-green; }
+.status-failed        { @apply badge-red; }
+.status-selected      { @apply badge-green; }
+.status-rejected      { @apply badge-red; }
+.status-open          { @apply badge-green; }
+.status-closed        { @apply badge-gray; }
+.status-started       { @apply badge-blue; }
+.status-created       { @apply badge-yellow; }
+.status-stopped       { @apply badge-gray; }
+
+/* ─── Spinner ────────────────────────────────────────────────── */
+.spinner {
+  @apply animate-spin rounded-full border-2 border-slate-200 border-t-indigo-600;
 }
 
-.text-gradient-purple {
-  background: linear-gradient(135deg, #c4b5fd 0%, #818cf8 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+/* ─── Misc. animations ───────────────────────────────────────── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fadeUp 0.3s ease both;
 }
 
-.glass-panel {
-  background: rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-}
+/* ─── Custom UIverse Button for ATS Shortlist ────────────────── */
+.shortlist-resume-btn {
+  --black-700: hsla(0 0% 12% / 1);
+  --border_radius: 9999px;
+  --transtion: 0.3s ease-in-out;
+  --offset: 2px;
 
-.glass-panel:hover {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.glow-card {
+  cursor: pointer;
   position: relative;
+
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  transform-origin: center;
+
+  padding: 0.5rem 1rem;
+  background-color: transparent;
+
+  border: none;
+  border-radius: var(--border_radius);
+  transform: scale(calc(1 + (var(--active, 0) * 0.1)));
+
+  transition: transform var(--transtion);
+  font-weight: 500;
 }
 
-.glow-card::before {
+.shortlist-resume-btn::before {
   content: "";
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), transparent);
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+
+  width: 100%;
+  height: 100%;
+  background-color: var(--black-700);
+
+  border-radius: var(--border_radius);
+  box-shadow: inset 0 0.5px hsl(0, 0%, 100%), inset 0 -1px 2px 0 hsl(0, 0%, 0%),
+    0px 4px 10px -4px hsla(0 0% 0% / calc(1 - var(--active, 0))),
+    0 0 0 calc(var(--active, 0) * 0.375rem) hsl(260 97% 50% / 0.75);
+
+  transition: all var(--transtion);
+  z-index: 0;
+}
+
+.shortlist-resume-btn::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+
+  width: 100%;
+  height: 100%;
+  background-color: hsla(260 97% 61% / 0.75);
+  background-image: radial-gradient(
+      at 51% 89%,
+      hsla(266, 45%, 74%, 1) 0px,
+      transparent 50%
+    ),
+    radial-gradient(at 100% 100%, hsla(266, 36%, 60%, 1) 0px, transparent 50%),
+    radial-gradient(at 22% 91%, hsla(266, 36%, 60%, 1) 0px, transparent 50%);
+  background-position: top;
+
+  opacity: var(--active, 0);
+  border-radius: var(--border_radius);
+  transition: opacity var(--transtion);
+  z-index: 2;
+}
+
+.shortlist-resume-btn:not(:disabled):is(:hover, :focus-visible) {
+  --active: 1;
+}
+.shortlist-resume-btn:not(:disabled):active {
+  transform: scale(1);
+}
+
+.shortlist-resume-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.shortlist-resume-btn .dots_border {
+  --size_border: calc(100% + 2px);
+
+  overflow: hidden;
+
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+
+  width: var(--size_border);
+  height: var(--size_border);
+  background-color: transparent;
+
+  border-radius: var(--border_radius);
+  z-index: -10;
+}
+
+.shortlist-resume-btn .dots_border::before {
+  content: "";
+  position: absolute;
+  top: 30%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  transform-origin: left;
+  transform: rotate(0deg);
+
+  width: 100%;
+  height: 2rem;
+  background-color: white;
+
+  mask: linear-gradient(transparent 0%, white 120%);
+  -webkit-mask: linear-gradient(transparent 0%, white 120%);
+  animation: rotate 2s linear infinite;
+}
+
+@keyframes rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.shortlist-resume-btn .sparkle {
+  position: relative;
+  z-index: 10;
+  width: 1.25rem;
+  height: 1.25rem;
+  color: hsl(0, 0%, 100%);
+}
+
+.shortlist-resume-btn .sparkle path {
+  fill: currentColor;
+  stroke: currentColor;
+  transform-origin: center;
+}
+
+.shortlist-resume-btn:not(:disabled):is(:hover, :focus) .sparkle path {
+  animation: path 1.5s linear 0.5s infinite;
+}
+
+.shortlist-resume-btn .sparkle path:nth-child(1) { --scale_path_1: 1.2; }
+.shortlist-resume-btn .sparkle path:nth-child(2) { --scale_path_2: 1.2; }
+.shortlist-resume-btn .sparkle path:nth-child(3) { --scale_path_3: 1.2; }
+
+@keyframes path {
+  0%, 34%, 71%, 100% { transform: scale(1); }
+  17% { transform: scale(var(--scale_path_1, 1)); }
+  49% { transform: scale(var(--scale_path_2, 1)); }
+  83% { transform: scale(var(--scale_path_3, 1)); }
+}
+
+.shortlist-resume-btn .text_button {
+  position: relative;
+  z-index: 10;
+  background-image: linear-gradient(
+    90deg,
+    hsla(0 0% 100% / 1) 0%,
+    hsla(0 0% 100% / var(--active, 0)) 120%
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  font-size: 0.875rem;
+  color: transparent;
 }
