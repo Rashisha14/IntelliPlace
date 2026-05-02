@@ -941,12 +941,18 @@ router.post('/:jobId/coding-test/finish', authenticateToken, authorizeStudent, a
     const job = await prisma.job.findUnique({ where: { id: jobId } });
 
     const eligibilityFilter = codingEligibilityByJob.get(jobId) || 'APTITUDE_PASSED';
-    const application = await prisma.application.findFirst({
-      where: { 
+    let application = await prisma.application.findFirst({
+      where: {
         ...buildEligibilityWhere(jobId, eligibilityFilter),
         studentId: studentId,
       }
     });
+    if (!application) {
+      // Fallback to direct lookup so finish still persists summary even after policy/status changes.
+      application = await prisma.application.findFirst({
+        where: { jobId, studentId }
+      });
+    }
 
     if (!application) {
       return res.status(404).json({ success: false, message: 'Application not found or not eligible' });
@@ -976,9 +982,17 @@ router.post('/:jobId/coding-test/finish', authenticateToken, authorizeStudent, a
     
     const newStatus = percentage >= (codingTest.cutoff || 0) ? 'CODING_PASSED' : 'CODING_FAILED';
 
+    const codingSummary = `Coding summary: ${totalScore}/${maxPossible} (${percentage.toFixed(1)}%), status=${newStatus}`;
+    const priorReason = String(application.decisionReason || '');
+    const mergedReason = priorReason.toLowerCase().includes('policy violated')
+      ? `${priorReason} | ${codingSummary}`.slice(0, 500)
+      : codingSummary.slice(0, 500);
     await prisma.application.update({
       where: { id: application.id },
-      data: { status: newStatus }
+      data: {
+        status: newStatus,
+        decisionReason: mergedReason,
+      }
     });
 
     try {
@@ -1023,11 +1037,12 @@ router.post('/:jobId/coding-test/violation', authenticateToken, authorizeStudent
     }
 
     const msg = `Coding test policy violated (${reason}) - violations: ${violationCount}`;
+    const mergedReason = [application.decisionReason, msg].filter(Boolean).join(' | ');
     await prisma.application.update({
       where: { id: application.id },
       data: {
         status: 'CODING_FAILED',
-        decisionReason: msg.slice(0, 500),
+        decisionReason: mergedReason.slice(0, 500),
       },
     });
 
@@ -1039,6 +1054,71 @@ router.post('/:jobId/coding-test/violation', authenticateToken, authorizeStudent
   } catch (error) {
     console.error('Error recording coding violation:', error);
     res.status(500).json({ success: false, message: 'Server error recording violation' });
+  }
+});
+
+// Get all coding submissions for a job (Company) - grouped by student/application
+router.get('/:jobId/coding-test/submissions/recruiter', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) {
+      return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+    }
+
+    const codingTest = await prisma.codingTest.findUnique({ where: { jobId } });
+    if (!codingTest) {
+      return res.json({ success: true, data: { byApplicationId: {} } });
+    }
+
+    const submissions = await prisma.codingSubmission.findMany({
+      where: { testId: codingTest.id },
+      include: { student: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const applications = await prisma.application.findMany({
+      where: { jobId },
+      select: { id: true, studentId: true, status: true, decisionReason: true },
+    });
+    const appByStudentId = new Map(applications.map((a) => [a.studentId, a]));
+
+    const byApplicationId = {};
+    for (const sub of submissions) {
+      const app = appByStudentId.get(sub.studentId);
+      if (!app) continue;
+      const appId = app.id;
+      if (!byApplicationId[appId]) {
+        byApplicationId[appId] = {
+          applicationId: appId,
+          studentId: sub.studentId,
+          studentName: sub.student?.name || null,
+          status: app.status,
+          decisionReason: app.decisionReason,
+          submissions: [],
+        };
+      }
+      byApplicationId[appId].submissions.push({
+        id: sub.id,
+        questionId: sub.questionId,
+        languageId: sub.languageId,
+        status: sub.status,
+        score: sub.score,
+        executionTime: sub.executionTime,
+        memoryUsed: sub.memoryUsed,
+        errorMessage: sub.errorMessage,
+        code: sub.code,
+        testCaseResults: sub.testCaseResults ? JSON.parse(sub.testCaseResults) : null,
+        createdAt: sub.createdAt,
+      });
+    }
+
+    return res.json({ success: true, data: { byApplicationId } });
+  } catch (error) {
+    console.error('Error fetching all coding submissions for job:', error);
+    return res.status(500).json({ success: false, message: 'Server error fetching coding submissions' });
   }
 });
 
