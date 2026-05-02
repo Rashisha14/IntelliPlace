@@ -15,6 +15,7 @@ import {
   Users,
   BarChart3,
 } from 'lucide-react';
+import ProfileModal from './ProfileModal';
 
 /* ─── Per-role navigation config ──────────────────────────────── */
 const NAV_CONFIG = {
@@ -60,6 +61,7 @@ const DashboardLayout = ({ children }) => {
   const location   = useLocation();
   const user       = getCurrentUser();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
 
   if (!user) { navigate('/'); return null; }
 
@@ -202,16 +204,19 @@ const DashboardLayout = ({ children }) => {
 
             <div className="w-px h-6 bg-slate-200" />
 
-            {/* Avatar */}
-            <div className="flex items-center gap-2.5 cursor-default">
+            {/* Avatar / Profile Button */}
+            <button 
+              onClick={() => setProfileModalOpen(true)}
+              className="flex items-center gap-2.5 p-1.5 pr-3 rounded-xl hover:bg-slate-50 transition-colors cursor-pointer border border-transparent hover:border-slate-200"
+            >
               <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-sm font-bold ring-2 ring-indigo-100">
                 {initials}
               </div>
-              <div className="hidden sm:block">
+              <div className="hidden sm:block text-left">
                 <p className="text-sm font-semibold text-slate-800 leading-none">{user.companyName || user.name || user.username}</p>
                 <p className="text-xs text-slate-400 mt-0.5">{roleMeta.label}</p>
               </div>
-            </div>
+            </button>
           </div>
         </header>
 
@@ -220,6 +225,12 @@ const DashboardLayout = ({ children }) => {
           {children}
         </main>
       </div>
+
+      {/* Profile Modal */}
+      <ProfileModal 
+        isOpen={profileModalOpen} 
+        onClose={() => setProfileModalOpen(false)} 
+      />
     </div>
   );
 };

@@ -1,6 +1,7 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
 import jwt from 'jsonwebtoken';
+import { authenticateToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -236,6 +237,141 @@ router.post('/login/admin', async (req, res) => {
   } catch (error) {
     console.error('Admin login error:', error);
     res.status(500).json({ success: false, message: 'Server error during login' });
+  }
+});
+
+// Get Profile
+router.get('/profile', authenticateToken, async (req, res) => {
+  try {
+    const { id, userType } = req.user;
+
+    if (userType === 'student') {
+      const student = await prisma.student.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          rollNumber: true,
+          phone: true,
+          cgpa: true,
+          backlog: true,
+        }
+      });
+      if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+      return res.json({ success: true, user: { ...student, userType } });
+    } else if (userType === 'company') {
+      const company = await prisma.company.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          companyName: true,
+          email: true,
+          industry: true,
+          website: true,
+          phone: true,
+        }
+      });
+      if (!company) return res.status(404).json({ success: false, message: 'Company not found' });
+      return res.json({ success: true, user: { ...company, name: company.companyName, userType } });
+    }
+
+    return res.status(400).json({ success: false, message: 'Invalid user type' });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
+
+// Update Profile
+router.put('/profile', authenticateToken, async (req, res) => {
+  try {
+    const { id, userType } = req.user;
+    
+    if (userType === 'student') {
+      const { name, phone, rollNumber } = req.body;
+      const updated = await prisma.student.update({
+        where: { id },
+        data: {
+          name: name || undefined,
+          phone: phone !== undefined ? phone : undefined,
+          rollNumber: rollNumber !== undefined ? rollNumber : undefined,
+        }
+      });
+      return res.json({ success: true, message: 'Profile updated successfully', user: {
+        id: updated.id,
+        name: updated.name,
+        email: updated.email,
+        rollNumber: updated.rollNumber,
+        phone: updated.phone,
+        userType: 'student'
+      }});
+    } else if (userType === 'company') {
+      const { companyName, phone, industry, website } = req.body;
+      const updated = await prisma.company.update({
+        where: { id },
+        data: {
+          companyName: companyName || undefined,
+          phone: phone !== undefined ? phone : undefined,
+          industry: industry !== undefined ? industry : undefined,
+          website: website !== undefined ? website : undefined,
+        }
+      });
+      return res.json({ success: true, message: 'Profile updated successfully', user: {
+        id: updated.id,
+        companyName: updated.companyName,
+        name: updated.companyName,
+        email: updated.email,
+        industry: updated.industry,
+        website: updated.website,
+        phone: updated.phone,
+        userType: 'company'
+      }});
+    }
+
+    return res.status(400).json({ success: false, message: 'Invalid user type' });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({ success: false, message: 'Server error updating profile' });
+  }
+});
+
+// Update Password
+router.put('/password', authenticateToken, async (req, res) => {
+  try {
+    const { id, userType } = req.user;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Current and new password are required' });
+    }
+
+    if (userType === 'student') {
+      const student = await prisma.student.findUnique({ where: { id } });
+      if (!student || student.password !== currentPassword) {
+        return res.status(401).json({ success: false, message: 'Incorrect current password' });
+      }
+      await prisma.student.update({
+        where: { id },
+        data: { password: newPassword }
+      });
+      return res.json({ success: true, message: 'Password updated successfully' });
+    } else if (userType === 'company') {
+      const company = await prisma.company.findUnique({ where: { id } });
+      if (!company || company.password !== currentPassword) {
+        return res.status(401).json({ success: false, message: 'Incorrect current password' });
+      }
+      await prisma.company.update({
+        where: { id },
+        data: { password: newPassword }
+      });
+      return res.json({ success: true, message: 'Password updated successfully' });
+    }
+
+    return res.status(400).json({ success: false, message: 'Invalid user type' });
+  } catch (error) {
+    console.error('Update password error:', error);
+    res.status(500).json({ success: false, message: 'Server error updating password' });
   }
 });
 

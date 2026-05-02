@@ -15,6 +15,7 @@ import {
   Clock,
   Video,
   Users,
+  FastForward,
 } from 'lucide-react';
 import Navbar from '../../components/Navbar';
 import DashboardLayout from '../../components/DashboardLayout';
@@ -90,6 +91,9 @@ const RecruitmentProcess = () => {
   const [stopLoading, setStopLoading] = useState(false);
   const [testToStart, setTestToStart] = useState(null); // { type: 'aptitude' | 'coding' }
   const [showApplicationsList, setShowApplicationsList] = useState(false);
+  const [isSkipConfirmOpen, setIsSkipConfirmOpen] = useState(false);
+  const [skipLoading, setSkipLoading] = useState(false);
+  const [stageToSkip, setStageToSkip] = useState(null); // 'aptitude', 'coding', 'gd'
 
   const filterApplicationsByEligibility = useCallback((apps, filter) => {
     const statuses = ELIGIBILITY_STATUS_MAP[filter];
@@ -259,10 +263,10 @@ const RecruitmentProcess = () => {
 
   const eligibilityOptionsByStage = useMemo(() => {
     return {
-      aptitude: ELIGIBILITY_OPTIONS.filter((o) => o.value !== 'APTITUDE_PASSED'),
-      coding: ELIGIBILITY_OPTIONS.filter((o) => o.value !== 'CODING_PASSED'),
-      gd: ELIGIBILITY_OPTIONS.filter((o) => o.value !== 'GD_PASSED'),
-      interview: ELIGIBILITY_OPTIONS,
+      aptitude: ELIGIBILITY_OPTIONS.filter((o) => ['ALL_APPLICANTS', 'SHORTLISTED_ONLY'].includes(o.value)),
+      coding: ELIGIBILITY_OPTIONS.filter((o) => ['ALL_APPLICANTS', 'APTITUDE_PASSED'].includes(o.value)),
+      gd: ELIGIBILITY_OPTIONS.filter((o) => ['ALL_APPLICANTS', 'CODING_PASSED'].includes(o.value)),
+      interview: ELIGIBILITY_OPTIONS.filter((o) => ['ALL_APPLICANTS', 'GD_PASSED'].includes(o.value)),
     };
   }, []);
 
@@ -405,6 +409,46 @@ const RecruitmentProcess = () => {
     }
   };
 
+  const handleSkipStage = async () => {
+    if (!stageToSkip) return;
+    setSkipLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const endpoint = `${API_BASE_URL}/jobs/${jobId}/skip-stage`;
+      
+      const filter = 
+        stageToSkip === 'aptitude' ? eligibilityFilters.aptitude :
+        stageToSkip === 'coding' ? eligibilityFilters.coding :
+        eligibilityFilters.gd;
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          stage: stageToSkip,
+          eligibilityFilter: filter,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) {
+        alert(d.message || 'Failed to skip stage');
+      } else {
+        alert(d.message);
+        setIsSkipConfirmOpen(false);
+        setStageToSkip(null);
+        await fetchJobAndTests(false);
+      }
+    } catch (err) {
+      console.error('Failed to skip stage:', err);
+      alert('Failed to skip stage');
+    } finally {
+      setSkipLoading(false);
+    }
+  };
+
   // Redirect if not authenticated as company
   if (!user || user.userType !== 'company') {
     return (
@@ -503,6 +547,7 @@ const RecruitmentProcess = () => {
                 onStart={() => { setTestToStart({ type: 'aptitude' }); setIsStartConfirmOpen(true); }}
                 onStop={() => { setTestToStart({ type: 'aptitude' }); setIsStopConfirmOpen(true); }}
                 onView={() => setIsViewTestOpen(true)}
+                onSkip={() => { setStageToSkip('aptitude'); setIsSkipConfirmOpen(true); }}
               />
             ) : activeTab === 'coding' ? (
               <CodingTestContent
@@ -525,6 +570,7 @@ const RecruitmentProcess = () => {
                 onStart={() => { setTestToStart({ type: 'coding' }); setIsStartConfirmOpen(true); }}
                 onStop={() => { setTestToStart({ type: 'coding' }); setIsStopConfirmOpen(true); }}
                 onRestart={() => { setTestToStart({ type: 'coding' }); setIsStartConfirmOpen(true); }}
+                onSkip={() => { setStageToSkip('coding'); setIsSkipConfirmOpen(true); }}
               />
             ) : activeTab === 'gd' ? (
               <div className="space-y-3">
@@ -545,6 +591,15 @@ const RecruitmentProcess = () => {
                   proceeded={proceededStages.gd}
                   onProceed={() => setProceededStages(prev => ({ ...prev, gd: true }))}
                 />
+                <div className="flex justify-end my-2">
+                  <button
+                    onClick={() => { setStageToSkip('gd'); setIsSkipConfirmOpen(true); }}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors"
+                  >
+                    <FastForward className="w-4 h-4" />
+                    Skip GD Round
+                  </button>
+                </div>
                 <CompanyGDManager
                   jobId={jobId}
                   initialGd={job?.groupDiscussion}
@@ -672,6 +727,22 @@ const RecruitmentProcess = () => {
         ]}
       />
 
+      <Modal
+        open={isSkipConfirmOpen}
+        title={`Skip ${stageToSkip === 'aptitude' ? 'Aptitude Test' : stageToSkip === 'coding' ? 'Coding Test' : 'Group Discussion'}`}
+        message={`Are you sure you want to skip this round? All eligible candidates will be automatically marked as passed and advanced to the next stage.`}
+        type="warning"
+        onClose={() => setIsSkipConfirmOpen(false)}
+        actions={[
+          { label: 'Cancel', onClick: () => setIsSkipConfirmOpen(false) },
+          {
+            label: skipLoading ? 'Skipping...' : 'Skip Round',
+            onClick: handleSkipStage,
+            autoClose: false,
+          },
+        ]}
+      />
+
       {isInterviewOpen && selectedApplication && (
         <CompanyStartInterview
           isOpen={isInterviewOpen}
@@ -786,6 +857,7 @@ const AptitudeTestContent = ({
   onStart,
   onStop,
   onView,
+  onSkip,
 }) => {
   if (!test || !test.questions || test.questions.length === 0) {
     return (
@@ -803,6 +875,13 @@ const AptitudeTestContent = ({
         >
           <Plus className="w-5 h-5" />
           Create Aptitude Test
+        </button>
+        <button
+          onClick={onSkip}
+          className="inline-flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-3"
+        >
+          <FastForward className="w-5 h-5" />
+          Skip Round
         </button>
         <div className="mt-6 flex justify-center">
           <EligibilitySelector
@@ -948,6 +1027,13 @@ const AptitudeTestContent = ({
             Recreate Test
           </button>
         )}
+        <button
+          onClick={onSkip}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-auto"
+        >
+          <FastForward className="w-4 h-4" />
+          Skip Round
+        </button>
       </div>
 
       <EligibleStudentsList applications={applications} title="Eligible" />
@@ -971,6 +1057,7 @@ const CodingTestContent = ({
   onStart,
   onStop,
   onRestart,
+  onSkip,
 }) => {
   if (!test || !test.questions || test.questions.length === 0) {
     return (
@@ -988,6 +1075,13 @@ const CodingTestContent = ({
         >
           <Plus className="w-5 h-5" />
           Create Coding Test
+        </button>
+        <button
+          onClick={onSkip}
+          className="inline-flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-3"
+        >
+          <FastForward className="w-5 h-5" />
+          Skip Round
         </button>
         <div className="mt-6 flex justify-center">
           <EligibilitySelector
@@ -1148,6 +1242,13 @@ const CodingTestContent = ({
             </button>
           </>
         )}
+        <button
+          onClick={onSkip}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-auto"
+        >
+          <FastForward className="w-4 h-4" />
+          Skip Round
+        </button>
       </div>
 
       <EligibleStudentsList applications={applications} title="Eligible" />

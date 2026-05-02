@@ -1722,4 +1722,75 @@ router.post('/:jobId/applications/:applicationId/manual-shortlist', authenticate
   }
 });
 
+// Skip a recruitment stage for eligible candidates
+router.post('/:jobId/skip-stage', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId, 10);
+    const { stage, eligibilityFilter } = req.body;
+
+    if (!['aptitude', 'coding', 'gd'].includes(stage)) {
+      return res.status(400).json({ success: false, message: 'Invalid stage' });
+    }
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== companyId) {
+      return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+    }
+
+    const whereClause = buildEligibilityWhere(jobId, eligibilityFilter);
+    const applicationsToSkip = await prisma.application.findMany({
+      where: whereClause,
+      select: { id: true, studentId: true }
+    });
+
+    if (applicationsToSkip.length === 0) {
+      return res.status(400).json({ success: false, message: 'No eligible candidates found to skip' });
+    }
+
+    let newStatus = '';
+    let stageName = '';
+    if (stage === 'aptitude') {
+      newStatus = 'APTITUDE_PASSED';
+      stageName = 'Aptitude Test';
+    } else if (stage === 'coding') {
+      newStatus = 'CODING_PASSED';
+      stageName = 'Coding Test';
+    } else if (stage === 'gd') {
+      newStatus = 'GD_PASSED';
+      stageName = 'Group Discussion';
+    }
+
+    const decisionReason = `Skipped ${stageName} and advanced to next round`;
+
+    // Bulk update statuses
+    const applicationIds = applicationsToSkip.map(app => app.id);
+    await prisma.application.updateMany({
+      where: { id: { in: applicationIds } },
+      data: { status: newStatus, decisionReason }
+    });
+
+    // Create notifications
+    const notificationsData = applicationsToSkip.map(app => ({
+      studentId: app.studentId,
+      title: `${stageName} Skipped`,
+      message: `You have been automatically advanced past the ${stageName} for ${job.title}.`,
+      decisionReason,
+      jobId,
+      applicationId: app.id
+    }));
+
+    await prisma.notification.createMany({ data: notificationsData });
+
+    res.json({
+      success: true,
+      message: `Successfully skipped ${stageName} for ${applicationsToSkip.length} candidates.`,
+      skippedCount: applicationsToSkip.length
+    });
+  } catch (error) {
+    console.error('Error skipping stage:', error);
+    res.status(500).json({ success: false, message: 'Server error skipping stage' });
+  }
+});
+
 export default router;
