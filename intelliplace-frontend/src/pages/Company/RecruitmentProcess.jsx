@@ -507,6 +507,7 @@ const RecruitmentProcess = () => {
             ) : activeTab === 'coding' ? (
               <CodingTestContent
                 test={codingTest}
+                jobId={jobId}
                 applications={codingEligibleApplications}
                 eligibilityFilter={eligibilityFilters.coding}
                 eligibilityOptions={eligibilityOptionsByStage.coding}
@@ -957,6 +958,7 @@ const AptitudeTestContent = ({
 // Coding Test Content Component
 const CodingTestContent = ({
   test,
+  jobId,
   applications,
   eligibilityFilter,
   eligibilityOptions,
@@ -1149,6 +1151,113 @@ const CodingTestContent = ({
       </div>
 
       <EligibleStudentsList applications={applications} title="Eligible" />
+      <CodingSubmissionsSection jobId={jobId} applications={applications} />
+    </div>
+  );
+};
+
+const CodingSubmissionsSection = ({ jobId, applications }) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [byApp, setByApp] = useState({});
+
+  const fetchSubmissions = useCallback(async () => {
+    if (!jobId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/coding-test/submissions/recruiter`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.message || 'Failed to load coding submissions');
+      }
+      setByApp(json.data?.byApplicationId || {});
+    } catch (err) {
+      setError(err.message || 'Failed to load coding submissions');
+    } finally {
+      setLoading(false);
+    }
+  }, [jobId]);
+
+  useEffect(() => {
+    fetchSubmissions();
+  }, [fetchSubmissions]);
+
+  const rows = (applications || [])
+    .map((app) => ({
+      app,
+      info: byApp[app.id],
+    }))
+    .filter((x) => x.info?.submissions?.length > 0);
+
+  return (
+    <div className="mt-8 border-t pt-6">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-lg font-semibold text-gray-800">Coding Test Submissions</h4>
+        <button
+          type="button"
+          onClick={fetchSubmissions}
+          disabled={loading}
+          className="px-3 py-1.5 text-sm rounded border border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+        >
+          {loading ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+
+      {error ? (
+        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-3">{error}</p>
+      ) : loading && rows.length === 0 ? (
+        <p className="text-sm text-gray-500">Loading coding submissions...</p>
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-gray-500 bg-gray-50 p-4 rounded text-center">
+          No coding submissions available yet.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {rows.map(({ app, info }) => {
+            const submissions = info.submissions || [];
+            const latest = submissions[0];
+            return (
+              <div key={app.id} className="border rounded-lg p-4 bg-white">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-gray-800">{app.student?.name || info.studentName || 'Candidate'}</p>
+                    <p className="text-xs text-gray-500">
+                      Total attempts: {submissions.length}
+                      {latest?.createdAt ? ` • Last: ${new Date(latest.createdAt).toLocaleString()}` : ''}
+                    </p>
+                  </div>
+                  <span className="text-xs px-2 py-1 rounded-full bg-indigo-50 text-indigo-700">
+                    {app.status}
+                  </span>
+                </div>
+
+                {latest && (
+                  <div className="mt-3 text-sm text-gray-700">
+                    <p>
+                      Latest submission: <strong>{latest.status || 'N/A'}</strong>
+                      {latest.score != null ? ` • Score ${Number(latest.score).toFixed(1)}` : ''}
+                      {latest.languageId != null ? ` • Lang ${latest.languageId}` : ''}
+                    </p>
+                    {latest.testCaseResults?.length ? (
+                      <p className="text-xs text-gray-500 mt-1">
+                        Test cases recorded: {latest.testCaseResults.length}
+                      </p>
+                    ) : null}
+                  </div>
+                )}
+                {String(info?.decisionReason || '').toLowerCase().includes('policy violated') && (
+                  <div className="mt-3 p-2 rounded border border-red-200 bg-red-50 text-red-800 text-xs">
+                    <span className="font-semibold">Policy violation:</span> {info.decisionReason}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
