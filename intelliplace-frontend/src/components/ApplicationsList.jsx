@@ -24,6 +24,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
   const [previewCV, setPreviewCV] = useState(null);
   const [expandedApp, setExpandedApp] = useState(null);
   const [codingSubmissions, setCodingSubmissions] = useState({});
+  const [codingSnapshotByApp, setCodingSnapshotByApp] = useState({});
   const [aptitudeSubmissions, setAptitudeSubmissions] = useState({});
   const [viewingCodeFor, setViewingCodeFor] = useState(null);
   const [atsLoading, setAtsLoading] = useState(false);
@@ -43,7 +44,9 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
       });
       const json = await res.json();
       if (res.ok) {
-        setApplications(json.data.applications || []);
+        const apps = json.data.applications || [];
+        setApplications(apps);
+        await fetchAllCodingSnapshots();
       } else {
         setError(json.message || 'Failed to fetch applications');
       }
@@ -51,6 +54,21 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchAllCodingSnapshots = async () => {
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/coding-test/submissions/recruiter`,
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
+      );
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setCodingSnapshotByApp(json.data?.byApplicationId || {});
+      }
+    } catch (err) {
+      console.error('Failed to fetch coding snapshots:', err);
     }
   };
 
@@ -1003,7 +1021,15 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                             )}
                             {codingSubmissions[app.id]?.submissions && codingSubmissions[app.id].submissions.length === 0 && !codingSubmissions[app.id]?.loading && (
                               <p className="text-sm text-gray-500 mt-2">
-                                {codingSubmissions[app.id]?.error || 'No coding submissions yet'}
+                                {codingSubmissions[app.id]?.error ||
+                                  (codingSnapshotByApp[app.id]?.submissions?.length
+                                    ? 'Live submissions exist. Click "View Submitted Code" to refresh details.'
+                                    : 'No coding submissions yet')}
+                              </p>
+                            )}
+                            {codingSnapshotByApp[app.id]?.submissions?.length > 0 && (
+                              <p className="text-xs text-emerald-700 mt-2">
+                                Stored submissions available: {codingSnapshotByApp[app.id].submissions.length}
                               </p>
                             )}
                           </div>
