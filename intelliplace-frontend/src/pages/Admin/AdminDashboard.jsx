@@ -2,455 +2,233 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  Shield,
-  Users,
-  Building2,
-  GraduationCap,
-  FileText,
-  Settings,
-  BarChart3,
+  Shield, Users, Building2, GraduationCap, FileText, Settings, BarChart3,
 } from 'lucide-react';
-import Navbar from '../../components/Navbar';
+import DashboardLayout from '../../components/DashboardLayout';
 import { getCurrentUser } from '../../utils/auth';
 import UsersTable from './UsersTable';
 
-// Chart.js imports
+// Chart.js
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
+  Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement,
+  Title, Tooltip, Legend,
 } from 'chart.js';
 import { Bar, Pie, Doughnut } from 'react-chartjs-2';
-
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Title, Tooltip, Legend);
 
+/* ─── Shared chart options ───────────────────────────────────── */
+const baseOpts = { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 12 } } } };
+const barOpts  = { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } }, scales: { y: { beginAtZero: true, grid: { color: '#f1f5f9' } }, x: { grid: { display: false } } } };
+
+/* ─── Palette ────────────────────────────────────────────────── */
+const PALETTE = ['#6366f1', '#14b8a6', '#f59e0b', '#f43f5e', '#8b5cf6', '#0ea5e9'];
+
+/* ═══════════════════════════════════════════════════════════════ */
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
-  const [activeTab, setActiveTab] = useState('students');
-  const [tableData, setTableData] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState([
-    { label: 'Total Students', value: '0', icon: GraduationCap, color: 'from-red-500 to-red-600' },
-    { label: 'Total Companies', value: '0', icon: Building2, color: 'from-red-600 to-red-700' },
-    { label: 'Job Postings', value: '0', icon: FileText, color: 'from-green-500 to-green-600' },
-    { label: 'Applications', value: '0', icon: BarChart3, color: 'from-orange-500 to-orange-600' }
+  const [activeTab, setActiveTab]     = useState('students');
+  const [tableData, setTableData]     = useState(null);
+  const [loading, setLoading]         = useState(false);
+  const [stats, setStats]             = useState([
+    { label: 'Total Students',   value: '–', icon: GraduationCap, bg: 'bg-indigo-50', fg: 'text-indigo-600' },
+    { label: 'Total Companies',  value: '–', icon: Building2,     bg: 'bg-teal-50',   fg: 'text-teal-600'   },
+    { label: 'Job Postings',     value: '–', icon: FileText,      bg: 'bg-violet-50', fg: 'text-violet-600' },
+    { label: 'Applications',     value: '–', icon: BarChart3,     bg: 'bg-amber-50',  fg: 'text-amber-600'  },
   ]);
   const [analytics, setAnalytics] = useState({
-    jobsByStatus: [],
-    applicationsByStatus: [],
-    companiesByIndustry: [],
-    studentsStats: null
+    jobsByStatus: [], applicationsByStatus: [], companiesByIndustry: [], studentsStats: null,
   });
-  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
+  /* ── Fetch table data ───────────────────────────────────────── */
   const fetchData = async (query = '', page = 1) => {
     if (!user) return;
-
     setLoading(true);
     try {
-      const response = await fetch(`http://localhost:5000/api/dashboard/admin/${activeTab}?search=${query}&page=${page}&limit=10`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      const jsonData = await response.json();
-      if (response.ok) {
-        console.log('Received data:', jsonData); // Debug log
-        setTableData(jsonData);
-      } else {
-        console.error('Error fetching data:', jsonData.message);
-      }
-    } catch (error) {
-      console.error('Error:', error);
-    } finally {
-      setLoading(false);
-    }
+      const res = await fetch(
+        `http://localhost:5000/api/dashboard/admin/${activeTab}?search=${query}&page=${page}&limit=10`,
+        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
+      );
+      const json = await res.json();
+      if (res.ok) setTableData(json);
+    } catch { /* noop */ }
+    finally { setLoading(false); }
   };
 
-  // Fetch initial stats and check auth
+  /* ── Init ────────────────────────────────────────────────────── */
   useEffect(() => {
-    if (!user || user.userType !== 'admin') {
-      navigate('/');
-      return;
-    }
+    if (!user || user.userType !== 'admin') { navigate('/'); return; }
 
-    const fetchStats = async () => {
+    // Stats
+    (async () => {
       try {
-        const response = await fetch('http://localhost:5000/api/dashboard/admin/stats', {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('token')}`,
-          },
-        });
-
-        if (!response.ok) throw new Error('Failed to fetch stats');
-
-        const data = await response.json();
-
+        const res = await fetch('http://localhost:5000/api/dashboard/admin/stats', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+        if (!res.ok) return;
+        const { data } = await res.json();
         setStats([
-          { label: 'Total Students', value: data.data.totalStudents.toString(), icon: GraduationCap, color: 'from-red-500 to-red-600' },
-          { label: 'Total Companies', value: data.data.totalCompanies.toString(), icon: Building2, color: 'from-red-600 to-red-700' },
-          { label: 'Job Postings', value: data.data.totalJobs.toString(), icon: FileText, color: 'from-green-500 to-green-600' },
-          { label: 'Applications', value: data.data.totalApplications.toString(), icon: BarChart3, color: 'from-orange-500 to-orange-600' }
+          { label: 'Total Students',  value: data.totalStudents.toString(),   icon: GraduationCap, bg: 'bg-indigo-50', fg: 'text-indigo-600' },
+          { label: 'Total Companies', value: data.totalCompanies.toString(),   icon: Building2,     bg: 'bg-teal-50',   fg: 'text-teal-600'   },
+          { label: 'Job Postings',    value: data.totalJobs.toString(),        icon: FileText,      bg: 'bg-violet-50', fg: 'text-violet-600' },
+          { label: 'Applications',    value: data.totalApplications.toString(),icon: BarChart3,     bg: 'bg-amber-50',  fg: 'text-amber-600'  },
         ]);
-      } catch (error) {
-        console.error('Failed to fetch admin stats:', error);
-      }
-    };
+      } catch { /* noop */ }
+    })();
 
-    const fetchAnalytics = async () => {
-      setAnalyticsLoading(true);
+    // Analytics
+    (async () => {
       try {
-        const [jobsRes, appsRes, industriesRes, studentsRes] = await Promise.all([
-          fetch('http://localhost:5000/api/dashboard/admin/analytics/jobs-by-status', {
-            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-          }),
-          fetch('http://localhost:5000/api/dashboard/admin/analytics/applications-by-status', {
-            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-          }),
-          fetch('http://localhost:5000/api/dashboard/admin/analytics/companies-by-industry', {
-            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-          }),
-          fetch('http://localhost:5000/api/dashboard/admin/analytics/students-stats', {
-            headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-          })
+        const [jr, ar, ir, sr] = await Promise.all([
+          fetch('http://localhost:5000/api/dashboard/admin/analytics/jobs-by-status',          { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
+          fetch('http://localhost:5000/api/dashboard/admin/analytics/applications-by-status',  { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
+          fetch('http://localhost:5000/api/dashboard/admin/analytics/companies-by-industry',   { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
+          fetch('http://localhost:5000/api/dashboard/admin/analytics/students-stats',          { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
         ]);
-
-        const [jobsData, appsData, industriesData, studentsData] = await Promise.all([
-          jobsRes.json(),
-          appsRes.json(),
-          industriesRes.json(),
-          studentsRes.json()
-        ]);
-
+        const [jd, ad, id_, sd] = await Promise.all([jr.json(), ar.json(), ir.json(), sr.json()]);
         setAnalytics({
-          jobsByStatus: jobsData.data?.jobsByStatus || [],
-          applicationsByStatus: appsData.data?.applicationsByStatus || [],
-          companiesByIndustry: industriesData.data?.companiesByIndustry || [],
-          studentsStats: studentsData.data || null
+          jobsByStatus:         jd.data?.jobsByStatus         || [],
+          applicationsByStatus: ad.data?.applicationsByStatus || [],
+          companiesByIndustry:  id_.data?.companiesByIndustry  || [],
+          studentsStats:        sd.data || null,
         });
-      } catch (error) {
-        console.error('Failed to fetch analytics:', error);
-      } finally {
-        setAnalyticsLoading(false);
-      }
-    };
-
-    fetchStats();
-    fetchAnalytics();
+      } catch { /* noop */ }
+    })();
   }, [user, navigate]);
 
-  // Fetch table data when tab changes
-  useEffect(() => {
-    fetchData();
-  }, [activeTab]);
+  useEffect(() => { fetchData(); }, [activeTab]);
 
-  if (!user || user.userType !== 'admin') {
-    return null;
-  }
+  if (!user || user.userType !== 'admin') return null;
 
-  const quickActions = [
-    { label: 'Manage Students', icon: GraduationCap, color: 'from-red-500 to-red-600' },
-    { label: 'Manage Companies', icon: Building2, color: 'from-red-600 to-red-700' },
-    { label: 'View Reports', icon: BarChart3, color: 'from-green-500 to-green-600' },
-    { label: 'Settings', icon: Settings, color: 'from-gray-500 to-gray-600' },
-  ];
+  /* ─── Chart data ─────────────────────────────────────────────── */
+  const overviewChart = {
+    labels: stats.map(s => s.label),
+    datasets: [{ label: 'Count', data: stats.map(s => parseInt(s.value, 10) || 0), backgroundColor: PALETTE, borderRadius: 6 }],
+  };
+  const jobsChart = {
+    labels: analytics.jobsByStatus.map(i => i.status),
+    datasets: [{ data: analytics.jobsByStatus.map(i => i.count), backgroundColor: PALETTE, borderColor: '#fff', borderWidth: 2 }],
+  };
+  const appsChart = {
+    labels: analytics.applicationsByStatus.map(i => i.status),
+    datasets: [{ data: analytics.applicationsByStatus.map(i => i.count), backgroundColor: PALETTE, borderColor: '#fff', borderWidth: 2 }],
+  };
+  const industriesChart = {
+    labels: analytics.companiesByIndustry.map(i => i.industry),
+    datasets: [{ label: 'Companies', data: analytics.companiesByIndustry.map(i => i.count), backgroundColor: '#6366f1', borderRadius: 4 }],
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      <Navbar />
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="mb-8"
-        >
-          <div className="flex items-center space-x-3 mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-red-700 rounded-full flex items-center justify-center">
-              <Shield className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold text-gray-800">
-                Admin Dashboard
-              </h1>
-              <p className="text-gray-600">Welcome back, {user.name || user.username}!</p>
-            </div>
+    <DashboardLayout>
+      <div className="max-w-7xl mx-auto space-y-8">
+
+        {/* Page header */}
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="page-header">
+          <div>
+            <h1 className="page-title">Admin Dashboard</h1>
+            <p className="page-subtitle">Platform overview — Welcome, {user.name || user.username}!</p>
+          </div>
+          <div className="flex items-center gap-2 bg-rose-600 text-white px-4 py-2 rounded-lg shadow-sm text-sm font-medium">
+            <Shield className="w-4 h-4" />
+            <span>Admin Portal</span>
           </div>
         </motion.div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {stats.map((stat, index) => (
-            <motion.div
-              key={stat.label}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
-              whileHover={{ scale: 1.05 }}
-              className="bg-white rounded-xl shadow-lg p-6 border border-gray-200"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className={`w-12 h-12 bg-gradient-to-br ${stat.color} rounded-lg flex items-center justify-center`}>
-                  <stat.icon className="w-6 h-6 text-white" />
-                </div>
+        {/* KPI stats */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {stats.map((s, i) => (
+            <motion.div key={s.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.07 }} className="stat-card">
+              <div className={`stat-icon ${s.bg}`}>
+                <s.icon className={`w-5 h-5 ${s.fg}`} />
               </div>
-              <h3 className="text-3xl font-bold text-gray-800 mb-1">{stat.value}</h3>
-              <p className="text-gray-600 text-sm">{stat.label}</p>
+              <div>
+                <p className="stat-value">{s.value}</p>
+                <p className="stat-label mt-0.5">{s.label}</p>
+              </div>
             </motion.div>
           ))}
         </div>
 
-        {/* Charts Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-          {/* Overview Chart */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="bg-white rounded-xl shadow-lg p-3 border border-gray-200 h-64"
-          >
-            <h2 className="text-lg font-bold text-gray-800 mb-2">Overview</h2>
-            <Bar
-              data={{
-                labels: stats.map(s => s.label),
-                datasets: [
-                  {
-                    label: 'Count',
-                    data: stats.map(s => parseInt(s.value, 10) || 0),
-                    backgroundColor: ['#f87171', '#ef4444', '#10b981', '#f59e0b'],
-                  },
-                ],
-              }}
-              options={{
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                  legend: { position: 'bottom', labels: { font: { size: 10 } } },
-                  title: { display: false },
-                },
-                scales: {
-                  y: { beginAtZero: true },
-                },
-              }}
-            />
+        {/* Charts grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Overview bar */}
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="card">
+            <p className="section-title">Platform Overview</p>
+            <div className="h-52">
+              <Bar data={overviewChart} options={{ ...barOpts, scales: { y: { beginAtZero: true, grid: { color: '#f1f5f9' } }, x: { grid: { display: false } } } }} />
+            </div>
           </motion.div>
 
-          {/* Jobs by Status */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.35 }}
-            className="bg-white rounded-xl shadow-lg p-3 border border-gray-200 h-64"
-          >
-            <h2 className="text-lg font-bold text-gray-800 mb-2">Jobs by Status</h2>
-            {analytics.jobsByStatus.length > 0 ? (
-              <Pie
-                data={{
-                  labels: analytics.jobsByStatus.map(item => item.status),
-                  datasets: [
-                    {
-                      data: analytics.jobsByStatus.map(item => item.count),
-                      backgroundColor: ['#3b82f6', '#10b981', '#ef4444', '#f59e0b'],
-                      borderColor: '#fff',
-                      borderWidth: 2,
-                    },
-                  ],
-                }}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: {
-                    legend: { position: 'bottom', labels: { font: { size: 10 } } },
-                  },
-                }}
-              />
-            ) : (
-              <p className="text-gray-500 text-center py-8">No data available</p>
-            )}
+          {/* Jobs by status */}
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }} className="card">
+            <p className="section-title">Jobs by Status</p>
+            <div className="h-52 flex items-center justify-center">
+              {analytics.jobsByStatus.length > 0
+                ? <Pie data={jobsChart} options={baseOpts} />
+                : <p className="text-sm text-slate-400">No data</p>}
+            </div>
           </motion.div>
 
-          {/* Applications by Status */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 }}
-            className="bg-white rounded-xl shadow-lg p-3 border border-gray-200 h-64"
-          >
-            <h2 className="text-lg font-bold text-gray-800 mb-2">Applications by Status</h2>
-            {analytics.applicationsByStatus.length > 0 ? (
-              <Doughnut
-                data={{
-                  labels: analytics.applicationsByStatus.map(item => item.status),
-                  datasets: [
-                    {
-                      data: analytics.applicationsByStatus.map(item => item.count),
-                      backgroundColor: ['#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#ef4444'],
-                      borderColor: '#fff',
-                      borderWidth: 2,
-                    },
-                  ],
-                }}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: {
-                    legend: { position: 'bottom', labels: { font: { size: 9 } } },
-                  },
-                }}
-              />
-            ) : (
-              <p className="text-gray-500 text-center py-8">No data available</p>
-            )}
+          {/* Applications by status */}
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }} className="card">
+            <p className="section-title">Applications by Status</p>
+            <div className="h-52 flex items-center justify-center">
+              {analytics.applicationsByStatus.length > 0
+                ? <Doughnut data={appsChart} options={baseOpts} />
+                : <p className="text-sm text-slate-400">No data</p>}
+            </div>
           </motion.div>
 
-          {/* Companies by Industry */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.45 }}
-            className="bg-white rounded-xl shadow-lg p-3 border border-gray-200 h-64"
-          >
-            <h2 className="text-lg font-bold text-gray-800 mb-2">Top Industries</h2>
-            {analytics.companiesByIndustry.length > 0 ? (
-              <Bar
-                data={{
-                  labels: analytics.companiesByIndustry.map(item => item.industry),
-                  datasets: [
-                    {
-                      label: 'Companies',
-                      data: analytics.companiesByIndustry.map(item => item.count),
-                      backgroundColor: '#7c3aed',
-                    },
-                  ],
-                }}
-                options={{
-                  indexAxis: 'y',
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: {
-                    legend: { display: false },
-                  },
-                  scales: {
-                    x: { beginAtZero: true },
-                  },
-                }}
-              />
-            ) : (
-              <p className="text-gray-500 text-center py-8">No data available</p>
-            )}
+          {/* Top industries */}
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }} className="card">
+            <p className="section-title">Top Industries</p>
+            <div className="h-52">
+              {analytics.companiesByIndustry.length > 0
+                ? <Bar data={industriesChart} options={{ ...baseOpts, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, grid: { color: '#f1f5f9' } }, y: { grid: { display: false } } } }} />
+                : <div className="flex items-center justify-center h-full"><p className="text-sm text-slate-400">No data</p></div>}
+            </div>
           </motion.div>
 
-          {/* Students Statistics */}
+          {/* Student stats */}
           {analytics.studentsStats && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-              className="bg-white rounded-xl shadow-lg p-3 border border-gray-200"
-            >
-              <h2 className="text-lg font-bold text-gray-800 mb-2">Students Statistics</h2>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Total Students:</span>
-                  <span className="font-bold text-gray-800">{analytics.studentsStats.totalStudents}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Avg Applications/Student:</span>
-                  <span className="font-bold text-gray-800">{analytics.studentsStats.avgApplicationsPerStudent}</span>
-                </div>
-                <div className="border-t pt-3 mt-3 space-y-2">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">0 Applications:</span>
-                    <span className="font-bold text-orange-600">{analytics.studentsStats.studentsWith0Apps}</span>
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }} className="card lg:col-span-2">
+              <p className="section-title">Student Application Distribution</p>
+              <div className="grid sm:grid-cols-3 gap-4">
+                {[
+                  { label: 'No Applications',  value: analytics.studentsStats.studentsWith0Apps,    color: 'text-amber-600',   bg: 'bg-amber-50'   },
+                  { label: '1–5 Applications', value: analytics.studentsStats.studentsWith1to5Apps, color: 'text-indigo-600',  bg: 'bg-indigo-50'  },
+                  { label: '5+ Applications',  value: analytics.studentsStats.studentsWith5plusApps,color: 'text-emerald-600', bg: 'bg-emerald-50' },
+                ].map(row => (
+                  <div key={row.label} className={`${row.bg} rounded-xl p-4 flex flex-col gap-1`}>
+                    <span className={`text-3xl font-bold ${row.color}`}>{row.value}</span>
+                    <span className="text-sm text-slate-500 font-medium">{row.label}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">1-5 Applications:</span>
-                    <span className="font-bold text-blue-600">{analytics.studentsStats.studentsWith1to5Apps}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">5+ Applications:</span>
-                    <span className="font-bold text-green-600">{analytics.studentsStats.studentsWith5plusApps}</span>
-                  </div>
-                </div>
+                ))}
               </div>
             </motion.div>
           )}
         </div>
 
-        {/* Quick Actions */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-          className="bg-white rounded-xl shadow-lg p-8 border border-gray-200"
-        >
-          <h2 className="text-2xl font-bold text-gray-800 mb-6">Quick Actions</h2>
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {quickActions.map((action, index) => (
-              <motion.button
-                key={action.label}
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: 0.5 + index * 0.1 }}
-                whileHover={{ scale: 1.05 }}
-                className="p-6 border-2 border-gray-200 rounded-xl hover:border-red-500 hover:bg-red-50 transition-all text-left group"
-              >
-                <div className={`w-12 h-12 bg-gradient-to-br ${action.color} rounded-lg flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
-                  <action.icon className="w-6 h-6 text-white" />
-                </div>
-                <h3 className="font-semibold text-gray-800">{action.label}</h3>
-              </motion.button>
-            ))}
+        {/* Users table */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.55 }} className="card">
+          <div className="flex items-center justify-between mb-6">
+            <p className="section-title mb-0">User Management</p>
+            <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+              {['students', 'companies'].map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all capitalize ${activeTab === tab ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
           </div>
+          <UsersTable type={activeTab} data={tableData} onSearch={fetchData} loading={loading} />
         </motion.div>
 
-        {/* Users Table Section */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6 }}
-          className="bg-white rounded-xl shadow-lg p-8 border border-gray-200 mt-6"
-        >
-          <div className="flex border-b border-gray-200 mb-6">
-            <button
-              onClick={(e) => { e.preventDefault(); setActiveTab('students'); }}
-              type="button"
-              className={`py-4 px-6 text-sm font-medium ${activeTab === 'students'
-                  ? 'text-red-600 border-b-2 border-red-600'
-                  : 'text-gray-500 hover:text-gray-700'
-                }`}
-            >
-              Students
-            </button>
-            <button
-              onClick={(e) => { e.preventDefault(); setActiveTab('companies'); }}
-              type="button"
-              className={`py-4 px-6 text-sm font-medium ${activeTab === 'companies'
-                  ? 'text-red-600 border-b-2 border-red-600'
-                  : 'text-gray-500 hover:text-gray-700'
-                }`}
-            >
-              Companies
-            </button>
-          </div>
-
-          <UsersTable
-            type={activeTab}
-            data={tableData}
-            onSearch={fetchData}
-            loading={loading}
-          />
-        </motion.div>
       </div>
-    </div>
+    </DashboardLayout>
   );
 };
 
 export default AdminDashboard;
-
