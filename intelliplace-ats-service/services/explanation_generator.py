@@ -17,12 +17,11 @@ class ExplanationGenerator:
         lines.append(f"Decision: {decision}")
         lines.append("")
         lines.append("Breakdown:")
-        lines.append(f"  - Semantic match with job: {feature_scores.semantic_similarity * 100:.0f}%")
-        lines.append(f"  - Role/title relevance: {feature_scores.role_similarity * 100:.0f}%")
+        lines.append(f"  - Semantic match with job: {feature_scores.semantic_score * 100:.0f}%")
         lines.append(f"  - Skill match: {feature_scores.skill_match_ratio * 100:.0f}%")
         lines.append(f"  - Experience: {feature_scores.experience_score * 100:.0f}%")
         lines.append(f"  - Projects/Internships: {feature_scores.project_score * 100:.0f}%")
-        lines.append(f"  - Education: {feature_scores.education_match_score * 100:.0f}%")
+        lines.append(f"  - Education: {feature_scores.education_score * 100:.0f}%")
 
         skills = parsed_resume.get("skills", [])
         if skills:
