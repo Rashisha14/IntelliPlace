@@ -573,40 +573,23 @@ const RecruitmentProcess = () => {
                 onSkip={() => { setStageToSkip('coding'); setIsSkipConfirmOpen(true); }}
               />
             ) : activeTab === 'gd' ? (
-              <div className="space-y-3">
-                <EligibilitySelector
-                  value={eligibilityFilters.gd}
-                  options={eligibilityOptionsByStage.gd}
-                  disabledOptionValues={eligibilityOptionsByStage.gd
-                    .filter((o) => (eligibilityCountsByStage.gd?.[o.value] || 0) === 0)
-                    .map((o) => o.value)}
-                  onChange={(value) => {
-                    setEligibilityFilters(prev => ({ ...prev, gd: value }));
-                    setProceededStages(prev => ({ ...prev, gd: false }));
-                  }}
-                  label="GD Eligibility"
-                />
-                <ProceedBanner
-                  count={gdEligibleApplications.length}
-                  proceeded={proceededStages.gd}
-                  onProceed={() => setProceededStages(prev => ({ ...prev, gd: true }))}
-                />
-                <div className="flex justify-end my-2">
-                  <button
-                    onClick={() => { setStageToSkip('gd'); setIsSkipConfirmOpen(true); }}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors"
-                  >
-                    <FastForward className="w-4 h-4" />
-                    Skip GD Round
-                  </button>
-                </div>
-                <CompanyGDManager
-                  jobId={jobId}
-                  initialGd={job?.groupDiscussion}
-                  applications={gdEligibleApplications}
-                  token={localStorage.getItem('token')}
-                />
-              </div>
+              <GDContent
+                job={job}
+                jobId={jobId}
+                applications={gdEligibleApplications}
+                eligibilityFilter={eligibilityFilters.gd}
+                eligibilityOptions={eligibilityOptionsByStage.gd}
+                disabledOptionValues={eligibilityOptionsByStage.gd
+                  .filter((o) => (eligibilityCountsByStage.gd?.[o.value] || 0) === 0)
+                  .map((o) => o.value)}
+                proceeded={proceededStages.gd}
+                onProceed={() => setProceededStages(prev => ({ ...prev, gd: true }))}
+                onEligibilityChange={(value) => {
+                  setEligibilityFilters(prev => ({ ...prev, gd: value }));
+                  setProceededStages(prev => ({ ...prev, gd: false }));
+                }}
+                onSkip={() => { setStageToSkip('gd'); setIsSkipConfirmOpen(true); }}
+              />
             ) : (
               <InterviewContent
                 interviews={interviews}
@@ -622,6 +605,7 @@ const RecruitmentProcess = () => {
                   setEligibilityFilters(prev => ({ ...prev, interview: value }));
                   setProceededStages(prev => ({ ...prev, interview: false }));
                 }}
+                onSkip={() => { setStageToSkip('interview'); setIsSkipConfirmOpen(true); }}
                 job={job}
                 jobId={jobId}
                 onStartInterview={(application) => { setSelectedApplication(application); setIsInterviewOpen(true); }}
@@ -729,7 +713,7 @@ const RecruitmentProcess = () => {
 
       <Modal
         open={isSkipConfirmOpen}
-        title={`Skip ${stageToSkip === 'aptitude' ? 'Aptitude Test' : stageToSkip === 'coding' ? 'Coding Test' : 'Group Discussion'}`}
+        title={`Skip ${stageToSkip === 'aptitude' ? 'Aptitude Test' : stageToSkip === 'coding' ? 'Coding Test' : stageToSkip === 'gd' ? 'Group Discussion' : 'Interview'}`}
         message={`Are you sure you want to skip this round? All eligible candidates will be automatically marked as passed and advanced to the next stage.`}
         type="warning"
         onClose={() => setIsSkipConfirmOpen(false)}
@@ -1363,6 +1347,44 @@ const CodingSubmissionsSection = ({ jobId, applications }) => {
   );
 };
 
+const GDContent = ({
+  job,
+  jobId,
+  applications,
+  eligibilityFilter,
+  eligibilityOptions,
+  disabledOptionValues,
+  proceeded,
+  onProceed,
+  onEligibilityChange,
+  onSkip
+}) => {
+  return (
+    <CompanyGDManager
+      jobId={jobId}
+      initialGd={job?.groupDiscussion}
+      applications={applications}
+      token={localStorage.getItem('token')}
+      onSkip={onSkip}
+      eligibilitySelector={
+        <EligibilitySelector
+          value={eligibilityFilter}
+          options={eligibilityOptions}
+          disabledOptionValues={disabledOptionValues}
+          onChange={onEligibilityChange}
+          label="GD Eligibility"
+        />
+      }
+      proceedBanner={
+        <ProceedBanner count={applications?.length || 0} proceeded={proceeded} onProceed={onProceed} />
+      }
+      eligibleList={
+        <EligibleStudentsList applications={applications} title="Eligible" />
+      }
+    />
+  );
+};
+
 // Interview Content Component
 const InterviewContent = ({
   interviews,
@@ -1373,11 +1395,132 @@ const InterviewContent = ({
   proceeded,
   onProceed,
   onEligibilityChange,
+  onSkip,
   job,
   jobId,
   onStartInterview,
   onRefresh,
 }) => {
+  const hasInterviews = interviews && interviews.length > 0;
+
+  const candidatesList = (
+    <div id="candidates-list-section" className="mt-8 border-t pt-6 text-left">
+      <h4 className="text-lg font-semibold text-gray-800 mb-4">
+        Eligible Candidates
+      </h4>
+      {applications && applications.length > 0 ? (
+        <div className="space-y-3">
+          {applications.map((application) => {
+            const existingInterview = interviews?.find(
+              (i) => i.applicationId === application.id
+            );
+            return (
+              <div
+                key={application.id}
+                className="bg-white rounded-lg p-4 border border-gray-200 hover:border-green-500 transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <h5 className="font-semibold text-gray-800">
+                        {application.student?.name || 'Unknown'}
+                      </h5>
+                      {application.student?.cgpa && (
+                        <span className="text-sm text-gray-600">
+                          CGPA: {application.student.cgpa}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm text-gray-600">
+                      <p>Email: {application.student?.email}</p>
+                      {application.student?.rollNumber && (
+                        <p>Roll Number: {application.student.rollNumber}</p>
+                      )}
+                    </div>
+                    {existingInterview && (
+                      <div className="mt-2">
+                        <span
+                          className={`px-2 py-1 text-xs font-medium rounded-full ${
+                            existingInterview.status === 'COMPLETED'
+                              ? 'bg-green-100 text-green-800'
+                              : existingInterview.status === 'IN_PROGRESS'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-yellow-100 text-yellow-800'
+                          }`}
+                        >
+                          Interview: {existingInterview.status}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => onStartInterview(application)}
+                    disabled={!proceeded}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    <Video className="w-4 h-4" />
+                    {existingInterview ? 'View Q&A / Evaluate' : 'Start Interview'}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="text-gray-500 text-sm bg-gray-50 p-4 rounded text-center">
+          No eligible candidates available at this stage.
+        </p>
+      )}
+    </div>
+  );
+
+  if (!hasInterviews) {
+    return (
+      <div className="text-center py-12">
+        <Video className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+        <h3 className="text-lg font-semibold text-gray-800 mb-2">No Interviews Started</h3>
+        <p className="text-gray-600 mb-6">Start individual interviews with eligible candidates</p>
+        <button
+          onClick={() => {
+            if (!proceeded) {
+              alert('Please proceed candidates to this stage first.');
+              return;
+            }
+            if (!applications || applications.length === 0) {
+              alert('No eligible candidates to interview.');
+              return;
+            }
+            document.getElementById('candidates-list-section')?.scrollIntoView({ behavior: 'smooth' });
+          }}
+          className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+        >
+          <Video className="w-5 h-5" />
+          Start Interview
+        </button>
+        <button
+          onClick={onSkip}
+          className="inline-flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-3"
+        >
+          <FastForward className="w-5 h-5" />
+          Skip Round
+        </button>
+        <div className="mt-6 flex justify-center">
+          <EligibilitySelector
+            value={eligibilityFilter}
+            options={eligibilityOptions}
+            disabledOptionValues={disabledOptionValues}
+            onChange={onEligibilityChange}
+            label="Interview Eligibility"
+          />
+        </div>
+        <div className="mt-4">
+          <ProceedBanner count={applications?.length || 0} proceeded={proceeded} onProceed={onProceed} />
+        </div>
+        {candidatesList}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <EligibilitySelector
@@ -1407,77 +1550,7 @@ const InterviewContent = ({
       </div>
 
       {/* Shortlisted Applications */}
-      <div>
-        <h4 className="text-lg font-semibold text-gray-800 mb-4">
-          Shortlisted Candidates
-        </h4>
-        {applications && applications.length > 0 ? (
-          <div className="space-y-3">
-            {applications.map((application) => {
-              const existingInterview = interviews?.find(
-                (i) => i.applicationId === application.id
-              );
-              return (
-                <div
-                  key={application.id}
-                  className="bg-white rounded-lg p-4 border border-gray-200 hover:border-green-500 transition-colors"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2">
-                        <h5 className="font-semibold text-gray-800">
-                          {application.student?.name || 'Unknown'}
-                        </h5>
-                        {application.student?.cgpa && (
-                          <span className="text-sm text-gray-600">
-                            CGPA: {application.student.cgpa}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        <p>Email: {application.student?.email}</p>
-                        {application.student?.rollNumber && (
-                          <p>Roll Number: {application.student.rollNumber}</p>
-                        )}
-                      </div>
-                      {existingInterview && (
-                        <div className="mt-2">
-                          <span
-                            className={`px-2 py-1 text-xs font-medium rounded-full ${
-                              existingInterview.status === 'COMPLETED'
-                                ? 'bg-green-100 text-green-800'
-                                : existingInterview.status === 'IN_PROGRESS'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-yellow-100 text-yellow-800'
-                            }`}
-                          >
-                            Interview: {existingInterview.status}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => onStartInterview(application)}
-                      disabled={!proceeded}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                    >
-                      <Video className="w-4 h-4" />
-                      {existingInterview ? 'View Q&A / Evaluate' : 'Start Interview'}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="text-center py-8 bg-gray-50 rounded-lg">
-            <Users className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-            <p className="text-gray-600">
-              No shortlisted candidates yet. Shortlist candidates first to conduct interviews.
-            </p>
-          </div>
-        )}
-      </div>
+      {candidatesList}
 
       {/* Interview History */}
       {interviews && interviews.length > 0 && (

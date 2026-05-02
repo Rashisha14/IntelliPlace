@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { supabase } from '../lib/supabase.js';
 import { createRequire } from 'module';
 import axios from 'axios';
-
+import { GoogleGenerativeAI } from '@google/generative-ai';
 const require = createRequire(import.meta.url);
 // Ensure DOMMatrix is available in Node for pdf-parse (polyfill)
 try {
@@ -1790,6 +1790,69 @@ router.post('/:jobId/skip-stage', authenticateToken, authorizeCompany, async (re
   } catch (error) {
     console.error('Error skipping stage:', error);
     res.status(500).json({ success: false, message: 'Server error skipping stage' });
+  }
+});
+
+// Generate Aptitude Questions via Gemini AI
+router.post('/:jobId/generate-aptitude-questions', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const { sectionName, count } = req.body;
+    if (!sectionName || !count) {
+      return res.status(400).json({ success: false, message: 'Missing sectionName or count' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ success: false, message: 'Gemini API key not configured' });
+    }
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+
+    const prompt = `
+Generate exactly ${count} multiple-choice questions for an aptitude test.
+The topic/section name is "${sectionName}".
+
+Return ONLY a valid JSON array of objects. Do not include markdown formatting like \`\`\`json.
+Each object must have the following exact schema:
+{
+  "questionText": "The question itself",
+  "options": ["Option A", "Option B", "Option C", "Option D"],
+  "correctIndex": <integer 0-3>,
+  "marks": 1
+}
+Make sure all options are plain text. Do not output anything other than the JSON array.
+`;
+
+    const result = await model.generateContent(prompt);
+    let text = result.response.text();
+    
+    // Clean up potential markdown formatting
+    text = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+    
+    let questions;
+    try {
+      questions = JSON.parse(text);
+    } catch (parseErr) {
+      console.error('Error parsing Gemini response:', parseErr, text);
+      return res.status(500).json({ success: false, message: 'Failed to parse AI response' });
+    }
+
+    if (!Array.isArray(questions)) {
+      questions = [questions];
+    }
+    
+    questions = questions.slice(0, count).map(q => ({
+      questionText: q.questionText || q.question || '',
+      options: Array.isArray(q.options) ? q.options : ["", "", "", ""],
+      correctIndex: typeof q.correctIndex === 'number' ? q.correctIndex : 0,
+      marks: typeof q.marks === 'number' ? q.marks : 1
+    }));
+
+    res.json({ success: true, questions });
+  } catch (error) {
+    console.error('Error generating questions:', error);
+    res.status(500).json({ success: false, message: 'Failed to generate questions' });
   }
 });
 

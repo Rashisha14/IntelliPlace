@@ -6,7 +6,9 @@ import {
   X,
   CheckCircle,
   AlertCircle,
-  Check
+  Check,
+  Sparkles,
+  Loader2
 } from "lucide-react";
 import Swal from "sweetalert2";
 import { API_BASE_URL } from "../config.js";
@@ -34,6 +36,7 @@ const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated, editingTest = fa
 
   const [showAddQuestion, setShowAddQuestion] = useState(false);
   const [newQuestion, setNewQuestion] = useState(emptyQuestion);
+  const [generatingSection, setGeneratingSection] = useState(null);
 
   /* ================= INIT ================= */
   useEffect(() => {
@@ -158,6 +161,53 @@ const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated, editingTest = fa
   };
 
   /* ================= QUESTION ================= */
+
+  const handleGenerateQuestions = async (sectionIndex) => {
+    const section = sections[sectionIndex];
+    if (!section || !section.name || section.questions <= 0) return;
+
+    try {
+      setGeneratingSection(sectionIndex);
+      
+      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/generate-aptitude-questions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("token")}`
+        },
+        body: JSON.stringify({
+          sectionName: section.name,
+          count: section.questions
+        })
+      });
+
+      const data = await res.json();
+      if (data.success && data.questions) {
+        setQuestionsBySection((p) => ({
+          ...p,
+          [sectionIndex]: data.questions.map(q => ({ ...q, section: section.name }))
+        }));
+        
+        setActiveSection(sectionIndex);
+        Swal.fire({
+          icon: "success",
+          title: "Questions Generated",
+          text: `Successfully generated ${data.questions.length} questions for ${section.name}.`,
+          toast: true,
+          position: "top-end",
+          showConfirmButton: false,
+          timer: 3000
+        });
+      } else {
+        throw new Error(data.message || "Failed to generate questions");
+      }
+    } catch (error) {
+      console.error("AI Generation Error:", error);
+      Swal.fire("Generation Failed", "Could not generate questions using AI. Please try again.", "error");
+    } finally {
+      setGeneratingSection(null);
+    }
+  };
 
   const addQuestion = () => {
     if (!newQuestion.questionText || newQuestion.options.some((o) => !o)) {
@@ -310,7 +360,7 @@ const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated, editingTest = fa
                     }
                   />
 
-                  <div className="flex justify-between mt-2">
+                  <div className="flex justify-between mt-2 items-center">
                     <input
                       type="number"
                       min={1}
@@ -321,6 +371,23 @@ const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated, editingTest = fa
                       className="input w-20 text-xs"
                     />
 
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleGenerateQuestions(i);
+                      }}
+                      disabled={generatingSection === i}
+                      className="text-xs font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1 ml-2 disabled:opacity-50"
+                      title="Generate questions using Gemini AI"
+                    >
+                      {generatingSection === i ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      {generatingSection === i ? "Generating..." : "AI Generate"}
+                    </button>
+                  </div>
+                  <div className="flex justify-between mt-2 items-center">
+                    <div className="text-xs text-gray-500">
+                      {count}/{s.questions} questions
+                    </div>
                     {done ? (
                       <span className="flex items-center gap-1 text-green-600 text-xs">
                         <CheckCircle size={14} /> Complete
@@ -330,10 +397,6 @@ const CompanyCreateTest = ({ isOpen, onClose, jobId, onCreated, editingTest = fa
                         <AlertCircle size={14} /> Pending
                       </span>
                     )}
-                  </div>
-
-                  <div className="mt-2 text-xs">
-                    {count}/{s.questions} questions
                   </div>
                 </div>
               );

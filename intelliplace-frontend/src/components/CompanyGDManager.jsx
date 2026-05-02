@@ -1,13 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
-import { Play, Square, Users, MessageSquare, Check, X, Clock, SkipForward } from 'lucide-react';
+import { Play, Square, Users, MessageSquare, Check, X, Clock, SkipForward, Plus, FastForward } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import Swal from 'sweetalert2';
 
-export default function CompanyGDManager({ jobId, initialGd, applications, token }) {
+export default function CompanyGDManager({ 
+  jobId, 
+  initialGd, 
+  applications, 
+  token,
+  eligibilitySelector,
+  proceedBanner,
+  eligibleList,
+  onSkip
+}) {
   const [gdState, setGdState] = useState(initialGd || null);
   const [socket, setSocket] = useState(null);
   const [transcripts, setTranscripts] = useState([]);
+  const [isSetupOpen, setIsSetupOpen] = useState(false);
   
   // Create Form State
   const [topic, setTopic] = useState('');
@@ -150,56 +160,77 @@ export default function CompanyGDManager({ jobId, initialGd, applications, token
 
   if (!gdState || gdState.status === 'CREATED') {
     return (
-      <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
-        <h3 className="text-xl font-bold mb-4 flex items-center gap-2"><Users className="w-5 h-5 text-indigo-600"/> Setup Group Discussion</h3>
-        <p className="text-gray-600 mb-4">Set a topic and prep time to initialize the live group discussion queue. Eligible students (Coding Passed) will see this once started.</p>
+      <div className="text-center py-12 relative">
+        <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+        <h3 className="text-lg font-semibold text-gray-800 mb-2">No Group Discussion Active</h3>
+        <p className="text-gray-600 mb-6">Setup a live group discussion for candidates</p>
         
-        <div className="space-y-4 max-w-md">
-          <div>
-            <label className="block text-sm font-medium mb-1">Discussion Topic</label>
-            <input 
-              type="text" 
-              className="w-full border rounded p-2" 
-              placeholder="e.g., Impact of AI on Software Engineering" 
-              value={topic} 
-              onChange={e => setTopic(e.target.value)} 
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1">Prep Time (Seconds)</label>
-            <input 
-              type="number" 
-              className="w-full border rounded p-2" 
-              value={prepTime} 
-              onChange={e => setPrepTime(e.target.value)} 
-            />
-          </div>
-          <button 
-            onClick={handleStartGD}
-            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+        <button
+          onClick={() => setIsSetupOpen(true)}
+          className="inline-flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+        >
+          <Plus className="w-5 h-5" />
+          Setup Group Discussion
+        </button>
+        {onSkip && (
+          <button
+            onClick={onSkip}
+            className="inline-flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-3"
           >
-            <Play className="w-4 h-4" /> Start GD Phase
+            <FastForward className="w-5 h-5" />
+            Skip Round
           </button>
+        )}
+        
+        <div className="mt-6 flex justify-center">
+          {eligibilitySelector}
+        </div>
+        <div className="mt-4">
+          {proceedBanner}
+        </div>
+        
+        <div className="mt-8 border-t pt-6 text-left">
+          {eligibleList}
         </div>
 
-        <div className="mt-8 border-t pt-6">
-          <h4 className="text-lg font-semibold text-gray-800 mb-4">Eligible ({applications?.length || 0})</h4>
-          {applications && applications.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-               {applications.map(app => (
-                  <div key={app.id} className="border p-3 rounded-lg bg-white shadow-sm flex flex-col justify-center">
-                    <p className="font-semibold text-gray-800">{app.student?.name}</p>
-                    <div className="flex items-center justify-between mt-2">
-                      <span className="text-xs text-gray-500 truncate mr-2">{app.student?.email}</span>
-                      <span className="text-xs font-semibold px-2 py-1 bg-indigo-50 text-indigo-700 rounded-full">{app.status}</span>
-                    </div>
+        {/* Modal for Setup */}
+        {isSetupOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 text-left">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md overflow-hidden">
+               <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                  <h3 className="text-lg font-bold">Setup Group Discussion</h3>
+                  <button onClick={() => setIsSetupOpen(false)}><X className="w-5 h-5 text-gray-400 hover:text-gray-600"/></button>
+               </div>
+               <div className="p-6 space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Discussion Topic</label>
+                    <input 
+                      type="text" 
+                      className="w-full border rounded p-2" 
+                      placeholder="e.g., Impact of AI on Software Engineering" 
+                      value={topic} 
+                      onChange={e => setTopic(e.target.value)} 
+                    />
                   </div>
-               ))}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Prep Time (Seconds)</label>
+                    <input 
+                      type="number" 
+                      className="w-full border rounded p-2" 
+                      value={prepTime} 
+                      onChange={e => setPrepTime(e.target.value)} 
+                    />
+                  </div>
+               </div>
+               <div className="px-6 py-4 bg-gray-50 flex justify-end gap-3 border-t">
+                  <button onClick={() => setIsSetupOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                  <button onClick={() => { handleStartGD(); setIsSetupOpen(false); }} className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-2">
+                    <Play className="w-4 h-4"/> Start GD Phase
+                  </button>
+               </div>
             </div>
-          ) : (
-            <p className="text-gray-500 text-sm bg-gray-50 p-4 rounded text-center">No eligible candidates available at this stage.</p>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -208,7 +239,12 @@ export default function CompanyGDManager({ jobId, initialGd, applications, token
     const mins = Math.floor(timeLeft / 60);
     const secs = timeLeft % 60;
     return (
-      <div className="bg-white p-8 rounded-lg shadow text-center border border-yellow-200 bg-yellow-50">
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          {eligibilitySelector}
+        </div>
+        {proceedBanner}
+        <div className="bg-white p-8 rounded-lg shadow text-center border border-yellow-200 bg-yellow-50">
         <h2 className="text-3xl font-bold text-yellow-800 mb-2">Preparation Phase</h2>
         <p className="text-xl text-gray-700 mb-6">Topic: <strong>{gdState.topic}</strong></p>
         <div className="text-6xl font-mono text-yellow-600 mb-6 flex justify-center items-center gap-4">
@@ -220,12 +256,18 @@ export default function CompanyGDManager({ jobId, initialGd, applications, token
           <Square className="w-4 h-4" /> Cancel GD
         </button>
       </div>
+      </div>
     );
   }
 
   if (gdState.status === 'ACTIVE' || gdState.status === 'PAUSED') {
     return (
-      <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          {eligibilitySelector}
+        </div>
+        {proceedBanner}
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
         {/* Header with big stop button */}
         <div className="flex justify-between items-center border-b pb-6 mb-6">
           <div>
@@ -328,12 +370,18 @@ export default function CompanyGDManager({ jobId, initialGd, applications, token
           </div>
         </div>
       </div>
+      </div>
     );
   }
 
   if (gdState.status === 'COMPLETED') {
     return (
-      <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          {eligibilitySelector}
+        </div>
+        {proceedBanner}
+        <div className="bg-white p-6 rounded-lg shadow border border-gray-200">
         <h3 className="text-xl font-bold text-gray-800 mb-2 border-b pb-2">Group Discussion Completed</h3>
         <p className="text-gray-600 mb-6">Topic was: <strong>{gdState.topic}</strong></p>
         
@@ -399,6 +447,7 @@ export default function CompanyGDManager({ jobId, initialGd, applications, token
             Restart Group Discussion
           </button>
         </div>
+      </div>
       </div>
     );
   }
