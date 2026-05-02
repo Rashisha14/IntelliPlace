@@ -1,7 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { Clock, AlertTriangle, Lock, Play, CheckCircle, XCircle, Loader } from 'lucide-react';
-import Swal from 'sweetalert2';
 import { API_BASE_URL } from '../config.js';
 
 import CodeMirror from '@uiw/react-codemirror';
@@ -36,7 +35,7 @@ const getLanguageExtension = (languageId) => {
   }
 };
 
-const MAX_WARNINGS = 2;
+const MAX_WARNINGS = 1;
 
 class CodeEditorErrorBoundary extends React.Component {
   state = { hasError: false };
@@ -62,10 +61,26 @@ const StudentTakeCodingTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
   const [runOutput, setRunOutput] = useState(null);
   const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState(false);
   const [submitResultMessage, setSubmitResultMessage] = useState(null);
+  const [uiAlert, setUiAlert] = useState(null);
 
   const containerRef = useRef(null);
   const timerRef = useRef(null);
   const submittingRef = useRef(false);
+  const violationLockRef = useRef(false);
+
+  const fetchWithTimeout = async (url, options = {}, timeoutMs = 12000) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  const showUiAlert = ({ type = 'info', title, message, onClose }) => {
+    setUiAlert({ type, title, message, onClose: onClose || null });
+  };
 
   /* ---------------- FULLSCREEN ---------------- */
   const enterFullscreen = async () => {
@@ -78,19 +93,62 @@ const StudentTakeCodingTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
 
   /* ---------------- VIOLATION HANDLER ---------------- */
   const registerViolation = () => {
-    if (submittingRef.current) return;
+    if (submittingRef.current || violationLockRef.current) return;
+    violationLockRef.current = true;
+    setTimeout(() => {
+      violationLockRef.current = false;
+    }, 700);
 
     setWarnings(prev => {
       const next = prev + 1;
 
       if (next > MAX_WARNINGS) {
-        handleFinalSubmit();
+        handlePolicyViolationTerminate(next);
         return next;
       }
 
       setShowSecurityModal(true);
       return next;
     });
+  };
+
+  const reportPolicyViolation = async (violationCount) => {
+    try {
+      await fetch(`${API_BASE_URL}/jobs/${jobId}/coding-test/violation`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          violationCount,
+          reason: 'focus_or_fullscreen_violation'
+        })
+      });
+    } catch (err) {
+      console.error('Failed to report policy violation:', err);
+    }
+  };
+
+  const handlePolicyViolationTerminate = async (violationCount) => {
+    if (submittingRef.current) return;
+    // Fallback hard-close even if network requests hang.
+    const hardCloseTimer = setTimeout(() => {
+      try {
+        onSubmitted?.();
+        onClose();
+      } catch {}
+    }, 2500);
+
+    await reportPolicyViolation(violationCount);
+    await handleFinalSubmit({
+      autoSubmitted: true,
+      reason: 'policy_violation',
+      customMessage:
+        'Policy violated more than once. Your test has been submitted automatically and the recruiter has been notified.',
+      closeImmediately: true
+    });
+    clearTimeout(hardCloseTimer);
   };
 
   /* ---------------- SECURITY ---------------- */
@@ -189,8 +247,12 @@ const StudentTakeCodingTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
       })
       .catch(err => {
         console.error('Error loading coding test:', err);
-        Swal.fire('Error', err.message || 'Failed to load coding test. Make sure the test has been started.', 'error');
-        onClose();
+        showUiAlert({
+          type: 'error',
+          title: 'Failed to load coding test',
+          message: err.message || 'Make sure the test has been started.',
+          onClose: () => onClose(),
+        });
       })
       .finally(() => setLoading(false));
   }, [isOpen, jobId]);
@@ -248,13 +310,13 @@ int main() {
     const question = testData.questions.find(q => q.id === questionId);
 
     if (!currentCode || !currentCode.trim()) {
-      Swal.fire('Error', 'Please write some code first', 'error');
+      showUiAlert({ type: 'warning', title: 'Code required', message: 'Please write some code first.' });
       return;
     }
 
     const hasSample = (question.sampleCases && question.sampleCases.length > 0) || question.sampleInput;
     if (!hasSample) {
-      Swal.fire('Info', 'No sample input available for this question', 'info');
+      showUiAlert({ type: 'info', title: 'No sample input', message: 'No sample input available for this question.' });
       return;
     }
 
@@ -320,7 +382,7 @@ int main() {
     const currentLang = selectedLanguage[questionId];
 
     if (!currentCode || !currentCode.trim()) {
-      Swal.fire('Error', 'Please write some code first', 'error');
+      showUiAlert({ type: 'warning', title: 'Code required', message: 'Please write some code first.' });
       return;
     }
 
@@ -359,33 +421,36 @@ int main() {
 
         const pts = testData.questions.find(q => q.id === questionId)?.points || 0;
         if (passedCount === totalCount) {
-          Swal.fire({
-            icon: 'success',
-            title: 'All Test Cases Passed!',
-            text: `${passedCount}/${totalCount} test cases passed. Score: ${sub.score?.toFixed(1) ?? 0}/${pts}`,
-            confirmButtonColor: '#2563eb'
+          showUiAlert({
+            type: 'success',
+            title: 'All test cases passed',
+            message: `${passedCount}/${totalCount} test cases passed. Score: ${sub.score?.toFixed(1) ?? 0}/${pts}`,
           });
         } else {
-          Swal.fire({
-            icon: 'warning',
-            title: `${passedCount}/${totalCount} Test Cases Passed`,
-            text: `Score: ${sub.score?.toFixed(1) ?? 0}/${pts}`,
-            confirmButtonColor: '#f59e0b'
+          showUiAlert({
+            type: 'warning',
+            title: `${passedCount}/${totalCount} test cases passed`,
+            message: `Score: ${sub.score?.toFixed(1) ?? 0}/${pts}`,
           });
         }
       } else {
-        Swal.fire('Error', json.message || 'Failed to submit code', 'error');
+        showUiAlert({ type: 'error', title: 'Submit failed', message: json.message || 'Failed to submit code.' });
       }
     } catch (err) {
       console.error(err);
-      Swal.fire('Error', 'Failed to submit code', 'error');
+      showUiAlert({ type: 'error', title: 'Submit failed', message: 'Failed to submit code.' });
     } finally {
       setSubmitting(false);
     }
   };
 
   /* ---------------- FINAL SUBMIT ---------------- */
-  const handleFinalSubmit = async ({ autoSubmitted = false, reason = 'manual' } = {}) => {
+  const handleFinalSubmit = async ({
+    autoSubmitted = false,
+    reason = 'manual',
+    customMessage = null,
+    closeImmediately = false
+  } = {}) => {
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
@@ -400,7 +465,7 @@ int main() {
       
       if (currentCode && currentCode.trim()) {
         try {
-          await fetch(`${API_BASE_URL}/jobs/${jobId}/coding-test/submit`, {
+          await fetchWithTimeout(`${API_BASE_URL}/jobs/${jobId}/coding-test/submit`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -420,7 +485,7 @@ int main() {
 
     // Tell backend the test is finished so it can evaluate and update the application status
     try {
-      await fetch(`${API_BASE_URL}/jobs/${jobId}/coding-test/finish`, {
+      await fetchWithTimeout(`${API_BASE_URL}/jobs/${jobId}/coding-test/finish`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -434,10 +499,18 @@ int main() {
     clearInterval(timerRef.current);
     document.exitFullscreen?.();
     
-    const submitText = autoSubmitted
+    const submitText = customMessage || (autoSubmitted
       ? 'Time is over. Your test has been submitted automatically.'
-      : 'Your test has been submitted successfully.';
+      : 'Your test has been submitted successfully.');
     setSubmitResultMessage(submitText);
+    if (closeImmediately) {
+      setTimeout(() => {
+        setSubmitResultMessage(null);
+        onSubmitted?.();
+        onClose();
+      }, 1200);
+    }
+    setSubmitting(false);
   };
 
   const handleManualFinalSubmit = async () => {
@@ -817,9 +890,9 @@ int main() {
                 Security Alert
               </h3>
               <p className="text-sm text-[#a3a3a3] mb-6">
-                You attempted to leave fullscreen.
+                You attempted to switch away from the test screen (Alt+Tab/app switch/fullscreen exit).
                 <br />
-                Warnings left: {MAX_WARNINGS - warnings + 1}
+                Final warning: next violation will auto-submit and report a policy violation.
               </p>
               <div className="flex justify-end gap-3">
                 <button
@@ -832,7 +905,7 @@ int main() {
                   Continue Test
                 </button>
                 <button
-                  onClick={handleFinalSubmit}
+                  onClick={() => handleFinalSubmit({ autoSubmitted: false, reason: 'manual' })}
                   className="px-4 py-2 bg-[#22c55e] text-white rounded hover:bg-[#16a34a]"
                 >
                   Submit Now
@@ -892,6 +965,37 @@ int main() {
                       onSubmitted?.();
                       onClose();
                     }
+                  }}
+                  className="px-4 py-2 bg-[#2563eb] text-white rounded hover:bg-[#1d4ed8]"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* GENERIC IN-WINDOW ALERT MODAL */}
+        {uiAlert && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[10000]">
+            <div className="bg-[#262626] border border-[#3d3d3d] rounded-lg p-6 w-[460px]">
+              <h3 className="font-semibold flex gap-2 mb-3 text-white">
+                {uiAlert.type === 'success' ? (
+                  <CheckCircle className="text-emerald-400" />
+                ) : uiAlert.type === 'error' ? (
+                  <XCircle className="text-rose-400" />
+                ) : (
+                  <AlertTriangle className="text-amber-400" />
+                )}
+                {uiAlert.title}
+              </h3>
+              <p className="text-sm text-[#a3a3a3] mb-6">{uiAlert.message}</p>
+              <div className="flex justify-end">
+                <button
+                  onClick={() => {
+                    const cb = uiAlert.onClose;
+                    setUiAlert(null);
+                    if (cb) cb();
                   }}
                   className="px-4 py-2 bg-[#2563eb] text-white rounded hover:bg-[#1d4ed8]"
                 >

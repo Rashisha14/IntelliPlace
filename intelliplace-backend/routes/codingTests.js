@@ -1006,6 +1006,42 @@ router.post('/:jobId/coding-test/finish', authenticateToken, authorizeStudent, a
   }
 });
 
+// Report policy violation during coding test (Student)
+router.post('/:jobId/coding-test/violation', authenticateToken, authorizeStudent, async (req, res) => {
+  try {
+    const studentId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+    const { violationCount = 0, reason = 'focus_or_fullscreen_violation' } = req.body || {};
+
+    const application = await prisma.application.findFirst({
+      where: { jobId, studentId },
+      include: { job: true, student: true },
+    });
+
+    if (!application) {
+      return res.status(404).json({ success: false, message: 'Application not found' });
+    }
+
+    const msg = `Coding test policy violated (${reason}) - violations: ${violationCount}`;
+    await prisma.application.update({
+      where: { id: application.id },
+      data: {
+        status: 'CODING_FAILED',
+        decisionReason: msg.slice(0, 500),
+      },
+    });
+
+    return res.json({
+      success: true,
+      message: 'Violation recorded',
+      data: { violationCount, reason },
+    });
+  } catch (error) {
+    console.error('Error recording coding violation:', error);
+    res.status(500).json({ success: false, message: 'Server error recording violation' });
+  }
+});
+
 // Get coding submissions for a student (Company/Recruiter view)
 router.get('/:jobId/coding-test/submissions/:studentId', authenticateToken, authorizeCompany, async (req, res) => {
   try {
@@ -1037,29 +1073,43 @@ router.get('/:jobId/coding-test/submissions/:studentId', authenticateToken, auth
     // Get latest submission per question (most recent code)
     const byQuestion = {};
     for (const sub of submissions) {
-      if (!byQuestion[sub.questionId] || new Date(sub.createdAt) > new Date(byQuestion[sub.questionId].createdAt)) {
-        byQuestion[sub.questionId] = sub;
-      }
+      if (!byQuestion[sub.questionId]) byQuestion[sub.questionId] = [];
+      byQuestion[sub.questionId].push(sub);
     }
 
     const LANGUAGE_NAMES = { 50: 'C', 54: 'C++', 92: 'Python', 71: 'Python', 91: 'Java' };
-    const submissionsWithDetails = Object.values(byQuestion).map(sub => {
-      const question = sub.test?.questions?.find(q => q.id === sub.questionId);
+    const submissionsWithDetails = Object.values(byQuestion).map((subs) => {
+      const latest = subs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+      const question = latest.test?.questions?.find(q => q.id === latest.questionId);
       return {
-        id: sub.id,
-        questionId: sub.questionId,
+        id: latest.id,
+        questionId: latest.questionId,
         questionTitle: question?.title || 'Question',
         questionPoints: question?.points ?? null,
-        code: sub.code,
-        languageId: sub.languageId,
-        languageName: LANGUAGE_NAMES[sub.languageId] || `Lang ${sub.languageId}`,
-        status: sub.status,
-        score: sub.score,
-        executionTime: sub.executionTime,
-        memoryUsed: sub.memoryUsed,
-        errorMessage: sub.errorMessage,
-        testCaseResults: sub.testCaseResults ? JSON.parse(sub.testCaseResults) : null,
-        createdAt: sub.createdAt
+        code: latest.code,
+        languageId: latest.languageId,
+        languageName: LANGUAGE_NAMES[latest.languageId] || `Lang ${latest.languageId}`,
+        status: latest.status,
+        score: latest.score,
+        executionTime: latest.executionTime,
+        memoryUsed: latest.memoryUsed,
+        errorMessage: latest.errorMessage,
+        testCaseResults: latest.testCaseResults ? JSON.parse(latest.testCaseResults) : null,
+        createdAt: latest.createdAt,
+        attemptCount: subs.length,
+        attempts: subs.map((s) => ({
+          id: s.id,
+          createdAt: s.createdAt,
+          status: s.status,
+          score: s.score,
+          languageId: s.languageId,
+          languageName: LANGUAGE_NAMES[s.languageId] || `Lang ${s.languageId}`,
+          executionTime: s.executionTime,
+          memoryUsed: s.memoryUsed,
+          errorMessage: s.errorMessage,
+          code: s.code,
+          testCaseResults: s.testCaseResults ? JSON.parse(s.testCaseResults) : null,
+        })),
       };
     });
 

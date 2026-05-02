@@ -58,6 +58,21 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     if (jobId) fetchApplications();
   }, [jobId]);
 
+  useEffect(() => {
+    if (!jobId) return;
+    const interval = setInterval(() => {
+      fetchApplications();
+      if (expandedApp) {
+        const app = applications.find(a => a.id === expandedApp);
+        if (app?.student?.id) {
+          fetchCodingSubmissions(app, true);
+          fetchAptitudeSubmissions(app, true);
+        }
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [jobId, expandedApp, applications]);
+
   // Auto-fetch submissions when user expands an application
   useEffect(() => {
     if (!expandedApp || !jobId || applications.length === 0) return;
@@ -68,9 +83,9 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     }
   }, [expandedApp, jobId, applications]);
 
-  const fetchAptitudeSubmissions = async (app) => {
+  const fetchAptitudeSubmissions = async (app, force = false) => {
     if (!app?.student?.id) return;
-    if (aptitudeSubmissions[app.id]?.fetched) return;
+    if (aptitudeSubmissions[app.id]?.fetched && !force) return;
     setAptitudeSubmissions(prev => ({ ...prev, [app.id]: { loading: true } }));
     try {
       const res = await fetch(
@@ -98,9 +113,9 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     }
   };
 
-  const fetchCodingSubmissions = async (app) => {
+  const fetchCodingSubmissions = async (app, force = false) => {
     if (!app?.student?.id) return;
-    if (codingSubmissions[app.id]?.submissions) return;
+    if (codingSubmissions[app.id]?.submissions && !force) return;
     setCodingSubmissions(prev => ({ ...prev, [app.id]: { ...prev[app.id], loading: true } }));
     try {
       const res = await fetch(
@@ -919,8 +934,14 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                               <Code className="w-4 h-4" />
                               Coding Test Submissions
                             </h4>
+                            {String(app?.decisionReason || '').toLowerCase().includes('policy violated') && (
+                              <div className="mb-3 p-3 rounded border border-red-200 bg-red-50 text-red-800 text-sm">
+                                <p className="font-semibold">Policy violation reported</p>
+                                <p className="text-xs mt-1">{app.decisionReason}</p>
+                              </div>
+                            )}
                             <button
-                              onClick={(e) => { e.stopPropagation(); fetchCodingSubmissions(app); }}
+                              onClick={(e) => { e.stopPropagation(); fetchCodingSubmissions(app, true); }}
                               disabled={codingSubmissions[app.id]?.loading}
                               className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
                             >
@@ -943,6 +964,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                                       <div className="flex flex-wrap gap-3 text-xs text-gray-600 mb-2">
                                         <span>Language: <strong>{sub.languageName || 'N/A'}</strong></span>
                                         {sub.score != null && <span>Score: <strong>{sub.score?.toFixed(1)}{sub.questionPoints != null ? `/${sub.questionPoints}` : ''} pts</strong></span>}
+                                        {sub.attemptCount != null && <span>Attempts: <strong>{sub.attemptCount}</strong></span>}
                                         {sub.executionTime != null && <span>Time: <strong>{sub.executionTime?.toFixed(2)}s</strong></span>}
                                         {sub.memoryUsed != null && <span>Memory: <strong>{(sub.memoryUsed / 1024).toFixed(1)} KB</strong></span>}
                                         <span>Submitted: <strong>{new Date(sub.createdAt).toLocaleString()}</strong></span>
