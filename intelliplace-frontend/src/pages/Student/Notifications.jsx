@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import Navbar from '../../components/Navbar';
+import { motion } from 'framer-motion';
+import { Bell, RefreshCw, CheckCheck, Circle, ExternalLink } from 'lucide-react';
+import DashboardLayout from '../../components/DashboardLayout';
 import CvPreviewModal from '../../components/CvPreviewModal';
 import Modal from '../../components/Modal';
 import { getCurrentUser } from '../../utils/auth';
@@ -13,285 +15,184 @@ const Notifications = () => {
   const [reasons, setReasons] = useState({});
   const [preview, setPreview] = useState(null);
   const [modal, setModal] = useState(null);
-  const [notice, setNotice] = useState(null);
 
-  useEffect(() => {
-    const currentUser = getCurrentUser();
-    if (!currentUser || currentUser.userType !== 'student') {
-      navigate('/student/login');
-      return;
-    }
-
-    const fetchNotifications = async () => {
-      setLoading(true);
-      try {
-        const res = await fetch('http://localhost:5000/api/notifications', {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-        });
-        const json = await res.json();
-        if (res.ok) setNotifications(json.data.notifications || []);
-      } catch (err) {
-        console.error(err);
-      } finally { setLoading(false); }
-    };
-
-    fetchNotifications();
-    
-    // Auto-refresh notifications every 30 seconds
-    const refreshInterval = setInterval(() => {
-      fetchNotifications();
-    }, 30000);
-    
-    return () => clearInterval(refreshInterval);
-  }, [navigate]);
-  
-  // Manual refresh function
-  const handleRefresh = async () => {
+  const fetchNotifications = async () => {
     setLoading(true);
     try {
       const res = await fetch('http://localhost:5000/api/notifications', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
       const json = await res.json();
       if (res.ok) setNotifications(json.data.notifications || []);
-    } catch (err) {
-      console.error('Failed to refresh notifications:', err);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => {
+    if (!user || user.userType !== 'student') { navigate('/student/login'); return; }
+    fetchNotifications();
+    const t = setInterval(fetchNotifications, 30000);
+    return () => clearInterval(t);
+  }, [navigate]);
+
+  const markAllRead = async () => {
+    if (!notifications.some(n => !n.read)) return;
+    setLoading(true);
+    try {
+      const res = await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      if (res.ok) setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    } catch { /* noop */ }
+    finally { setLoading(false); }
   };
 
   const markReadAndOpen = async (notif) => {
     try {
       const res = await fetch(`http://localhost:5000/api/notifications/${notif.id}/open`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message || 'Failed to open notification');
-
-      // Update UI: mark as read
+      if (!res.ok) throw new Error(json.message);
       setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
-
       const payload = json.data || {};
-      
-      const titleLower = (notif.title || '').toLowerCase();
-      const messageLower = (notif.message || '').toLowerCase();
-      const isCodingTestNotification =
-        titleLower.includes('coding test') || messageLower.includes('coding test');
-      const isInterviewNotification =
-        titleLower.includes('interview') || messageLower.includes('interview');
-      
+      const titleL = (notif.title || '').toLowerCase();
+      const msgL = (notif.message || '').toLowerCase();
+      const isCoding = titleL.includes('coding test') || msgL.includes('coding test');
+      const isIv = titleL.includes('interview') || msgL.includes('interview');
       if (payload.application) {
-        if (isCodingTestNotification && payload.application.jobId) {
-          sessionStorage.setItem('openCodingTest', payload.application.jobId.toString());
-        }
-        if (isInterviewNotification && payload.application.jobId != null && payload.application.id != null) {
-          sessionStorage.setItem(
-            'openInterview',
-            JSON.stringify({
-              jobId: payload.application.jobId,
-              applicationId: payload.application.id,
-            })
-          );
-        }
-        navigate('/student/applications');
-        return;
+        if (isCoding && payload.application.jobId) sessionStorage.setItem('openCodingTest', payload.application.jobId.toString());
+        if (isIv && payload.application.jobId != null && payload.application.id != null)
+          sessionStorage.setItem('openInterview', JSON.stringify({ jobId: payload.application.jobId, applicationId: payload.application.id }));
+        navigate('/student/applications'); return;
       }
       if (payload.job) {
-        // If it's a coding test notification, navigate with a flag to open the test
-        if (isCodingTestNotification && payload.job.id) {
-          sessionStorage.setItem('openCodingTest', payload.job.id.toString());
-          navigate('/student/applications');
-        } else {
-          navigate(`/jobs/${payload.job.id}`);
-        }
+        if (isCoding && payload.job.id) { sessionStorage.setItem('openCodingTest', payload.job.id.toString()); navigate('/student/applications'); }
+        else navigate(`/jobs/${payload.job.id}`);
         return;
       }
-
-      // Fallback: if it's a coding test notification with jobId, navigate to applications
-      if (isCodingTestNotification && notif.jobId) {
-        sessionStorage.setItem('openCodingTest', notif.jobId.toString());
-        navigate('/student/applications');
-        return;
-      }
-
-      // Fallback
       navigate('/student/applications');
-    } catch (err) {
-      console.error('Failed to open notification', err);
-      // fallback behavior
-      try { setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n)); } catch(e){}
-      
-      const titleLower = (notif.title || '').toLowerCase();
-      const messageLower = (notif.message || '').toLowerCase();
-      const isCodingTestNotification =
-        titleLower.includes('coding test') || messageLower.includes('coding test');
-      const isInterviewNotification =
-        titleLower.includes('interview') || messageLower.includes('interview');
-
-      if (isCodingTestNotification && notif.jobId) {
-        sessionStorage.setItem('openCodingTest', notif.jobId.toString());
-        navigate('/student/applications');
-      } else if (isInterviewNotification && notif.jobId && notif.applicationId) {
-        sessionStorage.setItem('openInterview', JSON.stringify({
-          jobId: notif.jobId,
-          applicationId: notif.applicationId
-        }));
-        navigate('/student/applications');
-      } else if (notif.applicationId) {
-        navigate('/student/applications');
-      } else if (notif.jobId) {
-        navigate(`/jobs/${notif.jobId}`);
-      } else {
-        navigate('/student/applications');
-      }
+    } catch {
+      setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+      navigate('/student/applications');
     }
   };
 
   const viewCV = async (cvUrl) => {
-    if (!cvUrl) return;
-    const parts = cvUrl.split('/');
-    const filename = parts[parts.length - 1];
-
+    const filename = cvUrl.split('/').pop();
     try {
-      const res = await fetch(`http://localhost:5000/api/jobs/cv/${filename}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-      });
-      if (!res.ok) {
-        const json = await res.json();
-        setModal({ title: 'Failed to fetch CV', text: json.message || 'Failed to fetch CV', type: 'error' });
-        return;
-      }
+      const res = await fetch(`http://localhost:5000/api/jobs/cv/${filename}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      if (!res.ok) { setModal({ title: 'Error', text: 'Failed to fetch CV', type: 'error' }); return; }
       const blob = await res.blob();
-      const url = window.URL.createObjectURL(blob);
-      setPreview({ url, name: filename });
-    } catch (err) {
-      console.error('Failed to fetch CV for preview', err);
-      setModal({ title: 'Failed to fetch CV', text: 'Failed to fetch CV', type: 'error' });
-    }
+      setPreview({ url: window.URL.createObjectURL(blob), name: filename });
+    } catch { setModal({ title: 'Error', text: 'Failed to open CV', type: 'error' }); }
   };
 
   if (!user || user.userType !== 'student') return null;
 
+  const unreadCount = notifications.filter(n => !n.read).length;
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      <Navbar />
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold">Notifications</h1>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleRefresh}
-              disabled={loading}
-              className="px-3 py-1 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-              title="Refresh notifications"
-            >
-              Refresh
-            </button>
+    <DashboardLayout>
+      <div className="max-w-3xl mx-auto space-y-6">
 
-        {notice && (
-          <div className={`p-3 mb-4 rounded ${notice.type === 'success' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-            {notice.text}
-            <button onClick={() => setNotice(null)} className="ml-4 underline text-sm">Dismiss</button>
+        {/* Page header */}
+        <div className="page-header">
+          <div>
+            <h1 className="page-title">Notifications</h1>
+            <p className="page-subtitle">
+              {unreadCount > 0 ? `${unreadCount} unread` : 'All caught up!'}
+            </p>
           </div>
-        )}
-
-            <button
-              onClick={async () => {
-                if (!notifications || notifications.length === 0) return;
-                const hasUnread = notifications.some(n => !n.read);
-                if (!hasUnread) return;
-                try {
-                  setLoading(true);
-                  const res = await fetch('http://localhost:5000/api/notifications/mark-all-read', {
-                    method: 'POST',
-                    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-                  });
-                  const json = await res.json();
-                  if (!res.ok) throw new Error(json.message || 'Failed to mark all read');
-                  setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-                } catch (err) {
-                  console.error('Failed to mark all read', err);
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              className="px-3 py-1 text-sm rounded-md bg-gray-100 border hover:bg-gray-200"
-            >
-              Mark all read
+          <div className="flex gap-2">
+            <button onClick={markAllRead} disabled={loading || unreadCount === 0} className="btn-ghost disabled:opacity-40">
+              <CheckCheck className="w-4 h-4" /> Mark all read
+            </button>
+            <button onClick={fetchNotifications} disabled={loading} className="btn-ghost">
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
         </div>
 
-        {loading ? (
-          <div className="py-8 text-center">Loading...</div>
-        ) : (
-          <div className="space-y-3">
-            {notifications.length === 0 && (
-              <div className="p-6 bg-white rounded-lg shadow border">No notifications</div>
-            )}
-
-            {notifications.map(n => (
-              <div key={n.id} className={`p-4 rounded-lg border bg-white flex items-start justify-between ${n.read ? 'opacity-70' : ''}`}>
-                <div>
-                  <div className="font-semibold text-gray-800">{n.title}</div>
-                  <div className="text-sm text-gray-600 mt-1">{n.message}</div>
-                  {/* show decision reason when available */}
-                  { (n.decisionReason || reasons[n.id]) && (
-                    <div className={`mt-2 text-sm italic ${((n.decisionReason || reasons[n.id])||'').toLowerCase().includes('reject') ? 'text-red-700' : 'text-gray-700'}`}>Reason: {n.decisionReason || reasons[n.id]}</div>
-                  ) }
-                  { !n.decisionReason && n.applicationId && !reasons[n.id] && (
-                    <div className="mt-2">
-                      <button
-                        onClick={async () => {
-                          try {
-                            const res = await fetch(`http://localhost:5000/api/applications/${n.applicationId}`, {
-                              headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-                            });
-                            const json = await res.json();
-                            if (!res.ok) throw new Error(json.message || 'Failed to fetch application');
-                            const app = json.data.application;
-                            setReasons(prev => ({ ...prev, [n.id]: app?.decisionReason || 'No reason provided' }));
-                          } catch (err) {
-                            console.error('Failed to fetch application reason', err);
-                            setReasons(prev => ({ ...prev, [n.id]: 'Failed to load reason' }));
-                          }
-                        }}
-                        className="text-sm text-blue-600 underline"
-                      >
-                        Show reason
-                      </button>
-                    </div>
-                  ) }
-                  <div className="text-xs text-gray-400 mt-2">{new Date(n.createdAt).toLocaleString()}</div>
-                </div>
-                <div className="flex flex-col items-end ml-4">
-                  <div className="flex flex-col items-end gap-2">
-                    {n.application && (n.application.cvUrl || n.application.student?.cvUrl) && (
-                      <button
-                        onClick={() => viewCV(n.application.cvUrl || n.application.student?.cvUrl)}
-                        className="px-3 py-1 bg-red-600 text-white rounded-md text-sm"
-                      >
-                        View CV
-                      </button>
-                    )}
-                    <button
-                      onClick={() => markReadAndOpen(n)}
-                      className="px-3 py-1 bg-gray-800 text-white rounded-md text-sm"
-                    >
-                      Open
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+        {/* Loading */}
+        {loading && notifications.length === 0 && (
+          <div className="card flex items-center justify-center py-16">
+            <div className="spinner w-8 h-8" />
           </div>
         )}
-      <CvPreviewModal preview={preview} onClose={() => setPreview(null)} />
 
-      <Modal open={!!modal} title={modal?.title} message={modal?.text} type={modal?.type} onClose={() => setModal(null)} actions={[]} />
+        {/* Empty state */}
+        {!loading && notifications.length === 0 && (
+          <div className="card flex flex-col items-center justify-center py-16 text-center">
+            <Bell className="w-12 h-12 text-slate-300 mb-3" />
+            <h3 className="text-lg font-semibold text-slate-700">No notifications yet</h3>
+            <p className="text-sm text-slate-400 mt-1">You'll be notified about test invites, interview schedules, and results.</p>
+          </div>
+        )}
+
+        {/* Notification list */}
+        <div className="space-y-2">
+          {notifications.map((n, i) => (
+            <motion.div
+              key={n.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25, delay: i * 0.03 }}
+              className={`bg-white border rounded-xl px-4 py-4 flex items-start gap-3 transition-all hover:shadow-sm ${n.read ? 'border-slate-200 opacity-75' : 'border-indigo-200 ring-1 ring-indigo-100'}`}
+            >
+              {/* Unread dot */}
+              <div className="mt-1 shrink-0">
+                {n.read
+                  ? <Circle className="w-2 h-2 text-slate-300 fill-slate-300" />
+                  : <Circle className="w-2 h-2 text-indigo-500 fill-indigo-500" />
+                }
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <p className={`text-sm font-semibold ${n.read ? 'text-slate-600' : 'text-slate-900'}`}>{n.title}</p>
+                <p className="text-sm text-slate-500 mt-0.5 leading-relaxed">{n.message}</p>
+                {(n.decisionReason || reasons[n.id]) && (
+                  <p className="text-xs mt-1.5 text-slate-500 italic">
+                    <span className="font-semibold text-slate-700">Reason:</span> {n.decisionReason || reasons[n.id]}
+                  </p>
+                )}
+                {!n.decisionReason && n.applicationId && !reasons[n.id] && (
+                  <button
+                    className="text-xs text-indigo-500 hover:text-indigo-700 mt-1 underline"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`http://localhost:5000/api/applications/${n.applicationId}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+                        const json = await res.json();
+                        if (!res.ok) throw new Error(json.message);
+                        setReasons(prev => ({ ...prev, [n.id]: json.data.application?.decisionReason || 'No reason provided' }));
+                      } catch { setReasons(prev => ({ ...prev, [n.id]: 'Failed to load reason' })); }
+                    }}
+                  >Show reason</button>
+                )}
+                <p className="text-[11px] text-slate-400 mt-2">{new Date(n.createdAt).toLocaleString()}</p>
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-col gap-1.5 shrink-0">
+                {n.application && (n.application.cvUrl || n.application.student?.cvUrl) && (
+                  <button onClick={() => viewCV(n.application.cvUrl || n.application.student?.cvUrl)} className="btn btn-ghost btn-sm text-xs">
+                    CV
+                  </button>
+                )}
+                <button onClick={() => markReadAndOpen(n)} className="btn btn-primary btn-sm text-xs">
+                  <ExternalLink className="w-3 h-3" /> Open
+                </button>
+              </div>
+            </motion.div>
+          ))}
+        </div>
       </div>
-    </div>
+
+      <CvPreviewModal preview={preview} onClose={() => setPreview(null)} />
+      <Modal open={!!modal} title={modal?.title} message={modal?.text} type={modal?.type} onClose={() => setModal(null)} actions={[]} />
+    </DashboardLayout>
   );
 };
 

@@ -2,25 +2,34 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
-  GraduationCap,
-  Briefcase,
-  FileText,
-  Bell,
-  TrendingUp,
+  FileText, Briefcase, TrendingUp, Bell, ArrowRight, Zap, BookOpen, Star
 } from 'lucide-react';
-import Navbar from '../../components/Navbar';
+import DashboardLayout from '../../components/DashboardLayout';
 import { getCurrentUser } from '../../utils/auth';
 import JobList from '../../components/JobList';
 
+/* ─── Stat card definition ───────────────────────────────────── */
+const STAT_DEFS = [
+  { key: 'applicationsSent', label: 'Applications Sent', icon: FileText,   bg: 'bg-indigo-50', fg: 'text-indigo-600' },
+  { key: 'interviews',       label: 'Interviews',         icon: Briefcase, bg: 'bg-teal-50',   fg: 'text-teal-600'   },
+  { key: 'offers',           label: 'Offers Received',    icon: TrendingUp,bg: 'bg-emerald-50', fg: 'text-emerald-600'},
+  { key: 'notifications',    label: 'Notifications',      icon: Bell,      bg: 'bg-amber-50',  fg: 'text-amber-600'  },
+];
+
+/* ─── Fade-up animation variants ────────────────────────────── */
+const fadeUp = (delay = 0) => ({
+  initial: { opacity: 0, y: 16 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.35, delay, ease: 'easeOut' },
+});
+
+/* ═══════════════════════════════════════════════════════════════ */
 const StudentDashboard = () => {
   const navigate = useNavigate();
   const user = getCurrentUser();
-  const [stats, setStats] = useState([
-    { label: 'Applications Sent', value: '0', icon: FileText, color: 'from-red-500 to-red-600' },
-    { label: 'Interviews', value: '0', icon: Briefcase, color: 'from-red-600 to-red-700' },
-    { label: 'Offers', value: '0', icon: TrendingUp, color: 'from-green-500 to-green-600' },
-    { label: 'Notifications', value: '0', icon: Bell, color: 'from-orange-500 to-orange-600' }
-  ]);
+  const [statData, setStatData] = useState({
+    applicationsSent: '–', interviews: '–', offers: '–', notifications: '–',
+  });
 
   useEffect(() => {
     const currentUser = getCurrentUser();
@@ -29,133 +38,144 @@ const StudentDashboard = () => {
       return;
     }
 
-    const fetchStats = async () => {
+    (async () => {
       try {
-        const response = await fetch(`http://localhost:5000/api/dashboard/student/stats/${currentUser.id}`, {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('token')}`,
-          },
+        const res = await fetch(
+          `http://localhost:5000/api/dashboard/student/stats/${currentUser.id}`,
+          { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
+        );
+        if (!res.ok) return;
+        const { data } = await res.json();
+        setStatData({
+          applicationsSent: data.applicationsSent ?? 0,
+          interviews:       data.interviews       ?? 0,
+          offers:           data.offers           ?? 0,
+          notifications:    data.notifications    ?? 0,
         });
-
-        if (!response.ok) throw new Error('Failed to fetch stats');
-
-        const data = await response.json();
-
-        setStats([
-          { label: 'Applications Sent', value: data.data.applicationsSent.toString(), icon: FileText, color: 'from-red-500 to-red-600' },
-          { label: 'Interviews', value: data.data.interviews.toString(), icon: Briefcase, color: 'from-red-600 to-red-700' },
-          { label: 'Offers', value: data.data.offers.toString(), icon: TrendingUp, color: 'from-green-500 to-green-600' },
-          { label: 'Notifications', value: data.data.notifications.toString(), icon: Bell, color: 'from-orange-500 to-orange-600' }
-        ]);
-      } catch (error) {
-        console.error('Failed to fetch student stats:', error);
-      }
-    };
-
-    fetchStats();
+      } catch { /* silently ignore */ }
+    })();
   }, [navigate]);
 
-  if (!user || user.userType !== 'student') {
-    return null;
-  }
+  if (!user || user.userType !== 'student') return null;
+
+  /* ── Quick actions ────────────────────────────────────────── */
+  const quickActions = [
+    {
+      label: 'Browse Jobs',
+      desc: 'Find your next opportunity',
+      icon: BookOpen,
+      color: 'indigo',
+      onClick: () => document.getElementById('jobs-section')?.scrollIntoView({ behavior: 'smooth' }),
+    },
+    {
+      label: 'My Applications',
+      desc: 'Track your application pipeline',
+      icon: Briefcase,
+      color: 'teal',
+      onClick: () => navigate('/student/applications'),
+    },
+    {
+      label: 'Notifications',
+      desc: 'See latest updates from companies',
+      icon: Bell,
+      color: 'amber',
+      onClick: () => navigate('/student/notifications'),
+    },
+  ];
+
+  const colorMap = {
+    indigo: { ring: 'ring-indigo-200', text: 'text-indigo-600', bg: 'bg-indigo-50', hover: 'hover:ring-indigo-400' },
+    teal:   { ring: 'ring-teal-200',   text: 'text-teal-600',   bg: 'bg-teal-50',   hover: 'hover:ring-teal-400'   },
+    amber:  { ring: 'ring-amber-200',  text: 'text-amber-600',  bg: 'bg-amber-50',  hover: 'hover:ring-amber-400'  },
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
-      <Navbar />
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="mb-8"
-        >
-          <div className="flex items-center space-x-3 mb-4">
-            <div className="w-12 h-12 bg-gradient-to-br from-red-500 to-red-700 rounded-full flex items-center justify-center">
-              <GraduationCap className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold text-gray-800">
-                Welcome back, {user.name || user.username}!
-              </h1>
-              <p className="text-gray-600">Student Dashboard</p>
-            </div>
+    <DashboardLayout>
+      <div className="max-w-7xl mx-auto space-y-8">
+
+        {/* ── Page header ─────────────────────────────────────── */}
+        <motion.div {...fadeUp(0)} className="page-header">
+          <div>
+            <h1 className="page-title">
+              Good {getGreeting()}, {user.name?.split(' ')[0] || user.username}! 👋
+            </h1>
+            <p className="page-subtitle">Here's your placement journey at a glance.</p>
+          </div>
+          <div className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg shadow-sm text-sm font-medium">
+            <Zap className="w-4 h-4" />
+            <span>Student Portal</span>
           </div>
         </motion.div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          {stats.map((stat, index) => (
-            <motion.div
-              key={stat.label}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
-              whileHover={{ scale: 1.05 }}
-              className="bg-white rounded-xl shadow-lg p-6 border border-gray-200"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <div className={`w-12 h-12 bg-gradient-to-br ${stat.color} rounded-lg flex items-center justify-center`}>
-                  <stat.icon className="w-6 h-6 text-white" />
+        {/* ── KPI Stats ───────────────────────────────────────── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {STAT_DEFS.map((def, i) => (
+            <motion.div key={def.key} {...fadeUp(i * 0.07)} className="stat-card">
+              <div className="flex items-center justify-between">
+                <div className={`stat-icon ${def.bg}`}>
+                  <def.icon className={`w-5 h-5 ${def.fg}`} />
                 </div>
+                <Star className="w-3.5 h-3.5 text-slate-200" />
               </div>
-              <h3 className="text-3xl font-bold text-gray-800 mb-1">{stat.value}</h3>
-              <p className="text-gray-600 text-sm">{stat.label}</p>
+              <div>
+                <p className="stat-value">{statData[def.key]}</p>
+                <p className="stat-label mt-0.5">{def.label}</p>
+              </div>
             </motion.div>
           ))}
         </div>
 
-        {/* Quick Actions */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-          className="bg-white rounded-xl shadow-lg p-8 border border-gray-200"
-        >
-          <h2 className="text-2xl font-bold text-gray-800 mb-6">Quick Actions</h2>
-          <div className="grid md:grid-cols-3 gap-4">
-            <button
-              onClick={() => {
-                const el = document.getElementById('browse-jobs');
-                if (el) {
-                  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                } else {
-                  navigate('/');
-                }
-              }}
-              className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-red-500 hover:bg-red-50 transition-all text-left"
-            >
-              <FileText className="w-8 h-8 text-gray-400 mb-2" />
-              <h3 className="font-semibold text-gray-800">Browse Jobs</h3>
-              <p className="text-sm text-gray-600">Explore available opportunities</p>
-            </button>
-            <button onClick={() => navigate('/student/applications')} className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-red-600 hover:bg-red-50 transition-all text-left">
-              <Briefcase className="w-8 h-8 text-gray-400 mb-2" />
-              <h3 className="font-semibold text-gray-800">My Applications</h3>
-              <p className="text-sm text-gray-600">View and track applications</p>
-            </button>
-            <button onClick={() => navigate('/student/notifications')} className="p-4 border-2 border-dashed border-gray-300 rounded-lg hover:border-green-500 hover:bg-green-50 transition-all text-left">
-              <FileText className="w-8 h-8 text-gray-400 mb-2" />
-              <h3 className="font-semibold text-gray-800">Notifications</h3>
-              <p className="text-sm text-gray-600">View recent messages & updates</p>
-            </button>
+        {/* ── Quick Actions ────────────────────────────────────── */}
+        <motion.div {...fadeUp(0.28)}>
+          <h2 className="section-title">Quick Actions</h2>
+          <div className="grid sm:grid-cols-3 gap-4">
+            {quickActions.map((action) => {
+              const c = colorMap[action.color];
+              return (
+                <button
+                  key={action.label}
+                  onClick={action.onClick}
+                  className={`text-left p-5 bg-white rounded-xl ring-1 ${c.ring} ${c.hover} hover:shadow-md transition-all duration-200 group`}
+                >
+                  <div className={`w-10 h-10 ${c.bg} rounded-lg flex items-center justify-center mb-4 group-hover:scale-110 transition-transform`}>
+                    <action.icon className={`w-5 h-5 ${c.text}`} />
+                  </div>
+                  <p className="font-semibold text-slate-900 mb-0.5">{action.label}</p>
+                  <p className="text-xs text-slate-500">{action.desc}</p>
+                  <div className={`flex items-center gap-1 mt-3 text-xs font-medium ${c.text} opacity-0 group-hover:opacity-100 transition-opacity`}>
+                    <span>Go there</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </motion.div>
 
-        {/* Recent Activity */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.6 }}
-          id="browse-jobs"
-          className="bg-white rounded-xl shadow-lg p-8 border border-gray-200 mt-6"
-        >
-          <h2 className="text-2xl font-bold text-gray-800 mb-6">Browse Jobs</h2>
-          <JobList />
+        {/* ── Available Jobs ───────────────────────────────────── */}
+        <motion.div {...fadeUp(0.35)} id="jobs-section">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="section-title mb-0">Available Jobs</h2>
+            <span className="text-xs text-slate-400 font-medium">Updated in real-time</span>
+          </div>
+          <div className="card p-0 overflow-hidden">
+            <div className="p-6">
+              <JobList />
+            </div>
+          </div>
         </motion.div>
+
       </div>
-    </div>
+    </DashboardLayout>
   );
 };
 
-export default StudentDashboard;
+/* ─── Utility ────────────────────────────────────────────────── */
+function getGreeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'morning';
+  if (h < 18) return 'afternoon';
+  return 'evening';
+}
 
+export default StudentDashboard;
