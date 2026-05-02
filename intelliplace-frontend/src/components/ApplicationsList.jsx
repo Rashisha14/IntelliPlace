@@ -138,7 +138,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     const lower = cvUrl.toLowerCase();
     const isPDF = lower.includes('.pdf') || lower.startsWith('https://') || lower.startsWith('http://');
 
-    
+
     if (isPDF) {
       setPreviewCV({
         url: cvUrl,
@@ -165,22 +165,22 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
         'Email': app.student?.email || 'N/A',
         'Phone': app.student?.phone || 'N/A',
         'CGPA': app.cgpa || 'N/A',
-       // 'CGPA (Profile)': app.student?.cgpa || 'N/A',
-         'Backlog (Application)': app.backlog !== null ? app.backlog : 'N/A',
-         'Backlog (Profile)': app.student?.backlog != null ? app.student.backlog : 'N/A',
-         //'Status': app.status || 'N/A',
-         'Applied Date': new Date(app.createdAt).toLocaleString(),
-         'CV Available': app.cvUrl ? 'Yes' : 'No',
-       };
-     });
+        // 'CGPA (Profile)': app.student?.cgpa || 'N/A',
+        'Backlog (Application)': app.backlog !== null ? app.backlog : 'N/A',
+        'Backlog (Profile)': app.student?.backlog != null ? app.student.backlog : 'N/A',
+        //'Status': app.status || 'N/A',
+        'Applied Date': new Date(app.createdAt).toLocaleString(),
+        'CV Available': app.cvUrl ? 'Yes' : 'No',
+      };
+    });
 
-     const worksheet = XLSX.utils.json_to_sheet(exportData);
-     const workbook = XLSX.utils.book_new();
-     XLSX.utils.book_append_sheet(workbook, worksheet, 'Applications');
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Applications');
 
-     const fileName = `Applications_${new Date().toISOString().split('T')[0]}.xlsx`;
-     XLSX.writeFile(workbook, fileName);
-   };
+    const fileName = `Applications_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+  };
 
   const handleCloseApplication = async () => {
     // Show confirmation dialog
@@ -212,7 +212,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
 
     setCloseLoading(true);
     setActionMessage(null);
-    
+
     // Show loading state
     Swal.fire({
       title: 'Closing...',
@@ -222,7 +222,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
         Swal.showLoading();
       }
     });
-    
+
     try {
       const res = await fetch(
         `${API_BASE_URL}/jobs/${jobId}/close`,
@@ -233,12 +233,12 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
           },
         }
       );
-      
+
       const json = await res.json();
       if (res.ok) {
         setJobStatus('CLOSED');
         await fetchApplications();
-        
+
         Swal.fire({
           icon: 'success',
           title: 'Applications Closed',
@@ -299,7 +299,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
 
     setShortlistAllLoading(true);
     setActionMessage(null);
-    
+
     // Show loading state
     Swal.fire({
       title: 'Shortlisting...',
@@ -318,12 +318,12 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
         },
       });
       const json = await res.json();
-      
+
       if (res.ok) {
         await fetchApplications();
         setJobStatus('CLOSED');
         setConfirmShortlistAll(false);
-        
+
         Swal.fire({
           icon: 'success',
           title: 'Shortlisting Complete!',
@@ -366,13 +366,13 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     setAtsLoading(true);
     setActionMessage(null);
     setAtsProgress('Initializing AI shortlisting...');
-    
+
     console.log('🚀 Starting ATS shortlisting for', applications.length, 'applications');
-    
+
     try {
       const startTime = Date.now();
       setAtsProgress(`Connecting to AI service...`);
-      
+
       const res = await fetch(
         `${API_BASE_URL}/jobs/${jobId}/shortlist-ats`,
         {
@@ -383,22 +383,22 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
           },
         }
       );
-      
+
       const json = await res.json();
       const elapsedTime = ((Date.now() - startTime) / 1000).toFixed(1);
-      
+
       if (res.ok) {
         console.log('✅ ATS shortlisting completed:', json.data);
         setAtsProgress(null);
-        
+
         const { processed, shortlisted, review, rejected } = json.data || {};
         let message = json.message || 'AI shortlisting complete';
-        
+
         if (processed === 0 && review > 0) {
           message += '\n⚠️ No applications were processed by AI. Check backend console for details.';
           message += '\nCommon issues: CV not available, CV download failed, or CV format not supported.';
         }
-        
+
         setActionMessage({
           type: processed > 0 ? 'success' : 'error',
           text: `${message} (Completed in ${elapsedTime}s)`,
@@ -416,12 +416,57 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     } catch (err) {
       console.error('❌ Error during ATS shortlisting:', err);
       setAtsProgress(null);
-      setActionMessage({ 
-        type: 'error', 
-        text: `Connection error: ${err.message}. Make sure the ATS service is running on http://localhost:8000` 
+      setActionMessage({
+        type: 'error',
+        text: `Connection error: ${err.message}. Make sure the ATS service is running on http://localhost:8000`
       });
     } finally {
       setAtsLoading(false);
+    }
+  };
+
+  const handleManualShortlist = async (app) => {
+    const status = String(app?.status || '').toUpperCase();
+    if (status !== 'REVIEW' && status !== 'REVIEWING') {
+      return;
+    }
+
+    const result = await Swal.fire({
+      title: 'Manually shortlist this candidate?',
+      text: 'This will move the candidate from REVIEW to SHORTLISTED.',
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, Shortlist',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#2563eb',
+      cancelButtonColor: '#6b7280',
+      reverseButtons: true,
+    });
+    if (!result.isConfirmed) return;
+
+    setActionLoading(true);
+    setActionMessage(null);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/applications/${app.id}/manual-shortlist`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem('token')}`,
+          },
+        }
+      );
+      const json = await res.json();
+      if (res.ok) {
+        setActionMessage({ type: 'success', text: json.message || 'Candidate shortlisted successfully' });
+        await fetchApplications();
+      } else {
+        setActionMessage({ type: 'error', text: json.message || 'Failed to shortlist candidate' });
+      }
+    } catch (err) {
+      setActionMessage({ type: 'error', text: err.message || 'Failed to shortlist candidate' });
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -452,8 +497,8 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
       case 'CODING_FAILED': return '#EF4444'; // red-500 (medium red)
       case 'INTERVIEW FAIL':
       case 'FAILED INTERVIEW': return '#DC2626'; // red-600
-      case 'SELECTED': 
-      case 'HIRED': 
+      case 'SELECTED':
+      case 'HIRED':
       case 'OFFERED': return '#16A34A'; // green-600
       case 'REJECTED': return '#DC2626'; // red-600
       default: return '#9CA3AF'; // gray-400
@@ -480,8 +525,8 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
       case 'CODING_FAILED': return 'bg-red-100 text-red-700 border border-red-300';
       case 'INTERVIEW FAIL':
       case 'FAILED INTERVIEW': return 'bg-red-100 text-red-800 border border-red-400';
-      case 'SELECTED': 
-      case 'HIRED': 
+      case 'SELECTED':
+      case 'HIRED':
       case 'OFFERED': return 'bg-green-100 text-green-800 border border-green-200';
       case 'REJECTED': return 'bg-red-100 text-red-800 border border-red-400';
       default: return 'bg-gray-100 text-gray-800 border border-gray-200';
@@ -511,7 +556,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
   };
 
   const modalContent = (
-    <div 
+    <div
       className="fixed inset-0 bg-black/50 flex items-center justify-center p-4"
       style={{ zIndex: 99999 }}
       onClick={(e) => e.target === e.currentTarget && onClose()}
@@ -535,11 +580,14 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                     <button
                       onClick={handleAtsShortlist}
                       disabled={atsLoading}
-                      className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="shortlist-resume-btn ml-2"
                       title="Shortlist using AI Resume Analysis"
                     >
-                      <Sparkles className="w-4 h-4" />
-                      {atsLoading ? (atsProgress || 'Processing...') : 'Shortlist using Resume'}
+                      <span className="dots_border"></span>
+                      <Sparkles className="sparkle w-4 h-4" />
+                      <span className="text_button">
+                        {atsLoading ? (atsProgress || 'Processing...') : 'ATS Shortlist'}
+                      </span>
                     </button>
                   )}
                   {jobStatus === 'OPEN' && (
@@ -554,7 +602,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                     </button>
                   )}
                   {jobStatus === 'OPEN' && (
-                <button
+                    <button
                       onClick={handleCloseApplication}
                       disabled={closeLoading}
                       className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
@@ -562,7 +610,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                     >
                       <XCircle className="w-4 h-4" />
                       {closeLoading ? 'Closing...' : 'Close Applications'}
-                </button>
+                    </button>
                   )}
                 </>
               )}
@@ -618,8 +666,8 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                   </button>
                 </div>
               )}
-              <button 
-                onClick={onClose} 
+              <button
+                onClick={onClose}
                 className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg text-2xl font-bold leading-none"
                 aria-label="Close"
               >
@@ -641,11 +689,10 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
           )}
           {actionMessage && (
             <div
-              className={`p-3 mb-4 rounded ${
-                actionMessage.type === 'success'
-                  ? 'bg-green-50 text-green-800'
-                  : 'bg-red-50 text-red-800'
-              }`}
+              className={`p-3 mb-4 rounded ${actionMessage.type === 'success'
+                ? 'bg-green-50 text-green-800'
+                : 'bg-red-50 text-red-800'
+                }`}
             >
               {actionMessage.text}
             </div>
@@ -694,136 +741,136 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
               </div>
 
               <div className="space-y-2">
-              {applications.map((app, index) => {
-                const isExpanded = expandedApp === app.id;
-                const displayCgpa = app.cgpa || app.student?.cgpa || 'N/A';
-                const displayBacklog = app.backlog !== null ? app.backlog : (app.student?.backlog != null ? app.student.backlog : 'N/A');
-                
-                return (
-                  <div key={app.id} className="border rounded-lg overflow-hidden hover:shadow-md transition-shadow">
-                    <div
-                      onClick={() => setExpandedApp(isExpanded ? null : app.id)}
-                      className="bg-white p-4 cursor-pointer hover:bg-gray-50 transition-colors"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
-                          <span className="text-red-600 font-semibold text-lg">{index + 1}</span>
-                        </div>
-                        <div className="flex-1 grid grid-cols-2 md:grid-cols-5 gap-4 items-center">
-                          <div className="flex items-center gap-2">
-                            <User className="w-4 h-4 text-gray-400" />
+                {applications.map((app, index) => {
+                  const isExpanded = expandedApp === app.id;
+                  const displayCgpa = app.cgpa || app.student?.cgpa || 'N/A';
+                  const displayBacklog = app.backlog !== null ? app.backlog : (app.student?.backlog != null ? app.student.backlog : 'N/A');
+
+                  return (
+                    <div key={app.id} className="border rounded-lg overflow-hidden hover:shadow-md transition-shadow">
+                      <div
+                        onClick={() => setExpandedApp(isExpanded ? null : app.id)}
+                        className="bg-white p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-4">
+                          <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                            <span className="text-red-600 font-semibold text-lg">{index + 1}</span>
+                          </div>
+                          <div className="flex-1 grid grid-cols-2 md:grid-cols-5 gap-4 items-center">
+                            <div className="flex items-center gap-2">
+                              <User className="w-4 h-4 text-gray-400" />
+                              <div>
+                                <p className="font-semibold text-gray-800">{app.student?.name || 'Unknown'}</p>
+                                {app.student?.rollNumber && (
+                                  <p className="text-xs text-gray-500">Roll: {app.student.rollNumber}</p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="hidden md:block">
+                              <p className="text-xs text-gray-500">Email</p>
+                              <p className="text-sm text-gray-700 truncate">{app.student?.email || '—'}</p>
+                            </div>
                             <div>
-                              <p className="font-semibold text-gray-800">{app.student?.name || 'Unknown'}</p>
-                              {app.student?.rollNumber && (
-                                <p className="text-xs text-gray-500">Roll: {app.student.rollNumber}</p>
-                              )}
+                              <p className="text-xs text-gray-500">CGPA</p>
+                              <p className="text-sm font-medium text-gray-800">{displayCgpa}</p>
                             </div>
-                          </div>
-                          <div className="hidden md:block">
-                            <p className="text-xs text-gray-500">Email</p>
-                            <p className="text-sm text-gray-700 truncate">{app.student?.email || '—'}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-gray-500">CGPA</p>
-                            <p className="text-sm font-medium text-gray-800">{displayCgpa}</p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-gray-500">Backlog</p>
-                            <p className="text-sm font-medium text-gray-800">{displayBacklog}</p>
-                          </div>
-                          <div className="flex items-center justify-between">
-                            <span
-                              className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusBadgeClasses(app.status)}`}
-                            >
-                              {app.status}
-                            </span>
-                            {isExpanded ? (
-                              <ChevronUp className="w-5 h-5 text-gray-400" />
-                            ) : (
-                              <ChevronDown className="w-5 h-5 text-gray-400" />
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {isExpanded && (
-                      <div className="border-t bg-gray-50 p-6">
-                        <div className="grid md:grid-cols-2 gap-6">
-                    <div>
-                            <h4 className="text-sm font-semibold text-gray-700 mb-3">Contact Information</h4>
-                            <div className="space-y-2">
-                        <p className="text-sm text-gray-600 flex items-center gap-2">
-                          <Mail className="w-4 h-4" />
-                          <a
-                            href={`mailto:${app.student?.email || ''}`}
-                            className="hover:text-red-600"
-                          >
-                            {app.student?.email || '—'}
-                          </a>
-                        </p>
-                        {app.student?.phone && (
-                          <p className="text-sm text-gray-600 flex items-center gap-2">
-                            <Phone className="w-4 h-4" />
-                            <a
-                              href={`tel:${app.student?.phone}`}
-                              className="hover:text-red-600"
-                            >
-                              {app.student?.phone}
-                            </a>
-                          </p>
-                        )}
-                              {app.student?.rollNumber && (
-                                <p className="text-sm text-gray-600">
-                                  <span className="font-medium">Roll Number:</span> {app.student.rollNumber}
-                                </p>
-                              )}
+                            <div>
+                              <p className="text-xs text-gray-500">Backlog</p>
+                              <p className="text-sm font-medium text-gray-800">{displayBacklog}</p>
                             </div>
-                      </div>
-
-                          <div>
-                            <h4 className="text-sm font-semibold text-gray-700 mb-3">Application Details</h4>
-                            <div className="space-y-2">
-                        <div>
-                                <p className="text-xs text-gray-500">CGPA</p>
-                          <div className="flex items-baseline gap-2">
-                                  <p className="text-sm font-medium text-gray-800">
-                                    {displayCgpa}
-                            </p>
-                            {app.cgpa !== app.student?.cgpa && app.student?.cgpa && (
-                              <span className="text-xs text-gray-500">
-                                (Profile: {app.student.cgpa})
+                            <div className="flex items-center justify-between">
+                              <span
+                                className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusBadgeClasses(app.status)}`}
+                              >
+                                {app.status}
                               </span>
-                            )}
-                          </div>
-                        </div>
-                        <div>
-                                <p className="text-xs text-gray-500">Backlog</p>
-                          <div className="flex items-baseline gap-2">
-                                  <p className="text-sm font-medium text-gray-800">
-                                    {displayBacklog}
-                            </p>
-                            {app.backlog !== app.student?.backlog &&
-                              app.student?.backlog != null && (
-                                <span className="text-xs text-gray-500">
-                                  (Profile: {app.student.backlog})
-                                </span>
+                              {isExpanded ? (
+                                <ChevronUp className="w-5 h-5 text-gray-400" />
+                              ) : (
+                                <ChevronDown className="w-5 h-5 text-gray-400" />
                               )}
+                            </div>
                           </div>
                         </div>
-                              {app.skills && (
-                                <div>
-                                  <p className="text-xs text-gray-500">Skills</p>
-                                  <p className="text-sm text-gray-800">{app.skills}</p>
                       </div>
-                              )}
+
+                      {isExpanded && (
+                        <div className="border-t bg-gray-50 p-6">
+                          <div className="grid md:grid-cols-2 gap-6">
                             <div>
-                                <p className="text-xs text-gray-500">Applied On</p>
-                                <p className="text-sm text-gray-800">
-                                  {new Date(app.createdAt).toLocaleString()}
-                              </p>
+                              <h4 className="text-sm font-semibold text-gray-700 mb-3">Contact Information</h4>
+                              <div className="space-y-2">
+                                <p className="text-sm text-gray-600 flex items-center gap-2">
+                                  <Mail className="w-4 h-4" />
+                                  <a
+                                    href={`mailto:${app.student?.email || ''}`}
+                                    className="hover:text-red-600"
+                                  >
+                                    {app.student?.email || '—'}
+                                  </a>
+                                </p>
+                                {app.student?.phone && (
+                                  <p className="text-sm text-gray-600 flex items-center gap-2">
+                                    <Phone className="w-4 h-4" />
+                                    <a
+                                      href={`tel:${app.student?.phone}`}
+                                      className="hover:text-red-600"
+                                    >
+                                      {app.student?.phone}
+                                    </a>
+                                  </p>
+                                )}
+                                {app.student?.rollNumber && (
+                                  <p className="text-sm text-gray-600">
+                                    <span className="font-medium">Roll Number:</span> {app.student.rollNumber}
+                                  </p>
+                                )}
+                              </div>
                             </div>
-                            </div>
+
+                            <div>
+                              <h4 className="text-sm font-semibold text-gray-700 mb-3">Application Details</h4>
+                              <div className="space-y-2">
+                                <div>
+                                  <p className="text-xs text-gray-500">CGPA</p>
+                                  <div className="flex items-baseline gap-2">
+                                    <p className="text-sm font-medium text-gray-800">
+                                      {displayCgpa}
+                                    </p>
+                                    {app.cgpa !== app.student?.cgpa && app.student?.cgpa && (
+                                      <span className="text-xs text-gray-500">
+                                        (Profile: {app.student.cgpa})
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-gray-500">Backlog</p>
+                                  <div className="flex items-baseline gap-2">
+                                    <p className="text-sm font-medium text-gray-800">
+                                      {displayBacklog}
+                                    </p>
+                                    {app.backlog !== app.student?.backlog &&
+                                      app.student?.backlog != null && (
+                                        <span className="text-xs text-gray-500">
+                                          (Profile: {app.student.backlog})
+                                        </span>
+                                      )}
+                                  </div>
+                                </div>
+                                {app.skills && (
+                                  <div>
+                                    <p className="text-xs text-gray-500">Skills</p>
+                                    <p className="text-sm text-gray-800">{app.skills}</p>
+                                  </div>
+                                )}
+                                <div>
+                                  <p className="text-xs text-gray-500">Applied On</p>
+                                  <p className="text-sm text-gray-800">
+                                    {new Date(app.createdAt).toLocaleString()}
+                                  </p>
+                                </div>
+                              </div>
                             </div>
                           </div>
 
@@ -839,10 +886,9 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                               <div className="border rounded-lg p-4 bg-white shadow-sm mt-3">
                                 <div className="flex items-start justify-between gap-2 mb-2">
                                   <span className="font-semibold text-gray-800">Overall Score</span>
-                                  <span className={`text-xs font-bold px-2 py-1 rounded shrink-0 ${
-                                    aptitudeSubmissions[app.id].submission.status === 'PASSED' ? 'bg-green-100 text-green-800' : 
+                                  <span className={`text-xs font-bold px-2 py-1 rounded shrink-0 ${aptitudeSubmissions[app.id].submission.status === 'PASSED' ? 'bg-green-100 text-green-800' :
                                     aptitudeSubmissions[app.id].submission.status === 'FAILED' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'
-                                  }`}>
+                                    }`}>
                                     {aptitudeSubmissions[app.id].submission.status || 'SUBMITTED'}
                                   </span>
                                 </div>
@@ -869,131 +915,143 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
 
                           {/* Coding Test Submissions - for applicants who took the test */}
                           <div className="mt-4 pt-4 border-t">
-                              <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
-                                <Code className="w-4 h-4" />
-                                Coding Test Submissions
-                              </h4>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); fetchCodingSubmissions(app); }}
-                                disabled={codingSubmissions[app.id]?.loading}
-                                className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
-                              >
-                                {codingSubmissions[app.id]?.loading ? 'Loading...' : 'View Submitted Code'}
-                              </button>
-                              {codingSubmissions[app.id]?.submissions && codingSubmissions[app.id].submissions.length > 0 && (
-                                <div className="mt-3 space-y-3">
-                                  {codingSubmissions[app.id].submissions.map((sub) => {
-                                    const passedCount = sub.testCaseResults?.filter(r => r.passed).length ?? 0;
-                                    const totalCount = sub.testCaseResults?.length ?? 0;
-                                    return (
-                                      <div key={sub.id} className="border rounded-lg p-4 bg-white shadow-sm">
-                                        <div className="flex items-start justify-between gap-2 mb-2">
-                                          <span className="font-semibold text-gray-800">{sub.questionTitle}</span>
-                                          <span className={`text-xs px-2 py-1 rounded shrink-0 ${
-                                            sub.status === 'ACCEPTED' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
-                                          }`}>
-                                            {totalCount > 0 ? `${passedCount}/${totalCount} passed` : sub.status}
-                                          </span>
-                                        </div>
-                                        <div className="flex flex-wrap gap-3 text-xs text-gray-600 mb-2">
-                                          <span>Language: <strong>{sub.languageName || 'N/A'}</strong></span>
-                                          {sub.score != null && <span>Score: <strong>{sub.score?.toFixed(1)}{sub.questionPoints != null ? `/${sub.questionPoints}` : ''} pts</strong></span>}
-                                          {sub.executionTime != null && <span>Time: <strong>{sub.executionTime?.toFixed(2)}s</strong></span>}
-                                          {sub.memoryUsed != null && <span>Memory: <strong>{(sub.memoryUsed / 1024).toFixed(1)} KB</strong></span>}
-                                          <span>Submitted: <strong>{new Date(sub.createdAt).toLocaleString()}</strong></span>
-                                        </div>
-                                        {sub.errorMessage && (
-                                          <div className="mb-2 p-2 bg-red-50 text-red-700 text-xs rounded">
-                                            Error: {sub.errorMessage}
-                                          </div>
-                                        )}
-                                        {sub.testCaseResults && sub.testCaseResults.length > 0 && (
-                                          <div className="mb-2">
-                                            <p className="text-xs font-medium text-gray-600 mb-1">Test case results:</p>
-                                            <div className="space-y-1 max-h-24 overflow-y-auto">
-                                              {sub.testCaseResults.map((tc, i) => (
-                                                <div key={i} className={`text-xs p-1.5 rounded flex items-center gap-2 ${tc.passed ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
-                                                  <span className="font-mono">#{tc.testCase}</span>
-                                                  <span>{tc.passed ? '✓ Passed' : `✗ ${tc.status || 'Failed'}`}</span>
-                                                  {!tc.passed && tc.expected != null && <span className="truncate">Expected: {String(tc.expected).slice(0, 30)}...</span>}
-                                                  {!tc.passed && tc.actual != null && <span className="truncate">Got: {String(tc.actual).slice(0, 30)}...</span>}
-                                                </div>
-                                              ))}
-                                            </div>
-                                          </div>
-                                        )}
-                                        <pre className="text-xs font-mono bg-gray-50 p-2 rounded max-h-28 overflow-y-auto whitespace-pre-wrap break-words">{sub.code?.slice(0, 400)}{sub.code?.length > 400 ? '...' : ''}</pre>
-                                        <button
-                                          onClick={(e) => { e.stopPropagation(); setViewingCodeFor({ appId: app.id, submission: sub }); }}
-                                          className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium"
-                                        >
-                                          View full code & details
-                                        </button>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                              {codingSubmissions[app.id]?.submissions && codingSubmissions[app.id].submissions.length === 0 && !codingSubmissions[app.id]?.loading && (
-                                <p className="text-sm text-gray-500 mt-2">
-                                  {codingSubmissions[app.id]?.error || 'No coding submissions yet'}
-                                </p>
-                              )}
-                            </div>
-
-                        <div className="mt-4 pt-4 border-t flex items-center justify-between">
-                          <div className="flex items-center gap-3">
+                            <h4 className="text-sm font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                              <Code className="w-4 h-4" />
+                              Coding Test Submissions
+                            </h4>
                             <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                window.location.href = `mailto:${app.student.email}`;
-                              }}
-                              className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50"
+                              onClick={(e) => { e.stopPropagation(); fetchCodingSubmissions(app); }}
+                              disabled={codingSubmissions[app.id]?.loading}
+                              className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50"
                             >
-                              <Mail className="w-4 h-4" />
-                              Email
+                              {codingSubmissions[app.id]?.loading ? 'Loading...' : 'View Submitted Code'}
                             </button>
-                            {app.student.phone && (
+                            {codingSubmissions[app.id]?.submissions && codingSubmissions[app.id].submissions.length > 0 && (
+                              <div className="mt-3 space-y-3">
+                                {codingSubmissions[app.id].submissions.map((sub) => {
+                                  const passedCount = sub.testCaseResults?.filter(r => r.passed).length ?? 0;
+                                  const totalCount = sub.testCaseResults?.length ?? 0;
+                                  return (
+                                    <div key={sub.id} className="border rounded-lg p-4 bg-white shadow-sm">
+                                      <div className="flex items-start justify-between gap-2 mb-2">
+                                        <span className="font-semibold text-gray-800">{sub.questionTitle}</span>
+                                        <span className={`text-xs px-2 py-1 rounded shrink-0 ${sub.status === 'ACCEPTED' ? 'bg-green-100 text-green-800' : 'bg-amber-100 text-amber-800'
+                                          }`}>
+                                          {totalCount > 0 ? `${passedCount}/${totalCount} passed` : sub.status}
+                                        </span>
+                                      </div>
+                                      <div className="flex flex-wrap gap-3 text-xs text-gray-600 mb-2">
+                                        <span>Language: <strong>{sub.languageName || 'N/A'}</strong></span>
+                                        {sub.score != null && <span>Score: <strong>{sub.score?.toFixed(1)}{sub.questionPoints != null ? `/${sub.questionPoints}` : ''} pts</strong></span>}
+                                        {sub.executionTime != null && <span>Time: <strong>{sub.executionTime?.toFixed(2)}s</strong></span>}
+                                        {sub.memoryUsed != null && <span>Memory: <strong>{(sub.memoryUsed / 1024).toFixed(1)} KB</strong></span>}
+                                        <span>Submitted: <strong>{new Date(sub.createdAt).toLocaleString()}</strong></span>
+                                      </div>
+                                      {sub.errorMessage && (
+                                        <div className="mb-2 p-2 bg-red-50 text-red-700 text-xs rounded">
+                                          Error: {sub.errorMessage}
+                                        </div>
+                                      )}
+                                      {sub.testCaseResults && sub.testCaseResults.length > 0 && (
+                                        <div className="mb-2">
+                                          <p className="text-xs font-medium text-gray-600 mb-1">Test case results:</p>
+                                          <div className="space-y-1 max-h-24 overflow-y-auto">
+                                            {sub.testCaseResults.map((tc, i) => (
+                                              <div key={i} className={`text-xs p-1.5 rounded flex items-center gap-2 ${tc.passed ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'}`}>
+                                                <span className="font-mono">#{tc.testCase}</span>
+                                                <span>{tc.passed ? '✓ Passed' : `✗ ${tc.status || 'Failed'}`}</span>
+                                                {!tc.passed && tc.expected != null && <span className="truncate">Expected: {String(tc.expected).slice(0, 30)}...</span>}
+                                                {!tc.passed && tc.actual != null && <span className="truncate">Got: {String(tc.actual).slice(0, 30)}...</span>}
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+                                      <pre className="text-xs font-mono bg-gray-50 p-2 rounded max-h-28 overflow-y-auto whitespace-pre-wrap break-words">{sub.code?.slice(0, 400)}{sub.code?.length > 400 ? '...' : ''}</pre>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); setViewingCodeFor({ appId: app.id, submission: sub }); }}
+                                        className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium"
+                                      >
+                                        View full code & details
+                                      </button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                            {codingSubmissions[app.id]?.submissions && codingSubmissions[app.id].submissions.length === 0 && !codingSubmissions[app.id]?.loading && (
+                              <p className="text-sm text-gray-500 mt-2">
+                                {codingSubmissions[app.id]?.error || 'No coding submissions yet'}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="mt-4 pt-4 border-t flex items-center justify-between">
+                            <div className="flex items-center gap-3">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  window.location.href = `tel:${app.student.phone}`;
+                                  window.location.href = `mailto:${app.student.email}`;
                                 }}
                                 className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50"
                               >
-                                <Phone className="w-4 h-4" />
-                                Call
+                                <Mail className="w-4 h-4" />
+                                Email
                               </button>
-                            )}
+                              {app.student.phone && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    window.location.href = `tel:${app.student.phone}`;
+                                  }}
+                                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50"
+                                >
+                                  <Phone className="w-4 h-4" />
+                                  Call
+                                </button>
+                              )}
+                              {(String(app.status || '').toUpperCase() === 'REVIEW' ||
+                                String(app.status || '').toUpperCase() === 'REVIEWING') && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleManualShortlist(app);
+                                    }}
+                                    disabled={actionLoading}
+                                    className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  >
+                                    <User className="w-4 h-4" />
+                                    Manual Shortlist
+                                  </button>
+                                )}
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                downloadCV(app);
+                              }}
+                              disabled={!app.cvUrl}
+                              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${app.cvUrl
+                                ? 'bg-red-600 text-white hover:bg-red-700'
+                                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                }`}
+                            >
+                              <Download className="w-4 h-4" />
+                              {app.cvUrl ? 'View CV' : 'No CV'}
+                            </button>
                           </div>
-                      <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              downloadCV(app);
-                            }}
-                        disabled={!app.cvUrl}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium ${
-                          app.cvUrl
-                            ? 'bg-red-600 text-white hover:bg-red-700'
-                            : 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                        }`}
-                      >
-                        <Download className="w-4 h-4" />
-                        {app.cvUrl ? 'View CV' : 'No CV'}
-                      </button>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
       </div>
 
-      
+
       {/* Full code & results view modal */}
       {viewingCodeFor && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center p-4 z-50">
