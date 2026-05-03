@@ -626,8 +626,9 @@ const ApplicationsList = ({
               </h2>
               {embedded && (
                 <p className="mt-1 text-xs text-gray-600">
-                  Use ATS Shortlist / Shortlist all / manual decisions, then <strong>Close applications</strong> to
-                  unlock the Aptitude stage.
+                  Use ATS Shortlist / Shortlist all / manual decisions. The Aptitude stage unlocks once at least one
+                  applicant is shortlisted; use <strong>Close applications</strong> when you want to stop new
+                  applicants.
                 </p>
               )}
             </div>

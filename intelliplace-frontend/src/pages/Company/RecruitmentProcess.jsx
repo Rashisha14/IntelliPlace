@@ -246,6 +246,23 @@ const RecruitmentProcess = () => {
     );
   }, [allApplications, filterApplicationsByEligibility]);
 
+  const hasShortlistedApplicants = useMemo(
+    () =>
+      filterApplicationsByEligibility(allApplications || [], PIPELINE_STAGE_COHORT.aptitude).length >
+      0,
+    [allApplications, filterApplicationsByEligibility]
+  );
+
+  const hasAptitudePassedApplicants = useMemo(
+    () =>
+      filterApplicationsByEligibility(allApplications || [], PIPELINE_STAGE_COHORT.coding).length >
+      0,
+    [allApplications, filterApplicationsByEligibility]
+  );
+
+  const canStartAptitudeTest = !!(job?.status === 'CLOSED' || hasShortlistedApplicants);
+  const canStartCodingTest = !!(job?.status === 'CLOSED' || hasAptitudePassedApplicants);
+
   const pipeline = useMemo(
     () => ({
       /** Job applications closed — required before aptitude/tests (existing backend rule). */
@@ -261,12 +278,12 @@ const RecruitmentProcess = () => {
   const tabAccessible = useMemo(
     () => ({
       shortlisting: true,
-      aptitude: pipeline.shortlistingDone,
+      aptitude: pipeline.shortlistingDone || hasShortlistedApplicants,
       coding: pipeline.aptitudeDone,
       gd: pipeline.codingDone,
       interview: pipeline.gdDone,
     }),
-    [pipeline]
+    [pipeline, hasShortlistedApplicants]
   );
 
   useEffect(() => {
@@ -502,8 +519,9 @@ const RecruitmentProcess = () => {
         {/* Tabs */}
         <div className="card p-0 overflow-hidden max-w-[100vw]">
           <p className="px-6 pt-4 text-xs text-slate-500">
-            Pipeline runs in order: shortlisting → aptitude → coding → GD → interview. Close applications after
-            shortlisting to unlock tests; finish or skip each later stage before the next unlocks.
+            Pipeline runs in order: shortlisting → aptitude → coding → GD → interview. After you shortlist at least
+            one candidate, the aptitude tab unlocks (you can still close applications anytime to stop new applicants).
+            Finish or skip each later stage before the next unlocks.
           </p>
           <div className="flex flex-wrap border-b border-slate-200">
             {[
@@ -555,11 +573,17 @@ const RecruitmentProcess = () => {
                     <p className="font-medium text-emerald-800">
                       Applications are closed for this job. You can run the aptitude round in the next tab.
                     </p>
+                  ) : hasShortlistedApplicants ? (
+                    <p>
+                      Shortlisting has started. Open the <strong>Aptitude Test</strong> tab to configure and start the
+                      round. Use <strong>Close applications</strong> when you want to stop accepting new applicants
+                      (optional if you already have a cohort).
+                    </p>
                   ) : (
                     <p>
-                      Shortlist candidates (ATS / bulk / manual from the list below), then use{' '}
-                      <strong>Close applications</strong> when ready. Closing unlocks aptitude and coding tests — same as
-                      before.
+                      Shortlist candidates (ATS / bulk / manual from the list below). As soon as at least one applicant
+                      is shortlisted, the aptitude stage unlocks. You can also use <strong>Close applications</strong>{' '}
+                      to freeze new applications.
                     </p>
                   )}
                 </div>
@@ -577,7 +601,7 @@ const RecruitmentProcess = () => {
                 test={aptitudeTest}
                 applications={aptitudeEligibleApplications}
                 roundComplete={pipeline.aptitudeDone}
-                applicationsClosed={job?.status === 'CLOSED'}
+                applicationsClosed={canStartAptitudeTest}
                 onCreate={() => setIsCreateAptitudeOpen(true)}
                 onEdit={() => setIsEditAptitudeOpen(true)}
                 onStart={() => {
@@ -604,7 +628,7 @@ const RecruitmentProcess = () => {
                 jobId={jobId}
                 applications={codingEligibleApplications}
                 roundComplete={pipeline.codingDone}
-                applicationsClosed={job?.status === 'CLOSED'}
+                applicationsClosed={canStartCodingTest}
                 onCreate={() => setIsCreateCodingOpen(true)}
                 onEdit={() => setIsEditCodingOpen(true)}
                 onStart={() => {
@@ -724,16 +748,28 @@ const RecruitmentProcess = () => {
         open={isStartConfirmOpen}
         title={`Start ${testToStart?.type === 'coding' ? 'Coding' : 'Aptitude'} Test`}
         message={
-          job?.status !== 'CLOSED'
-            ? `You must close applications for this job before starting any tests.`
-            : testToStart?.type === 'coding'
-              ? `Applicants who cleared the aptitude round will be invited to take this coding test. Continue?`
-              : `Shortlisted applicants will be invited to take this aptitude test. Continue?`
+          (testToStart?.type === 'coding' ? !canStartCodingTest : !canStartAptitudeTest)
+            ? testToStart?.type === 'coding'
+              ? `Close applications or ensure at least one aptitude-passed candidate exists before starting the coding test.`
+              : `Close applications or shortlist at least one candidate before starting the aptitude test.`
+            : job?.status !== 'CLOSED'
+              ? `Applications are still open — new candidates may still apply until you close the job. ${
+                  testToStart?.type === 'coding'
+                    ? 'Aptitude-passed candidates will be invited to this coding test.'
+                    : 'Shortlisted candidates will be invited to this aptitude test.'
+                } Continue?`
+              : testToStart?.type === 'coding'
+                ? `Applicants who cleared the aptitude round will be invited to take this coding test. Continue?`
+                : `Shortlisted applicants will be invited to take this aptitude test. Continue?`
         }
-        type={job?.status !== 'CLOSED' ? 'error' : 'warning'}
+        type={
+          (testToStart?.type === 'coding' ? !canStartCodingTest : !canStartAptitudeTest)
+            ? 'error'
+            : 'warning'
+        }
         onClose={() => setIsStartConfirmOpen(false)}
         actions={
-          job?.status !== 'CLOSED'
+          (testToStart?.type === 'coding' ? !canStartCodingTest : !canStartAptitudeTest)
             ? [{ label: 'OK', onClick: () => setIsStartConfirmOpen(false) }]
             : [
                 { label: 'Cancel', onClick: () => setIsStartConfirmOpen(false) },

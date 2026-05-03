@@ -1208,8 +1208,15 @@ router.post('/:jobId/aptitude-test/start', authenticateToken, authorizeCompany, 
       return res.status(404).json({ success: false, message: 'Job not found or access denied' });
     }
 
-    if (job.status !== 'CLOSED') {
-      return res.status(400).json({ success: false, message: 'Applications must be closed before starting the test' });
+    const shortlistedCount = await prisma.application.count({
+      where: buildEligibilityWhere(jobId, 'SHORTLISTED_ONLY'),
+    });
+    if (job.status !== 'CLOSED' && shortlistedCount === 0) {
+      return res.status(400).json({
+        success: false,
+        message:
+          'Close applications for this job or shortlist at least one candidate before starting the aptitude test.',
+      });
     }
 
     const test = await prisma.aptitudeTest.findUnique({ where: { jobId } });
