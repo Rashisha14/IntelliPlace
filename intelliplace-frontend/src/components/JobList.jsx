@@ -305,7 +305,7 @@ const JobList = () => {
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600"></div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {jobs.map(job => {
             const isApplied = appliedJobs.has(job.id);
             const isDeadlinePassed = job.deadline && new Date(job.deadline) < new Date();
@@ -316,13 +316,13 @@ const JobList = () => {
                 key={job.id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={`card ${
+                className={`card flex flex-col ${
                   !applicationStatuses[job.id] 
                     ? (isApplied ? 'border-green-500 bg-green-50/30' : 'hover:shadow-md')
                     : getCardClasses(applicationStatuses[job.id].status)
                 }`}
               >
-                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
+                <div className="flex flex-col h-full justify-between gap-6">
                   <div className="flex-grow">
                     <div className="flex items-center gap-3 mb-3 flex-wrap">
                       <h3 className="text-xl font-semibold text-gray-900">{job.title}</h3>
@@ -349,7 +349,7 @@ const JobList = () => {
                       <p className="text-gray-600">{job.description}</p>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-4">
+                    <div className="grid grid-cols-2 gap-4 mb-4">
                       <div className="flex items-start gap-2">
                         <Briefcase className="w-4 h-4 text-gray-400 mt-1" />
                         <div>
@@ -459,7 +459,7 @@ const JobList = () => {
                     )}
                   </div>
 
-                  <div className="flex flex-col gap-2 md:w-48">
+                  <div className="flex flex-col gap-2 w-full mt-auto border-t pt-4">
                     {isApplied ? (
                       <div className="flex flex-col gap-2">
                       <button
