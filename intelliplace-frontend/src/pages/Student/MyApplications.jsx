@@ -245,8 +245,8 @@ const MyApplications = () => {
         {/* Application cards */}
         {applications.map((app, i) => {
           const isExpanded = expandedId === app.id;
-          const hasAptitude = ['SHORTLISTED','APP PASS','PASSED APTITUDE','APTITUDE_PASSED'].includes(app.status?.toUpperCase()) && testStatuses[app.jobId] === 'STARTED';
-          const hasCoding = ['SHORTLISTED','APP PASS','PASSED APTITUDE','APTITUDE_PASSED','CODE PASS','PASSED CODING'].includes(app.status?.toUpperCase()) && codingTestStatuses[app.jobId];
+          const hasAptitude = ['SHORTLISTED','APP PASS','PASSED APTITUDE','APTITUDE_PASSED'].includes(app.status?.toUpperCase()) && testStatuses[app.jobId] === 'STARTED' && !['APTITUDE_PASSED', 'APTITUDE_FAILED'].includes(app.status);
+          const hasCoding = ['SHORTLISTED','APP PASS','PASSED APTITUDE','APTITUDE_PASSED','CODE PASS','PASSED CODING'].includes(app.status?.toUpperCase()) && codingTestStatuses[app.jobId] && !['CODING_PASSED', 'CODING_FAILED'].includes(app.status);
           const hasGD = ['CODE PASS','PASSED CODING','CODING_PASSED','GD_FAILED'].includes(app.status?.toUpperCase());
           const hasInterview = !!interviewSessionsByAppId[app.id];
 

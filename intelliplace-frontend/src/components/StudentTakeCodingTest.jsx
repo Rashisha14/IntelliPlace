@@ -62,6 +62,7 @@ const StudentTakeCodingTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
   const [showSubmitConfirmModal, setShowSubmitConfirmModal] = useState(false);
   const [submitResultMessage, setSubmitResultMessage] = useState(null);
   const [uiAlert, setUiAlert] = useState(null);
+  const [testResult, setTestResult] = useState(null);
 
   const containerRef = useRef(null);
   const timerRef = useRef(null);
@@ -423,14 +424,14 @@ int main() {
         if (passedCount === totalCount) {
           showUiAlert({
             type: 'success',
-            title: 'All test cases passed',
-            message: `${passedCount}/${totalCount} test cases passed. Score: ${sub.score?.toFixed(1) ?? 0}/${pts}`,
+            title: '🎉 Congratulations! All test cases passed!',
+            message: `Excellent work! You scored ${sub.score?.toFixed(1) ?? 0}/${pts} points.`,
           });
         } else {
           showUiAlert({
             type: 'warning',
             title: `${passedCount}/${totalCount} test cases passed`,
-            message: `Score: ${sub.score?.toFixed(1) ?? 0}/${pts}`,
+            message: `Score: ${sub.score?.toFixed(1) ?? 0}/${pts} points. Keep trying!`,
           });
         }
       } else {
@@ -441,6 +442,8 @@ int main() {
       showUiAlert({ type: 'error', title: 'Submit failed', message: 'Failed to submit code.' });
     } finally {
       setSubmitting(false);
+      // Also clear running state in case it was stuck
+      setRunning(prev => ({ ...prev, [questionId]: false }));
     }
   };
 
@@ -485,13 +488,32 @@ int main() {
 
     // Tell backend the test is finished so it can evaluate and update the application status
     try {
-      await fetchWithTimeout(`${API_BASE_URL}/jobs/${jobId}/coding-test/finish`, {
+      const finishRes = await fetchWithTimeout(`${API_BASE_URL}/jobs/${jobId}/coding-test/finish`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${localStorage.getItem('token')}`
         }
       });
+      const finishData = await finishRes.json();
+      
+      if (finishRes.ok && finishData.success && finishData.data) {
+        setTestResult(finishData.data);
+        setSubmitResultMessage(null); // Clear any previous message
+        setSubmitting(false);
+        return; // Exit early to show result screen
+      } else if (finishRes.status === 400 && finishData.message?.includes('already completed')) {
+        showUiAlert({
+          type: 'error',
+          title: 'Test Already Completed',
+          message: 'You have already completed this coding test. Multiple submissions are not allowed.',
+          onClose: () => onClose()
+        });
+        setSubmitting(false);
+        return;
+      } else {
+        console.error('Error finalizing test:', finishData.message);
+      }
     } catch (err) {
       console.error('Error finalizing test:', err);
     }
@@ -499,17 +521,8 @@ int main() {
     clearInterval(timerRef.current);
     document.exitFullscreen?.();
     
-    const submitText = customMessage || (autoSubmitted
-      ? 'Time is over. Your test has been submitted automatically.'
-      : 'Your test has been submitted successfully.');
-    setSubmitResultMessage(submitText);
-    if (closeImmediately) {
-      setTimeout(() => {
-        setSubmitResultMessage(null);
-        onSubmitted?.();
-        onClose();
-      }, 1200);
-    }
+    // Clear all running states
+    setRunning({});
     setSubmitting(false);
   };
 
@@ -589,7 +602,7 @@ int main() {
               <Lock className="w-4 h-4 text-[#f97316]" />
               <span className="font-semibold text-white text-sm">{testData?.title || 'Coding Test'}</span>
             </div>
-            {!submittingRef.current && (
+            {!submittingRef.current && !testResult && (
               <>
                 <span className="flex items-center gap-1.5 text-[#a3a3a3] text-sm">
                   <Clock className="w-4 h-4" />
@@ -622,7 +635,7 @@ int main() {
               </>
             )}
           </div>
-          {(submitting || submittingRef.current) && (
+          {(submitting || submittingRef.current || testResult) && (
             <button onClick={onClose} className="text-sm text-[#a3a3a3] hover:text-white px-3 py-1.5 rounded">
               Close
             </button>
@@ -630,7 +643,7 @@ int main() {
         </div>
 
         {/* WARNING BAR */}
-        {warnings > 0 && !submittingRef.current && (
+        {warnings > 0 && !submittingRef.current && !testResult && (
           <div className="flex-shrink-0 bg-amber-900/40 border-b border-amber-600/50 text-amber-200 text-center py-1.5 text-sm flex items-center justify-center gap-2">
             <AlertTriangle className="w-4 h-4" />
             Security warnings: {warnings}/{MAX_WARNINGS}
@@ -730,71 +743,85 @@ int main() {
             </div>
 
             {/* RIGHT: Task + Test Cases panel */}
-            <aside className="w-[360px] max-w-[42vw] bg-[#0f1527] text-[#d7deee] flex flex-col">
-              <div className="border-b border-[#2a2f3b] px-4 py-3">
-                <p className="text-xs text-[#8f9bb6]">Task</p>
-                <h3 className="text-2xl font-semibold leading-tight mt-1">
-                  {currentQuestion?.title || 'Coding Task'}
+            <aside className="w-[360px] max-w-[42vw] bg-[#0f1527] text-[#d7deee] flex flex-col border-l border-[#2a2f3b]">
+              <div className="border-b border-[#2a2f3b] px-6 py-4">
+                <p className="text-xs uppercase tracking-wide text-[#8f9bb6] mb-1">Problem</p>
+                <h3 className="text-xl font-bold leading-tight text-white">
+                  {currentQuestion?.title || 'Coding Problem'}
                 </h3>
-                <div className="flex items-center gap-2 mt-2">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    currentQuestion?.difficulty === 'EASY' ? 'bg-[#22c55e]/20 text-[#22c55e]' :
-                    currentQuestion?.difficulty === 'MEDIUM' ? 'bg-[#f59e0b]/20 text-[#f59e0b]' :
-                    'bg-red-500/20 text-red-400'
+                <div className="flex items-center gap-3 mt-3">
+                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                    currentQuestion?.difficulty === 'EASY' 
+                      ? 'bg-green-900/30 text-green-400 border border-green-500/30'
+                      : currentQuestion?.difficulty === 'MEDIUM' 
+                      ? 'bg-yellow-900/30 text-yellow-400 border border-yellow-500/30'
+                      : 'bg-red-900/30 text-red-400 border border-red-500/30'
                   }`}>
                     {currentQuestion?.difficulty || 'MEDIUM'}
                   </span>
-                  <span className="text-xs text-[#8f9bb6]">{currentQuestion?.points || 0} pts</span>
+                  <span className="text-sm text-[#8f9bb6] font-medium">
+                    {currentQuestion?.points || 0} points
+                  </span>
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4">
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-6">
                 <div>
-                  <p className="text-sm whitespace-pre-wrap leading-relaxed text-[#cfd7ea]">
+                  <p className="text-sm leading-relaxed text-[#cfd7ea] whitespace-pre-wrap">
                     {currentQuestion?.description}
                   </p>
                 </div>
+                
                 {currentQuestion?.constraints && (
-                  <div>
-                    <p className="text-xs uppercase tracking-wide text-[#8f9bb6] mb-1">Constraints</p>
-                    <p className="text-sm whitespace-pre-wrap text-[#b9c4dd]">{currentQuestion.constraints}</p>
+                  <div className="bg-[#1a1a2e] rounded-lg p-4 border border-[#2a2f3b]">
+                    <p className="text-xs uppercase tracking-wide text-[#8f9bb6] mb-2 font-semibold">Constraints</p>
+                    <p className="text-sm whitespace-pre-wrap text-[#b9c4dd] leading-relaxed">
+                      {currentQuestion.constraints}
+                    </p>
                   </div>
                 )}
 
-                <div className="pt-1">
-                  <p className="text-sm font-semibold mb-2">Sample Test Cases</p>
-                  {currentSampleCases.length > 0 ? (
-                    <div className="space-y-2">
-                      {currentSampleCases.map((sc, idx) => (
-                        <div
-                          key={`sample-${idx}`}
-                          className="rounded-md border border-[#2f4b85] bg-[#11203f] px-3 py-2"
-                        >
-                          <p className="text-xs text-[#9fb4df] mb-1">sample {idx + 1}</p>
-                          <div className="space-y-1 text-xs text-[#d6e1fb]">
-                            <p>
-                              <span className="text-[#8fb0ff]">Input:</span>{' '}
-                              <span className="whitespace-pre-wrap break-words">{String(sc.input || '(none)')}</span>
-                            </p>
-                            <p>
-                              <span className="text-[#8fb0ff]">Output:</span>{' '}
-                              <span className="whitespace-pre-wrap break-words">{String(sc.output || '(none)')}</span>
-                            </p>
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-sm font-semibold mb-3 text-white">Sample Test Cases</p>
+                    {currentSampleCases.length > 0 ? (
+                      <div className="space-y-3">
+                        {currentSampleCases.map((sc, idx) => (
+                          <div
+                            key={`sample-${idx}`}
+                            className="rounded-lg border border-[#2f4b85] bg-[#11203f] p-4"
+                          >
+                            <p className="text-xs text-[#9fb4df] mb-2 font-medium">Sample Input {idx + 1}</p>
+                            <div className="space-y-2 text-xs text-[#d6e1fb] font-mono">
+                              <div>
+                                <span className="text-[#8fb0ff] font-semibold">Input:</span>
+                                <div className="mt-1 p-2 bg-[#0a1628] rounded border border-[#1e3a5f] whitespace-pre-wrap break-words">
+                                  {String(sc.input || '(none)')}
+                                </div>
+                              </div>
+                              <div>
+                                <span className="text-[#8fb0ff] font-semibold">Output:</span>
+                                <div className="mt-1 p-2 bg-[#0a1628] rounded border border-[#1e3a5f] whitespace-pre-wrap break-words">
+                                  {String(sc.output || '(none)')}
+                                </div>
+                              </div>
+                            </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-[#8f9bb6]">No sample test cases provided for this question.</p>
-                  )}
-                </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-[#8f9bb6] italic">No sample test cases provided</p>
+                    )}
+                  </div>
 
-                <div className="pt-1">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-semibold">Test Cases</p>
+                  <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-semibold text-white">Test Results</p>
                     {currentSubmission?.passedCount != null && currentSubmission?.totalCount != null && (
-                      <span className={`text-xs font-medium ${
-                        currentSubmission.passedCount === currentSubmission.totalCount ? 'text-emerald-400' : 'text-amber-300'
+                      <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+                        currentSubmission.passedCount === currentSubmission.totalCount 
+                          ? 'bg-green-900/30 text-green-400 border border-green-500/30' 
+                          : 'bg-yellow-900/30 text-yellow-400 border border-yellow-500/30'
                       }`}>
                         {currentSubmission.passedCount}/{currentSubmission.totalCount} passed
                       </span>
@@ -802,30 +829,60 @@ int main() {
                   </div>
 
                   {currentTestCaseResults.length > 0 ? (
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       {currentTestCaseResults.map((tc, idx) => {
                         const passed = !!tc.passed;
                         return (
                           <div
                             key={`${idx}-${tc.status || 'case'}`}
-                            className={`rounded-md border px-3 py-2 ${
+                            className={`rounded-lg border p-4 ${
                               passed
-                                ? 'border-emerald-700/40 bg-emerald-900/15'
-                                : 'border-rose-700/40 bg-rose-900/15'
+                                ? 'border-green-700/40 bg-green-900/15'
+                                : 'border-red-700/40 bg-red-900/15'
                             }`}
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs text-[#aeb9d3]">test case {idx + 1}</span>
-                              <span className={`text-xs font-medium ${passed ? 'text-emerald-400' : 'text-rose-300'}`}>
-                                {passed ? 'Passed' : 'Failed'}
+                            <div className="flex items-center justify-between gap-3 mb-2">
+                              <span className="text-sm text-[#aeb9d3] font-medium">Test Case {idx + 1}</span>
+                              <span className={`text-sm font-bold px-2 py-1 rounded-full ${
+                                passed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                              }`}>
+                                {passed ? '✓ Passed' : '✗ Failed'}
                               </span>
                             </div>
                             {!passed && (
-                              <div className="mt-2 text-xs text-[#d3dbf0] space-y-1">
-                                {tc.input != null && <p>Input: {String(tc.input)}</p>}
-                                {tc.expected != null && <p>Expected: {String(tc.expected)}</p>}
-                                {tc.actual != null && <p>Your output: {String(tc.actual)}</p>}
-                                {tc.error && <p className="text-rose-300">{String(tc.error)}</p>}
+                              <div className="space-y-2 text-sm text-[#d3dbf0]">
+                                {tc.input != null && (
+                                  <div>
+                                    <span className="text-[#8fb0ff] font-semibold">Input:</span>
+                                    <div className="mt-1 p-2 bg-[#0a1628] rounded border border-[#1e3a5f] font-mono text-xs whitespace-pre-wrap break-words">
+                                      {String(tc.input)}
+                                    </div>
+                                  </div>
+                                )}
+                                {tc.expected != null && (
+                                  <div>
+                                    <span className="text-[#8fb0ff] font-semibold">Expected:</span>
+                                    <div className="mt-1 p-2 bg-[#0a1628] rounded border border-[#1e3a5f] font-mono text-xs whitespace-pre-wrap break-words">
+                                      {String(tc.expected)}
+                                    </div>
+                                  </div>
+                                )}
+                                {tc.actual != null && (
+                                  <div>
+                                    <span className="text-red-400 font-semibold">Your Output:</span>
+                                    <div className="mt-1 p-2 bg-[#0a1628] rounded border border-red-500/30 font-mono text-xs whitespace-pre-wrap break-words">
+                                      {String(tc.actual)}
+                                    </div>
+                                  </div>
+                                )}
+                                {tc.error && (
+                                  <div>
+                                    <span className="text-red-400 font-semibold">Error:</span>
+                                    <div className="mt-1 p-2 bg-red-900/20 rounded border border-red-500/30 font-mono text-xs whitespace-pre-wrap break-words text-red-300">
+                                      {String(tc.error)}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -833,27 +890,101 @@ int main() {
                       })}
                     </div>
                   ) : runOutput ? (
-                    <div className={`rounded-md border px-3 py-2 text-sm ${
+                    <div className={`rounded-lg border p-4 text-sm ${
                       runOutput.status === 'passed'
-                        ? 'border-emerald-700/40 bg-emerald-900/15 text-emerald-300'
+                        ? 'border-green-700/40 bg-green-900/15 text-green-300'
                         : runOutput.status === 'failed'
-                          ? 'border-amber-700/40 bg-amber-900/15 text-amber-200'
-                          : 'border-rose-700/40 bg-rose-900/15 text-rose-300'
+                          ? 'border-yellow-700/40 bg-yellow-900/15 text-yellow-200'
+                          : 'border-red-700/40 bg-red-900/15 text-red-300'
                     }`}>
-                      <p className="font-semibold text-xs mb-1">{runOutput.title}</p>
-                      <pre className="whitespace-pre-wrap break-words text-xs">{runOutput.message}</pre>
+                      <p className="font-bold text-sm mb-2">{runOutput.title}</p>
+                      <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed">{runOutput.message}</pre>
+                      {runOutput.details && (
+                        <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed mt-2 opacity-80">{runOutput.details}</pre>
+                      )}
                     </div>
                   ) : (
-                    <p className="text-xs text-[#8f9bb6]">No test case results yet. Run code or submit to evaluate.</p>
+                    <div className="text-center py-8">
+                      <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#2a2f3b] flex items-center justify-center">
+                        <Play className="w-6 h-6 text-[#8f9bb6]" />
+                      </div>
+                      <p className="text-xs text-[#8f9bb6]">Run code or submit to see test results</p>
+                    </div>
                   )}
                 </div>
+              </div>
               </div>
             </aside>
           </div>
         ) : null}
 
+        {/* RESULT SCREEN */}
+        {testResult && (
+          <div className="flex-1 flex items-center justify-center p-6">
+            <div className="max-w-lg w-full bg-[#1a1a1a] border border-[#3d3d3d] rounded-xl p-8 text-center">
+              <div className={`w-20 h-20 mx-auto mb-6 rounded-full flex items-center justify-center ${
+                testResult.status === "CODING_PASSED"
+                  ? "bg-green-900/30 border border-green-500/50"
+                  : "bg-red-900/30 border border-red-500/50"
+              }`}>
+                {testResult.status === "CODING_PASSED" ? (
+                  <CheckCircle className="w-10 h-10 text-green-400" />
+                ) : (
+                  <XCircle className="w-10 h-10 text-red-400" />
+                )}
+              </div>
+
+              <h2 className={`text-3xl font-bold mb-2 ${
+                testResult.status === "CODING_PASSED" ? "text-green-400" : "text-red-400"
+              }`}>
+                {testResult.status === "CODING_PASSED" ? "🎉 Congratulations! Test Passed!" : "Test Failed"}
+              </h2>
+
+              <p className="text-[#a3a3a3] mb-6">
+                {testResult.status === "CODING_PASSED"
+                  ? "Excellent work! You have successfully completed the coding test."
+                  : "Don't worry, keep practicing and try again next time."
+                }
+              </p>
+
+              <div className="bg-[#262626] rounded-lg p-6 mb-6 border border-[#3d3d3d]">
+                <div className="flex justify-between items-center mb-3">
+                  <span className="text-sm text-[#a3a3a3]">Score</span>
+                  <span className="font-semibold text-white">
+                    {testResult.percentage?.toFixed(1) || 0}%
+                  </span>
+                </div>
+                <div className="w-full bg-[#3d3d3d] rounded-full h-3 mb-3">
+                  <div
+                    className={`h-3 rounded-full transition-all duration-500 ${
+                      testResult.status === "CODING_PASSED" ? "bg-green-500" : "bg-red-500"
+                    }`}
+                    style={{
+                      width: `${Math.min(testResult.percentage || 0, 100)}%`
+                    }}
+                  ></div>
+                </div>
+                <div className="text-xs text-[#a3a3a3] text-center">
+                  {testResult.score || 0} points earned
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setTestResult(null);
+                  onSubmitted?.();
+                  onClose();
+                }}
+                className="w-full bg-[#2563eb] hover:bg-[#1d4ed8] text-white font-semibold py-3 px-6 rounded-lg transition-colors"
+              >
+                Close Test
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* FOOTER - Navigation */}
-        {!submittingRef.current && testData && (
+        {!submittingRef.current && testData && !testResult && (
           <div className="flex-shrink-0 h-14 bg-[#262626] border-t border-[#3d3d3d] px-6 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <button

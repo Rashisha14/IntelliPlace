@@ -1288,6 +1288,21 @@ router.post('/:jobId/aptitude-test/submit', authenticateToken, authorizeStudent,
       return res.status(404).json({ success: false, message: 'Test not found' });
     }
 
+    // Check if student has already submitted this test
+    const existingSubmission = await prisma.aptitudeSubmission.findFirst({
+      where: {
+        testId: test.id,
+        studentId: studentId
+      }
+    });
+
+    if (existingSubmission) {
+      return res.status(400).json({
+        success: false,
+        message: 'You have already submitted this test. Multiple submissions are not allowed.'
+      });
+    }
+
     // Calculate score
     let score = 0;
     let totalMarks = 0;

@@ -938,20 +938,29 @@ router.post('/:jobId/coding-test/finish', authenticateToken, authorizeStudent, a
       return res.status(404).json({ success: false, message: 'Coding test not found' });
     }
 
-    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    // Check if student has already finished this test
+    let application = await prisma.application.findFirst({
+      where: { jobId, studentId }
+    });
+
+    if (application && ['CODING_PASSED', 'CODING_FAILED'].includes(application.status)) {
+      return res.status(400).json({
+        success: false,
+        message: 'You have already completed this coding test. Multiple submissions are not allowed.'
+      });
+    }
 
     const eligibilityFilter = codingEligibilityByJob.get(jobId) || 'APTITUDE_PASSED';
-    let application = await prisma.application.findFirst({
-      where: {
-        ...buildEligibilityWhere(jobId, eligibilityFilter),
-        studentId: studentId,
-      }
-    });
-    if (!application) {
+    // Reuse the application variable we already fetched
+    if (!application || !buildEligibilityWhere(jobId, eligibilityFilter).statuses?.includes(application.status)) {
       // Fallback to direct lookup so finish still persists summary even after policy/status changes.
-      application = await prisma.application.findFirst({
+      const fallbackApplication = await prisma.application.findFirst({
         where: { jobId, studentId }
       });
+      if (fallbackApplication) {
+        // Use the fallback application
+        application = fallbackApplication;
+      }
     }
 
     if (!application) {

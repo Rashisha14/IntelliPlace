@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { AnimatePresence } from "framer-motion";
-import { Clock, AlertTriangle, Lock } from "lucide-react";
+import { Clock, AlertTriangle, Lock, CheckCircle, XCircle } from "lucide-react";
 import { API_BASE_URL } from "../config";
 
 const MAX_WARNINGS = 2;
@@ -14,6 +14,7 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
   const [timeLeft, setTimeLeft] = useState(0);
   const [warnings, setWarnings] = useState(0);
   const [showSecurityModal, setShowSecurityModal] = useState(false);
+  const [currentSectionIndex, setCurrentSectionIndex] = useState(0);
 
   const containerRef = useRef(null);
   const timerRef = useRef(null);
@@ -99,6 +100,7 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
     setSections([]);
     setWarnings(0);
     setResult(null);
+    setCurrentSectionIndex(0);
     submittingRef.current = false;
 
     fetch(
@@ -184,7 +186,13 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
       );
 
       const json = await res.json();
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        if (res.status === 400 && json.message?.includes('already submitted')) {
+          setError("You have already submitted this test. Multiple submissions are not allowed.");
+          return;
+        }
+        throw new Error();
+      }
 
       setResult(json.data);
       clearInterval(timerRef.current);
@@ -263,69 +271,201 @@ const StudentTakeTest = ({ isOpen, onClose, jobId, onSubmitted }) => {
         <div className="flex-1 overflow-y-auto p-6 pb-28">
           {error && <p className="text-red-600">{error}</p>}
 
-          {!result &&
-            sections.map((section, sIdx) => (
-              <div key={sIdx} className="mb-10">
-                <h3 className="font-semibold mb-4 border-l-4 border-blue-600 pl-3">
-                  Section {sIdx + 1}: {section.title}
-                </h3>
-
-                {section.questions.map((q, qIdx) => (
-                  <div key={q.id} className="bg-white border rounded p-5 mb-4">
-                    <p className="font-medium mb-3">
-                      Q{qIdx + 1}. {q.questionText}
-                    </p>
-
-                    {q.options.map((opt, i) => (
-                      <label
-                        key={i}
-                        className={`block p-3 border rounded mb-2 cursor-pointer ${answers[q.id] === i
-                            ? "border-blue-600 bg-blue-50"
-                            : "hover:border-gray-400"
-                          }`}
+          {!result && sections.length > 0 && (
+            <div className="max-w-4xl mx-auto">
+              {/* Section Navigation */}
+              <div className="mb-6 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <span className="text-sm text-gray-600">
+                    Section {currentSectionIndex + 1} of {sections.length}
+                  </span>
+                  <div className="flex gap-2">
+                    {sections.map((_, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => setCurrentSectionIndex(idx)}
+                        className={`w-8 h-8 rounded-full text-xs font-medium transition-colors ${
+                          idx === currentSectionIndex
+                            ? 'bg-blue-600 text-white'
+                            : idx < currentSectionIndex
+                            ? 'bg-green-100 text-green-700 border border-green-300'
+                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
                       >
-                        <input
-                          type="radio"
-                          name={q.id}
-                          checked={answers[q.id] === i}
-                          onChange={() =>
-                            setAnswers(a => ({ ...a, [q.id]: i }))
-                          }
-                          className="mr-3"
-                        />
-                        {opt}
-                      </label>
+                        {idx + 1}
+                      </button>
                     ))}
                   </div>
-                ))}
+                </div>
+                <div className="text-sm text-gray-600">
+                  {sections[currentSectionIndex]?.questions.length || 0} questions
+                </div>
               </div>
-            ))}
+
+              {/* Current Section */}
+              <div className="bg-white rounded-lg shadow-sm border p-8">
+                <div className="mb-6">
+                  <h2 className="text-2xl font-bold text-gray-900 mb-2">
+                    Section {currentSectionIndex + 1}: {sections[currentSectionIndex].title}
+                  </h2>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                      style={{
+                        width: `${((currentSectionIndex + 1) / sections.length) * 100}%`
+                      }}
+                    ></div>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  {sections[currentSectionIndex].questions.map((q, qIdx) => (
+                    <div key={q.id} className="border-b border-gray-100 pb-6 last:border-b-0 last:pb-0">
+                      <div className="flex items-start gap-4">
+                        <span className="flex-shrink-0 w-8 h-8 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-sm font-semibold">
+                          {qIdx + 1}
+                        </span>
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900 mb-4 leading-relaxed">
+                            {q.questionText}
+                          </p>
+
+                          <div className="grid gap-3">
+                            {q.options.map((opt, i) => (
+                              <label
+                                key={i}
+                                className={`flex items-center p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                                  answers[q.id] === i
+                                    ? "border-blue-500 bg-blue-50 text-blue-900"
+                                    : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                                }`}
+                              >
+                                <input
+                                  type="radio"
+                                  name={q.id}
+                                  checked={answers[q.id] === i}
+                                  onChange={() =>
+                                    setAnswers(a => ({ ...a, [q.id]: i }))
+                                  }
+                                  className="mr-3 w-4 h-4 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-gray-700">{opt}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {result && (
-            <div className="text-center mt-20">
-              <h2 className="text-2xl font-bold mb-2">
-                {result.status === "PASSED" ? "Test Passed" : "Test Failed"}
-              </h2>
-              <p className="text-gray-600">
-                Score: {result.score}/{result.totalMarks}
-              </p>
+            <div className="flex items-center justify-center min-h-full">
+              <div className="max-w-md w-full bg-white rounded-xl shadow-lg p-8 text-center">
+                <div className={`w-20 h-20 mx-auto mb-6 rounded-full flex items-center justify-center ${
+                  result.status === "PASSED"
+                    ? "bg-green-100"
+                    : "bg-red-100"
+                }`}>
+                  {result.status === "PASSED" ? (
+                    <CheckCircle className="w-10 h-10 text-green-600" />
+                  ) : (
+                    <XCircle className="w-10 h-10 text-red-600" />
+                  )}
+                </div>
+
+                <h2 className={`text-3xl font-bold mb-2 ${
+                  result.status === "PASSED" ? "text-green-700" : "text-red-700"
+                }`}>
+                  {result.status === "PASSED" ? "Congratulations! Test Passed" : "Test Failed"}
+                </h2>
+
+                <p className="text-gray-600 mb-6">
+                  {result.status === "PASSED"
+                    ? "Great job! You have successfully passed the aptitude test."
+                    : "Don't worry, keep practicing and try again next time."
+                  }
+                </p>
+
+                <div className="bg-gray-50 rounded-lg p-6 mb-6">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="text-sm text-gray-600">Your Score</span>
+                    <span className="font-bold text-lg text-gray-900">
+                      {result.score}/{result.totalMarks}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm text-gray-600">Percentage</span>
+                    <span className="font-semibold text-gray-900">
+                      {Math.round((result.score / result.totalMarks) * 100)}%
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-3">
+                    <div
+                      className={`h-3 rounded-full transition-all duration-500 ${
+                        result.status === "PASSED" ? "bg-green-500" : "bg-red-500"
+                      }`}
+                      style={{
+                        width: `${Math.min((result.score / result.totalMarks) * 100, 100)}%`
+                      }}
+                    ></div>
+                  </div>
+                  <div className="text-xs text-gray-500 text-center mt-2">
+                    Passing score: {Math.round((result.totalMarks * 0.6))} marks
+                  </div>
+                </div>
+
+                <button
+                  onClick={onClose}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
+                >
+                  Close Test
+                </button>
+              </div>
             </div>
           )}
         </div>
 
         {/* FOOTER */}
-        {!result && !showSecurityModal && (
-          <div className="fixed bottom-0 left-0 right-0 bg-white border-t px-6 py-4 flex justify-between z-[9000]">
-            <span className="text-sm text-gray-500">
-              Progress: {answeredCount}/{totalQuestions}
-            </span>
-            <button
-              onClick={handleSubmit}
-              disabled={loading}
-              className="bg-blue-600 px-8 py-3 rounded text-white font-semibold disabled:opacity-50"
-            >
-              Submit Test
-            </button>
+        {!result && !showSecurityModal && sections.length > 0 && (
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t px-6 py-4 flex justify-between items-center z-[9000]">
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => setCurrentSectionIndex(prev => Math.max(0, prev - 1))}
+                disabled={currentSectionIndex === 0}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+              >
+                ← Previous Section
+              </button>
+
+              <span className="text-sm text-gray-600">
+                Section {currentSectionIndex + 1} of {sections.length}
+              </span>
+
+              <button
+                onClick={() => setCurrentSectionIndex(prev => Math.min(sections.length - 1, prev + 1))}
+                disabled={currentSectionIndex === sections.length - 1}
+                className="px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+              >
+                Next Section →
+              </button>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-gray-500">
+                Progress: {answeredCount}/{totalQuestions} answered
+              </span>
+              <button
+                onClick={handleSubmit}
+                disabled={loading}
+                className="bg-blue-600 hover:bg-blue-700 px-8 py-3 rounded-lg text-white font-semibold disabled:opacity-50 transition-colors"
+              >
+                Submit Test
+              </button>
+            </div>
           </div>
         )}
 
