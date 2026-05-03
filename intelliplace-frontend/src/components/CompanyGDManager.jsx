@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import {
   Play,
@@ -14,9 +14,42 @@ import {
   MessageSquareQuote,
   Plus,
   FastForward,
+  Shuffle,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config';
 import Swal from 'sweetalert2';
+
+function uniqueStudentIdsFromApplications(apps) {
+  const seen = new Set();
+  const ids = [];
+  for (const a of apps || []) {
+    const id = Number(a.studentId || a.student?.id);
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
+function pickRandomSubset(ids, count) {
+  if (!ids?.length || count < 1) return [];
+  const n = Math.min(count, ids.length);
+  const pool = [...ids];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, n);
+}
+
+function pickedIdLabel(apps, studentId) {
+  for (const a of apps || []) {
+    const id = Number(a.studentId || a.student?.id);
+    if (id === studentId && a.student?.name) return a.student.name;
+  }
+  return `Student #${studentId}`;
+}
 
 function hydrateGdStateFromDb(gd) {
   if (!gd) return null;
@@ -60,6 +93,34 @@ export default function CompanyGDManager({
   });
   const [readyNotice, setReadyNotice] = useState('');
   const [isSetupOpen, setIsSetupOpen] = useState(false);
+  const [inviteCount, setInviteCount] = useState(3);
+  const [pickedStudentIds, setPickedStudentIds] = useState([]);
+
+  const eligiblePoolIds = useMemo(
+    () => uniqueStudentIdsFromApplications(applications),
+    [applications]
+  );
+
+  const openSetupModal = useCallback(() => {
+    const pool = uniqueStudentIdsFromApplications(applications);
+    const maxN = pool.length;
+    const defaultCount =
+      maxN === 0 ? 0 : maxN < 3 ? maxN : Math.min(6, maxN);
+    setInviteCount(defaultCount);
+    setPickedStudentIds(pickRandomSubset(pool, defaultCount));
+    setIsSetupOpen(true);
+  }, [applications]);
+
+  const shufflePickedForCount = useCallback(
+    (count) => {
+      const pool = eligiblePoolIds;
+      const maxN = pool.length;
+      const n = Math.min(maxN, Math.max(1, count));
+      setInviteCount(n);
+      setPickedStudentIds(pickRandomSubset(pool, n));
+    },
+    [eligiblePoolIds]
+  );
 
   useEffect(() => {
     if (!jobId || !token) return;
@@ -118,10 +179,16 @@ export default function CompanyGDManager({
       Swal.fire({ icon: 'error', title: 'Topic required' });
       return;
     }
+    const selectedStudentIds = [...pickedStudentIds];
+    if (selectedStudentIds.length < 3) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Not enough candidates',
+        text: 'Group discussion needs at least 3 invited candidates. Increase the pool size or use "Invite all eligible".',
+      });
+      return;
+    }
     try {
-      const selectedStudentIds = (applications || [])
-        .map((a) => Number(a.studentId || a.student?.id))
-        .filter(Boolean);
       const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/initialize`, {
         method: 'POST',
         headers: {
@@ -255,7 +322,7 @@ export default function CompanyGDManager({
 
         <button
           type="button"
-          onClick={() => setIsSetupOpen(true)}
+          onClick={openSetupModal}
           className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-6 py-3 text-white transition-colors hover:bg-indigo-700"
         >
           <Plus className="h-5 w-5" />
@@ -322,6 +389,75 @@ export default function CompanyGDManager({
                     }
                   />
                 </div>
+
+                <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 p-4">
+                  <p className="mb-1 text-sm font-semibold text-gray-800">
+                    Who joins this GD?
+                  </p>
+                  <p className="mb-3 text-xs text-gray-600">
+                    {eligiblePoolIds.length} eligible (coding‑passed). Invite a random subset or everyone. Minimum 3
+                    to start.
+                  </p>
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="min-w-[140px] flex-1">
+                      <label className="mb-1 block text-xs font-medium text-gray-700">
+                        Number to invite
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={Math.max(1, eligiblePoolIds.length)}
+                        className="w-full rounded border border-gray-300 p-2 text-sm"
+                        value={inviteCount}
+                        disabled={eligiblePoolIds.length === 0}
+                        onChange={(e) => {
+                          const maxN = eligiblePoolIds.length;
+                          const raw = parseInt(e.target.value, 10);
+                          const n = Math.min(maxN, Math.max(1, Number.isFinite(raw) ? raw : 1));
+                          shufflePickedForCount(n);
+                        }}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={eligiblePoolIds.length < 1}
+                      onClick={() => shufflePickedForCount(inviteCount)}
+                      className="inline-flex items-center gap-1.5 rounded-md border border-indigo-300 bg-white px-3 py-2 text-sm font-medium text-indigo-800 hover:bg-indigo-50 disabled:opacity-50"
+                    >
+                      <Shuffle className="h-4 w-4" />
+                      Randomize
+                    </button>
+                    <button
+                      type="button"
+                      disabled={eligiblePoolIds.length < 1}
+                      onClick={() => {
+                        const all = [...eligiblePoolIds];
+                        setInviteCount(all.length);
+                        setPickedStudentIds(all);
+                      }}
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Invite all eligible
+                    </button>
+                  </div>
+                  {eligiblePoolIds.length < 3 && (
+                    <p className="mt-2 text-xs font-medium text-amber-700">
+                      Fewer than 3 eligible candidates — GD cannot be initialized until the pool is large enough.
+                    </p>
+                  )}
+                  {pickedStudentIds.length > 0 && (
+                    <div className="mt-3 max-h-36 overflow-y-auto rounded border border-gray-200 bg-white p-3 text-left">
+                      <p className="mb-2 text-xs font-semibold text-gray-700">
+                        Selected ({pickedStudentIds.length})
+                      </p>
+                      <ul className="space-y-1 text-sm text-gray-800">
+                        {pickedStudentIds.map((id) => (
+                          <li key={id}>{pickedIdLabel(applications, id)}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="flex justify-end gap-3 border-t bg-gray-50 px-6 py-4">
                 <button
@@ -333,8 +469,16 @@ export default function CompanyGDManager({
                 </button>
                 <button
                   type="button"
+                  disabled={
+                    pickedStudentIds.length < 3 || eligiblePoolIds.length < 3
+                  }
                   onClick={() => handleInitializeGD()}
-                  className="inline-flex items-center gap-2 rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700"
+                  title={
+                    pickedStudentIds.length < 3
+                      ? 'Select at least 3 candidates'
+                      : undefined
+                  }
+                  className="inline-flex items-center gap-2 rounded bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Play className="h-4 w-4" />
                   Initialize GD
