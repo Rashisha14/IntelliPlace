@@ -51,6 +51,19 @@ router.post('/:jobId/gd/initialize', authenticateToken, authorizeCompany, async 
       return res.status(404).json({ success: false, message: 'Job not found or access denied' });
     }
 
+    const codingRow = await prisma.codingTest.findUnique({
+      where: { jobId },
+      select: { status: true },
+    });
+    const codingRoundDone =
+      !!job.pipelineCodingDone || codingRow?.status === 'STOPPED';
+    if (!codingRoundDone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Complete or skip the Coding Test stage before initializing Group Discussion.',
+      });
+    }
+
     let gd = await prisma.groupDiscussion.findUnique({ where: { jobId } });
     if (!gd) {
       gd = await prisma.groupDiscussion.create({
@@ -192,6 +205,10 @@ router.post('/:jobId/gd/stop', authenticateToken, authorizeCompany, async (req, 
     const jobId = parseInt(req.params.jobId);
     
     await prisma.groupDiscussion.update({ where: { jobId }, data: { status: 'COMPLETED' } });
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { pipelineGdDone: true },
+    });
     
     const gdState = activeGDs.get(jobId);
     if (gdState) {

@@ -314,6 +314,19 @@ router.post('/:jobId/coding-test/start', authenticateToken, authorizeCompany, as
       return res.status(400).json({ success: false, message: 'Applications must be closed before starting the test' });
     }
 
+    const aptRow = await prisma.aptitudeTest.findUnique({
+      where: { jobId },
+      select: { status: true },
+    });
+    const aptitudeRoundDone =
+      !!job.pipelineAptitudeDone || aptRow?.status === 'CLOSED';
+    if (!aptitudeRoundDone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Complete or skip the Aptitude stage before starting the Coding Test.',
+      });
+    }
+
     const codingTest = await prisma.codingTest.findUnique({ where: { jobId } });
     if (!codingTest) {
       return res.status(404).json({ success: false, message: 'Coding test not found' });
@@ -361,7 +374,7 @@ router.post('/:jobId/coding-test/start', authenticateToken, authorizeCompany, as
       throw dbError;
     }
 
-    const eligibilityFilter = normalizeEligibilityFilter(req.body?.eligibilityFilter, 'APTITUDE_PASSED');
+    const eligibilityFilter = 'APTITUDE_PASSED';
     codingEligibilityByJob.set(jobId, eligibilityFilter);
 
     // Get all eligible applications for this job
@@ -513,8 +526,8 @@ router.post('/:jobId/coding-test/stop', authenticateToken, authorizeCompany, asy
       }
     });
 
-    const eligibilityFilter = codingEligibilityByJob.get(jobId) || 'APTITUDE_PASSED';
-    // Evaluate all students from selected eligibility cohort.
+    const eligibilityFilter = 'APTITUDE_PASSED';
+    // Evaluate cohort: aptitude-passed applicants (pipeline order).
     const participants = await prisma.application.findMany({
       where: buildEligibilityWhere(jobId, eligibilityFilter)
     });
@@ -586,6 +599,11 @@ router.post('/:jobId/coding-test/stop', authenticateToken, authorizeCompany, asy
         console.error('Failed to create notification for coding test completion:', err);
       }
     }
+
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { pipelineCodingDone: true },
+    });
 
     // Parse JSON fields for response
     const testData = {
