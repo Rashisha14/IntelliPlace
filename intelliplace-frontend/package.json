@@ -13,7 +13,7 @@
     "@deepgram/browser-agent": "^0.2.1",
     "@elevenlabs/elevenlabs-js": "^2.41.1",
     "@elevenlabs/react": "^1.0.2",
-    "@mediapipe/tasks-vision": "^0.10.21",
+    "@mediapipe/tasks-vision": "^0.10.35",
     "chart.js": "^4.4.0",
     "clsx": "^2.1.1",
     "framer-motion": "^11.11.17",
