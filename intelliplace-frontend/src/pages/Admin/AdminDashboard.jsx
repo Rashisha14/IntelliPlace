@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   Shield, Users, Building2, GraduationCap, FileText, Settings, BarChart3,
+  CheckCircle, XCircle, Clock, Briefcase,
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { getCurrentUser } from '../../utils/auth';
@@ -39,6 +40,8 @@ const AdminDashboard = () => {
   const [analytics, setAnalytics] = useState({
     jobsByStatus: [], applicationsByStatus: [], companiesByIndustry: [], studentsStats: null,
   });
+  const [pendingJobs, setPendingJobs]     = useState([]);
+  const [approvalLoading, setApprovalLoading] = useState({});
 
   /* ── Fetch table data ───────────────────────────────────────── */
   const fetchData = async (query = '', page = 1) => {
@@ -53,6 +56,41 @@ const AdminDashboard = () => {
       if (res.ok) setTableData(json);
     } catch { /* noop */ }
     finally { setLoading(false); }
+  };
+
+  const fetchPendingJobs = async () => {
+    try {
+      const res = await fetch('http://localhost:5000/api/jobs/admin/pending', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      });
+      const json = await res.json();
+      if (res.ok) setPendingJobs(json.data?.jobs || []);
+    } catch { /* noop */ }
+  };
+
+  const handleApprove = async (jobId, approved) => {
+    setApprovalLoading(prev => ({ ...prev, [jobId]: true }));
+    try {
+      const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/admin-approve`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: JSON.stringify({ approved }),
+      });
+      if (res.ok) {
+        fetchPendingJobs();
+      } else {
+        const errorData = await res.json();
+        alert(errorData.message || 'Failed to update job approval status');
+      }
+    } catch (error) {
+      console.error('Error updating job approval:', error);
+      alert('An error occurred while communicating with the server.');
+    } finally {
+      setApprovalLoading(prev => ({ ...prev, [jobId]: false }));
+    }
   };
 
   /* ── Init ────────────────────────────────────────────────────── */
@@ -92,6 +130,8 @@ const AdminDashboard = () => {
         });
       } catch { /* noop */ }
     })();
+
+    fetchPendingJobs();
   }, [user, navigate]);
 
   useEffect(() => { fetchData(); }, [activeTab]);
@@ -207,10 +247,10 @@ const AdminDashboard = () => {
           )}
         </div>
 
-        {/* Users table */}
+        {/* Users table / Job Approvals */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.55 }} className="card">
           <div className="flex items-center justify-between mb-6">
-            <p className="section-title mb-0">User Management</p>
+            <p className="section-title mb-0">Management</p>
             <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
               {['students', 'companies'].map(tab => (
                 <button
@@ -221,9 +261,77 @@ const AdminDashboard = () => {
                   {tab}
                 </button>
               ))}
+              <button
+                onClick={() => setActiveTab('job-approvals')}
+                className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all relative ${activeTab === 'job-approvals' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              >
+                Job Approvals
+                {pendingJobs.length > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-bold rounded-full w-4 h-4 flex items-center justify-center">
+                    {pendingJobs.length}
+                  </span>
+                )}
+              </button>
             </div>
           </div>
-          <UsersTable type={activeTab} data={tableData} onSearch={fetchData} loading={loading} />
+
+          {activeTab === 'job-approvals' ? (
+            <div>
+              {pendingJobs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-center">
+                  <CheckCircle className="w-12 h-12 text-emerald-300 mb-3" />
+                  <p className="text-slate-500 font-medium">No jobs pending approval</p>
+                  <p className="text-xs text-slate-400 mt-1">All job postings have been reviewed.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {pendingJobs.map(job => (
+                    <div key={job.id} className="flex items-start gap-4 p-4 border border-amber-200 bg-amber-50 rounded-xl">
+                      <div className="w-10 h-10 bg-amber-100 rounded-lg flex items-center justify-center shrink-0">
+                        <Briefcase className="w-5 h-5 text-amber-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-semibold text-slate-900">{job.title}</span>
+                          <span className="text-xs px-2 py-0.5 bg-amber-200 text-amber-800 rounded-full font-medium flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> Pending
+                          </span>
+                        </div>
+                        <p className="text-sm text-slate-500 mt-0.5">{job.company?.companyName} &bull; {job.type}</p>
+                        <p className="text-xs text-slate-400 mt-1 line-clamp-2">{job.description}</p>
+                        <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
+                          {job.location && <span>📍 {job.location}</span>}
+                          {job.salary && <span>💰 {job.salary}</span>}
+                          {job.minCgpa && <span>🎓 Min CGPA: {job.minCgpa}</span>}
+                          <span>Posted: {new Date(job.createdAt).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          onClick={() => handleApprove(job.id, true)}
+                          disabled={approvalLoading[job.id]}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          {approvalLoading[job.id] ? '…' : 'Approve'}
+                        </button>
+                        <button
+                          onClick={() => handleApprove(job.id, false)}
+                          disabled={approvalLoading[job.id]}
+                          className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-rose-300 hover:bg-rose-50 text-rose-600 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <UsersTable type={activeTab} data={tableData} onSearch={fetchData} loading={loading} />
+          )}
         </motion.div>
 
       </div>

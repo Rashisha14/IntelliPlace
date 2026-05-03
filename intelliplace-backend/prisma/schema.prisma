@@ -62,6 +62,7 @@ model Job {
   deadline              DateTime?      @map("deadline")
   companyId            Int            @map("company_id")
   status               String         @default("OPEN")
+  adminApproved        Boolean        @default(false) @map("admin_approved")
   // Aptitude round finished (stopped or skipped); unlocks Coding.
   pipelineAptitudeDone Boolean        @default(false) @map("pipeline_aptitude_done")
   pipelineCodingDone   Boolean        @default(false) @map("pipeline_coding_done")

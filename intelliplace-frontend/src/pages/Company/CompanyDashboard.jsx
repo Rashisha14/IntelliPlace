@@ -89,13 +89,12 @@ const CompanyDashboard = () => {
     if (!userId) return;
     setJobsLoading(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/jobs?limit=20`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      const res = await fetch(`http://localhost:5000/api/jobs/my-jobs`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
       const json = await res.json();
       if (res.ok && Array.isArray(json.data?.jobs)) {
-        const myJobs = json.data.jobs.filter(j => j.company?.id === userId);
-        setJobs(myJobs);
+        setJobs(json.data.jobs);
         const apt = {}, cod = {};
-        await Promise.all(myJobs.map(async job => {
+        await Promise.all(json.data.jobs.map(async job => {
           try {
             const [ar, cr] = await Promise.all([
               fetch(`http://localhost:5000/api/jobs/${job.id}/aptitude-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
@@ -224,6 +223,9 @@ const CompanyDashboard = () => {
                       <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="font-semibold text-slate-900 truncate">{job.title}</h3>
                         <JobStatusChip status={job.status} />
+                        {!job.adminApproved && (
+                          <span className="badge badge-yellow text-[10px]">⏳ Pending Approval</span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
                         {job.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{job.location}</span>}

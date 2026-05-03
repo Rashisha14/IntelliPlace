@@ -78,6 +78,11 @@ const authorizeStudent = (req, res, next) => {
   next();
 };
 
+const authorizeAdmin = (req, res, next) => {
+  if (!req.user || req.user.userType !== 'admin') return res.status(403).json({ success: false, message: 'Admin access required' });
+  next();
+};
+
 
 router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescriptionFile'), async (req, res) => {
   try {
@@ -191,7 +196,8 @@ router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescript
         maxBacklog: allowBacklogBool && maxBacklog ? parseInt(maxBacklog, 10) : null,
         deadline: deadlineDate,
         jobDescriptionFileUrl: jobDescriptionFileUrl || null,
-        companyId: companyId
+        companyId: companyId,
+        adminApproved: false
       }
     });
 
@@ -212,16 +218,19 @@ router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescript
 });
 
 
+// Public job listing — students only see admin-approved jobs
 router.get('/', async (req, res) => {
   try {
     const { search, page = 1, limit = 10 } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
+    const baseWhere = { adminApproved: true };
     const where = search ? {
+      ...baseWhere,
       OR: [
         { title: { contains: search, mode: 'insensitive' } },
         { description: { contains: search, mode: 'insensitive' } },
       ]
-    } : {};
+    } : baseWhere;
 
     const [jobs, total] = await Promise.all([
       prisma.job.findMany({
@@ -271,6 +280,78 @@ router.get('/', async (req, res) => {
   } catch (error) {
     console.error('Error listing jobs:', error);
     res.status(500).json({ success: false, message: 'Server error listing jobs' });
+  }
+});
+
+// Company: list own jobs (all, regardless of admin approval)
+router.get('/my-jobs', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobs = await prisma.job.findMany({
+      where: { companyId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        company: true,
+        groupDiscussion: true,
+        aptitudeTest: { select: { status: true } },
+        codingTest: { select: { status: true } },
+      },
+    });
+    const jobsHydrated = jobs.map((raw) => {
+      const { aptitudeTest: atRow, codingTest: ctRow, ...rest } = raw;
+      return {
+        ...rest,
+        pipelineAptitudeDone: !!(rest.pipelineAptitudeDone || atRow?.status === 'CLOSED'),
+        pipelineCodingDone: !!(rest.pipelineCodingDone || ctRow?.status === 'STOPPED'),
+        pipelineGdDone: !!(rest.pipelineGdDone || rest.groupDiscussion?.status === 'COMPLETED'),
+      };
+    });
+    res.json({ success: true, data: { jobs: jobsHydrated } });
+  } catch (error) {
+    console.error('Error fetching company jobs:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching company jobs' });
+  }
+});
+
+// Admin: list all jobs pending approval
+router.get('/admin/pending', authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const jobs = await prisma.job.findMany({
+      where: { adminApproved: false },
+      orderBy: { createdAt: 'desc' },
+      include: { company: { select: { id: true, companyName: true, email: true } } },
+    });
+    res.json({ success: true, data: { jobs } });
+  } catch (error) {
+    console.error('Error fetching pending jobs:', error);
+    res.status(500).json({ success: false, message: 'Server error fetching pending jobs' });
+  }
+});
+
+// Admin: approve or reject a job
+router.patch('/:jobId/admin-approve', authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.jobId);
+    const { approved } = req.body; // boolean
+    if (approved === undefined) {
+      return res.status(400).json({ success: false, message: '`approved` boolean is required' });
+    }
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
+
+    const updated = await prisma.job.update({
+      where: { id: jobId },
+      data: { adminApproved: !!approved },
+      include: { company: { select: { id: true, companyName: true } } },
+    });
+    res.json({
+      success: true,
+      message: approved ? 'Job approved — now visible to students' : 'Job rejected — hidden from students',
+      data: updated,
+    });
+  } catch (error) {
+    console.error('Error updating job approval:', error);
+    res.status(500).json({ success: false, message: 'Server error updating job approval' });
   }
 });
 
