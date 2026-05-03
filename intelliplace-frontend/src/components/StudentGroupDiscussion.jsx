@@ -89,13 +89,26 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
   };
 
   useEffect(() => {
-    if (!isOpen || !jobId) return;
+    if (!isOpen || !jobId || user == null || user.id == null) return;
 
-    const backendUrl = API_BASE_URL.replace('/api', '');
-    const newSocket = io(backendUrl, { withCredentials: true });
+    const backendUrl = API_BASE_URL.replace(/\/api\/?$/, '');
+    const numericJobId = parseInt(String(jobId), 10);
+    const numericUserId = Number(user.id);
+
+    const newSocket = io(backendUrl, {
+      withCredentials: true,
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 800,
+    });
 
     newSocket.on('connect', () => {
-      newSocket.emit('join_gd', { jobId, userId: user.id, role: 'student', userName: user.name });
+      newSocket.emit('join_gd', {
+        jobId: numericJobId,
+        userId: numericUserId,
+        role: 'student',
+        userName: user.name || `Student ${numericUserId}`,
+      });
     });
 
     newSocket.on('gd_state_update', (state) => {
@@ -120,7 +133,7 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
       }
       if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
     };
-  }, [isOpen, jobId, user.id]);
+  }, [isOpen, jobId, user?.id, user?.name]);
 
   useEffect(() => {
     const st = gdState?.status;
