@@ -1856,4 +1856,60 @@ Make sure all options are plain text. Do not output anything other than the JSON
   }
 });
 
+// Generate Coding Question via Gemini AI
+router.post('/:jobId/generate-coding-question', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const { topic } = req.body;
+    if (!topic) {
+      return res.status(400).json({ success: false, message: 'Missing topic' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ success: false, message: 'Gemini API key not configured' });
+    }
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+
+    const prompt = `
+Generate 1 programming/coding problem based on this topic/difficulty: "${topic}".
+
+Return ONLY a valid JSON object. Do not include markdown formatting like \`\`\`json.
+The object must have the following exact schema:
+{
+  "title": "Problem Title",
+  "description": "Detailed problem description and story.",
+  "difficulty": "EASY" or "MEDIUM" or "HARD",
+  "points": 10,
+  "testCases": ["input string for test case 1", "input string for test case 2", "input string for test case 3"],
+  "expectedOutputs": ["expected output for test case 1", "expected output for test case 2", "expected output for test case 3"],
+  "sampleCases": [{"input": "sample input 1", "output": "sample output 1"}],
+  "constraints": "Constraints for the problem variables"
+}
+
+Ensure there are at least 3 test cases. The test cases and expectedOutputs arrays must be the same length. The output should be plain text formatting for input and output. Do not output anything other than the JSON object.
+`;
+
+    const result = await model.generateContent(prompt);
+    let text = result.response.text();
+    
+    // Clean up potential markdown formatting
+    text = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+    
+    let question;
+    try {
+      question = JSON.parse(text);
+    } catch (parseErr) {
+      console.error('Error parsing Gemini response:', parseErr, text);
+      return res.status(500).json({ success: false, message: 'Failed to parse AI response' });
+    }
+
+    res.json({ success: true, question });
+  } catch (error) {
+    console.error('Error generating coding question:', error);
+    res.status(500).json({ success: false, message: 'Failed to generate coding question' });
+  }
+});
+
 export default router;

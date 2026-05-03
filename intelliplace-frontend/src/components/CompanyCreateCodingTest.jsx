@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Plus, Trash2, X, CheckCircle } from 'lucide-react';
+import { Plus, Trash2, X, CheckCircle, Sparkles, Loader2 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { API_BASE_URL } from '../config.js';
 
@@ -29,6 +29,7 @@ const CompanyCreateCodingTest = ({ isOpen, onClose, jobId, onCreated, editingTes
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -109,6 +110,58 @@ const CompanyCreateCodingTest = ({ isOpen, onClose, jobId, onCreated, editingTes
         constraints: ''
       }
     ]);
+  };
+
+  const handleGenerateQuestion = async () => {
+    const { value: topic } = await Swal.fire({
+      title: 'Generate Coding Question',
+      input: 'text',
+      inputLabel: 'Topic & Difficulty (e.g., Arrays, Medium)',
+      inputPlaceholder: 'Enter topic, concepts, or difficulty...',
+      showCancelButton: true,
+      confirmButtonText: 'Generate',
+      confirmButtonColor: '#9333ea',
+      inputValidator: (value) => {
+        if (!value) {
+          return 'Please provide a topic or prompt!'
+        }
+      }
+    });
+
+    if (topic) {
+      try {
+        setGenerating(true);
+        const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/generate-coding-question`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${localStorage.getItem("token")}`
+          },
+          body: JSON.stringify({ topic })
+        });
+
+        const data = await res.json();
+        if (data.success && data.question) {
+          setQuestions([...questions, data.question]);
+          Swal.fire({
+            icon: "success",
+            title: "Question Generated",
+            text: "AI has successfully generated a coding question.",
+            toast: true,
+            position: "top-end",
+            showConfirmButton: false,
+            timer: 3000
+          });
+        } else {
+          throw new Error(data.message || "Failed to generate question");
+        }
+      } catch (error) {
+        console.error("AI Generation Error:", error);
+        Swal.fire("Generation Failed", "Could not generate coding question using AI. Please try again.", "error");
+      } finally {
+        setGenerating(false);
+      }
+    }
   };
 
   const removeQuestion = (index) => {
@@ -376,13 +429,23 @@ const CompanyCreateCodingTest = ({ isOpen, onClose, jobId, onCreated, editingTes
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-semibold text-gray-800">Questions</h3>
-              <button
-                onClick={addQuestion}
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                Add Question
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGenerateQuestion}
+                  disabled={generating}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50"
+                >
+                  {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  AI Generate
+                </button>
+                <button
+                  onClick={addQuestion}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Question
+                </button>
+              </div>
             </div>
 
             {questions.map((question, qIndex) => (
