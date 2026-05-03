@@ -18,63 +18,181 @@ function stripEnvQuotes(value) {
   return s;
 }
 
-// Company: Start or create GD
-router.post('/:jobId/gd/start', authenticateToken, authorizeCompany, async (req, res) => {
+function getRoomSummary(state) {
+  const invitedCount = Array.isArray(state?.invitedStudentIds) ? state.invitedStudentIds.length : 0;
+  const joinedCount = Array.isArray(state?.joinedStudentIds) ? state.joinedStudentIds.length : 0;
+  const allJoined = invitedCount > 0 && joinedCount >= invitedCount;
+  return {
+    invitedCount,
+    joinedCount,
+    allJoined,
+    canStart: allJoined && joinedCount >= 3,
+  };
+}
+
+// Company: Initialize GD room + notify selected candidates (no timer yet)
+router.post('/:jobId/gd/initialize', authenticateToken, authorizeCompany, async (req, res) => {
   try {
     const jobId = parseInt(req.params.jobId);
     const { topic, prepDuration } = req.body;
+    const selectedStudentIds = Array.isArray(req.body?.selectedStudentIds)
+      ? [...new Set(req.body.selectedStudentIds.map((v) => Number(v)).filter(Boolean))]
+      : [];
+
+    if (!topic || !String(topic).trim()) {
+      return res.status(400).json({ success: false, message: 'Topic is required' });
+    }
+    if (selectedStudentIds.length < 3) {
+      return res.status(400).json({ success: false, message: 'Minimum 3 candidates are required to initialize GD' });
+    }
+
+    const job = await prisma.job.findUnique({ where: { id: jobId } });
+    if (!job || job.companyId !== req.user.id) {
+      return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+    }
+
+    const codingRow = await prisma.codingTest.findUnique({
+      where: { jobId },
+      select: { status: true },
+    });
+    const codingRoundDone =
+      !!job.pipelineCodingDone || codingRow?.status === 'STOPPED';
+    if (!codingRoundDone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Complete or skip the Coding Test stage before initializing Group Discussion.',
+      });
+    }
 
     let gd = await prisma.groupDiscussion.findUnique({ where: { jobId } });
     if (!gd) {
       gd = await prisma.groupDiscussion.create({
         data: {
           jobId,
-          topic,
+          topic: String(topic).trim(),
           prepDuration: parseInt(prepDuration) || 120,
-          status: 'PREP',
-          prepStartedAt: new Date(),
+          // Keep DB status compatible with existing persisted values.
+          status: 'CREATED',
+          prepStartedAt: null,
         }
       });
     } else {
       gd = await prisma.groupDiscussion.update({
         where: { jobId },
         data: {
-          topic,
+          topic: String(topic).trim(),
           prepDuration: parseInt(prepDuration) || 120,
-          status: 'PREP',
-          prepStartedAt: new Date(),
+          // Keep DB status compatible with existing persisted values.
+          status: 'CREATED',
+          prepStartedAt: null,
+          startedAt: null,
         }
       });
     }
 
-    // Initialize in-memory state
-    const prepEndTime = new Date(gd.prepStartedAt.getTime() + gd.prepDuration * 1000);
+    const existing = activeGDs.get(jobId);
+    const oldJoinedIds = Array.isArray(existing?.joinedStudentIds) ? existing.joinedStudentIds : [];
+    const oldJoinedParticipants = Array.isArray(existing?.joinedParticipants) ? existing.joinedParticipants : [];
+    const joinedStudentIds = oldJoinedIds.filter((id) => selectedStudentIds.includes(Number(id)));
+
+    // Initialize in-memory room in lobby mode
     const state = {
-      status: 'PREP',
-      queue: [],
+      status: 'LOBBY',
+      queue: existing?.queue || [],
       activeSpeaker: null,
-      prepEndTime: prepEndTime.getTime(),
+      prepEndTime: null,
       topic: gd.topic,
+      prepDuration: gd.prepDuration,
+      invitedStudentIds: selectedStudentIds,
+      joinedStudentIds,
+      joinedParticipants: oldJoinedParticipants.filter((p) => selectedStudentIds.includes(Number(p.studentId))),
     };
     activeGDs.set(jobId, state);
 
-    if (req.io) {
-      req.io.to(`gd_${jobId}`).emit('gd_state_update', state);
+    // Notify selected candidates to join room
+    const applications = await prisma.application.findMany({
+      where: { jobId, studentId: { in: selectedStudentIds } },
+      select: { id: true, studentId: true },
+    });
+    for (const app of applications) {
+      await prisma.notification.create({
+        data: {
+          studentId: app.studentId,
+          title: 'Group Discussion Room Open',
+          message: `GD room for "${job.title}" is initialized. Join now and wait in the lobby until the recruiter starts.`,
+          jobId,
+          applicationId: app.id,
+        }
+      });
     }
 
-    const io = req.io;
+    if (req.io) {
+      req.io.to(`gd_${jobId}`).emit('gd_state_update', state);
+      req.io.to(`gd_${jobId}`).emit('gd_room_update', {
+        ...getRoomSummary(state),
+        joinedParticipants: state.joinedParticipants || [],
+      });
+    }
 
-    // Auto-advance to ACTIVE state when prep ends
+    res.json({
+      success: true,
+      message: `GD initialized. ${applications.length} candidates notified.`,
+      data: {
+        gd,
+        room: {
+          ...getRoomSummary(state),
+          joinedParticipants: state.joinedParticipants || [],
+        },
+      },
+    });
+  } catch (error) {
+    console.error('Error initializing GD:', error);
+    res.status(500).json({ success: false, message: error?.message || 'Failed to initialize GD' });
+  }
+});
+
+// Company: Start GD timer (after everyone joined)
+router.post('/:jobId/gd/start', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.jobId);
+    const io = req.io;
+    const state = activeGDs.get(jobId);
+    if (!state) return res.status(400).json({ success: false, message: 'Initialize GD first' });
+
+    const room = getRoomSummary(state);
+    if (room.joinedCount < 3) {
+      return res.status(400).json({ success: false, message: 'Minimum 3 joined candidates required to start GD', data: room });
+    }
+    if (!room.allJoined) {
+      return res.status(400).json({ success: false, message: 'All invited candidates must join before starting GD', data: room });
+    }
+
+    const prepDuration = Number(state.prepDuration || req.body?.prepDuration || 120);
+    const prepStartedAt = new Date();
+    const prepEndTime = prepStartedAt.getTime() + prepDuration * 1000;
+
+    state.status = 'PREP';
+    state.prepEndTime = prepEndTime;
+    state.queue = Array.isArray(state.queue) ? state.queue : [];
+    state.activeSpeaker = null;
+
+    await prisma.groupDiscussion.update({
+      where: { jobId },
+      data: { status: 'PREP', prepStartedAt, prepDuration },
+    });
+
+    io?.to(`gd_${jobId}`).emit('gd_state_update', state);
+
     setTimeout(async () => {
       const liveState = activeGDs.get(jobId);
       if (liveState && liveState.status === 'PREP') {
         liveState.status = 'ACTIVE';
         await prisma.groupDiscussion.update({ where: { jobId }, data: { status: 'ACTIVE', startedAt: new Date() } });
-        io.to(`gd_${jobId}`).emit('gd_state_update', liveState);
+        io?.to(`gd_${jobId}`).emit('gd_state_update', liveState);
       }
-    }, gd.prepDuration * 1000);
+    }, prepDuration * 1000);
 
-    res.json({ success: true, data: gd });
+    res.json({ success: true, message: 'GD started', data: { room, status: 'PREP', prepEndTime } });
   } catch (error) {
     console.error('Error starting GD:', error);
     res.status(500).json({ success: false, message: 'Failed to start GD' });
@@ -87,12 +205,17 @@ router.post('/:jobId/gd/stop', authenticateToken, authorizeCompany, async (req, 
     const jobId = parseInt(req.params.jobId);
     
     await prisma.groupDiscussion.update({ where: { jobId }, data: { status: 'COMPLETED' } });
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { pipelineGdDone: true },
+    });
     
     const gdState = activeGDs.get(jobId);
     if (gdState) {
       gdState.status = 'COMPLETED';
       gdState.activeSpeaker = null;
       gdState.queue = [];
+      gdState.prepEndTime = null;
       if (req.io) req.io.to(`gd_${jobId}`).emit('gd_state_update', gdState);
     }
 
@@ -152,10 +275,20 @@ router.post('/:jobId/gd/transcribe-audio', authenticateToken, authorizeStudent, 
     }
 
     const client = new DeepgramClient({ apiKey });
-    const { result, error } = await client.listen.prerecorded.transcribeFile(
-      req.file.buffer,
-      { model: 'nova-2', smart_format: true }
-    );
+    const mimeType = stripEnvQuotes(req.file.mimetype) || 'audio/webm';
+    let result;
+    let error;
+    try {
+      ({ result, error } = await client.listen.prerecorded.transcribeFile(
+        { buffer: req.file.buffer, mimetype: mimeType },
+        { model: 'nova-2', smart_format: true }
+      ));
+    } catch (_) {
+      ({ result, error } = await client.listen.prerecorded.transcribeFile(req.file.buffer, {
+        model: 'nova-2',
+        smart_format: true,
+      }));
+    }
 
     if (error) throw error;
 

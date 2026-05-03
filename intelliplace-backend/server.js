@@ -12,6 +12,7 @@ import applicationsRoutes from './routes/applications.js';
 import codingTestsRoutes from './routes/codingTests.js';
 import interviewsRoutes from './routes/interviews.js';
 import gdRoutes from './routes/gd.js';
+import setupGDSockets from './lib/socket.js';
 import path from 'path';
 import bcrypt from 'bcryptjs';
 
@@ -106,8 +107,7 @@ app.post('/api/init-db', async (req, res) => {
   }
 });
 
-// Import socket handlers
-import setupGDSockets from './lib/socket.js';
+// Socket.io GD handlers
 setupGDSockets(io);
 
 // Start server

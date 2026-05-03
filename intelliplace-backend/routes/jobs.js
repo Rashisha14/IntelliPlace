@@ -37,8 +37,6 @@ const ELIGIBILITY_FILTERS = {
   GD_PASSED: ['GD_PASSED'],
   ALL_APPLICANTS: null,
 };
-const aptitudeEligibilityByJob = new Map();
-
 function normalizeEligibilityFilter(value, fallback = 'SHORTLISTED_ONLY') {
   const key = String(value || '').toUpperCase();
   return ELIGIBILITY_FILTERS[key] !== undefined ? key : fallback;
@@ -226,11 +224,50 @@ router.get('/', async (req, res) => {
     } : {};
 
     const [jobs, total] = await Promise.all([
-      prisma.job.findMany({ where, skip, take: parseInt(limit), orderBy: { createdAt: 'desc' }, include: { company: true } }),
-      prisma.job.count({ where })
+      prisma.job.findMany({
+        where,
+        skip,
+        take: parseInt(limit),
+        orderBy: { createdAt: 'desc' },
+        include: {
+          company: true,
+          groupDiscussion: true,
+          aptitudeTest: { select: { status: true } },
+          codingTest: { select: { status: true } },
+        },
+      }),
+      prisma.job.count({ where }),
     ]);
 
-    res.json({ success: true, data: { jobs, pagination: { total, page: parseInt(page), pages: Math.ceil(total / parseInt(limit)), limit: parseInt(limit) } } });
+    const jobsHydrated = jobs.map((raw) => {
+      const {
+        aptitudeTest: atRow,
+        codingTest: ctRow,
+        ...rest
+      } = raw;
+      return {
+        ...rest,
+        pipelineAptitudeDone:
+          !!(rest.pipelineAptitudeDone || atRow?.status === 'CLOSED'),
+        pipelineCodingDone:
+          !!(rest.pipelineCodingDone || ctRow?.status === 'STOPPED'),
+        pipelineGdDone:
+          !!(rest.pipelineGdDone || rest.groupDiscussion?.status === 'COMPLETED'),
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        jobs: jobsHydrated,
+        pagination: {
+          total,
+          page: parseInt(page),
+          pages: Math.ceil(total / parseInt(limit)),
+          limit: parseInt(limit),
+        },
+      },
+    });
   } catch (error) {
     console.error('Error listing jobs:', error);
     res.status(500).json({ success: false, message: 'Server error listing jobs' });
@@ -1097,13 +1134,16 @@ router.post('/:jobId/aptitude-test/start', authenticateToken, authorizeCompany, 
       return res.status(404).json({ success: false, message: 'Test not found' });
     }
 
+    if (test.status === 'CLOSED') {
+      return res.status(400).json({ success: false, message: 'Aptitude round is already closed. Cannot restart from this endpoint.' });
+    }
+
     const updated = await prisma.aptitudeTest.update({
       where: { id: test.id },
       data: { status: 'STARTED', startedAt: new Date() }
     });
 
-    const eligibilityFilter = normalizeEligibilityFilter(req.body?.eligibilityFilter, 'SHORTLISTED_ONLY');
-    aptitudeEligibilityByJob.set(jobId, eligibilityFilter);
+    const eligibilityFilter = 'SHORTLISTED_ONLY';
 
     // Get eligible applications for this job
     const shortlistedApplications = await prisma.application.findMany({
@@ -1232,7 +1272,12 @@ router.post('/:jobId/aptitude-test/stop', authenticateToken, authorizeCompany, a
       data: { status: 'CLOSED' }
     });
 
-    const eligibilityFilter = aptitudeEligibilityByJob.get(jobId) || 'SHORTLISTED_ONLY';
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { pipelineAptitudeDone: true },
+    });
+
+    const eligibilityFilter = 'SHORTLISTED_ONLY';
     // Auto-fail students in the selected cohort who didn't take the test
     const participants = await prisma.application.findMany({
       where: buildEligibilityWhere(jobId, eligibilityFilter)
@@ -1737,14 +1782,57 @@ router.post('/:jobId/applications/:applicationId/manual-shortlist', authenticate
   }
 });
 
+// Interview phase marked complete without skip (sequential pipeline)
+router.post(
+  '/:jobId/recruitment/mark-interview-complete',
+  authenticateToken,
+  authorizeCompany,
+  async (req, res) => {
+    try {
+      const companyId = req.user.id;
+      const jobId = parseInt(req.params.jobId, 10);
+      const job = await prisma.job.findUnique({ where: { id: jobId } });
+      if (!job || job.companyId !== companyId) {
+        return res.status(404).json({
+          success: false,
+          message: 'Job not found or access denied',
+        });
+      }
+      const gdRow = await prisma.groupDiscussion.findUnique({
+        where: { jobId },
+        select: { status: true },
+      });
+      const gdDone =
+        !!job.pipelineGdDone || gdRow?.status === 'COMPLETED';
+      if (!gdDone) {
+        return res.status(400).json({
+          success: false,
+          message: 'Complete or skip Group Discussion before closing the interview phase.',
+        });
+      }
+      await prisma.job.update({
+        where: { id: jobId },
+        data: { pipelineInterviewDone: true },
+      });
+      res.json({
+        success: true,
+        message: 'Interview phase marked complete.',
+      });
+    } catch (error) {
+      console.error('mark-interview-complete error:', error);
+      res.status(500).json({ success: false, message: 'Server error' });
+    }
+  }
+);
+
 // Skip a recruitment stage for eligible candidates
 router.post('/:jobId/skip-stage', authenticateToken, authorizeCompany, async (req, res) => {
   try {
     const companyId = req.user.id;
     const jobId = parseInt(req.params.jobId, 10);
-    const { stage, eligibilityFilter } = req.body;
+    const stage = req.body?.stage;
 
-    if (!['aptitude', 'coding', 'gd'].includes(stage)) {
+    if (!['aptitude', 'coding', 'gd', 'interview'].includes(stage)) {
       return res.status(400).json({ success: false, message: 'Invalid stage' });
     }
 
@@ -1753,14 +1841,38 @@ router.post('/:jobId/skip-stage', authenticateToken, authorizeCompany, async (re
       return res.status(404).json({ success: false, message: 'Job not found or access denied' });
     }
 
-    const whereClause = buildEligibilityWhere(jobId, eligibilityFilter);
+    /** Sequential cohorts (dropdown removed — fixed pipeline order). */
+    const sequentialStageFilter =
+      stage === 'aptitude'
+        ? 'SHORTLISTED_ONLY'
+        : stage === 'coding'
+          ? 'APTITUDE_PASSED'
+          : stage === 'gd'
+            ? 'CODING_PASSED'
+            : 'GD_PASSED';
+    const whereClause = buildEligibilityWhere(jobId, sequentialStageFilter);
     const applicationsToSkip = await prisma.application.findMany({
       where: whereClause,
       select: { id: true, studentId: true }
     });
 
+    const pipelineUpdate =
+      stage === 'aptitude'
+        ? { pipelineAptitudeDone: true }
+        : stage === 'coding'
+          ? { pipelineCodingDone: true }
+          : stage === 'gd'
+            ? { pipelineGdDone: true }
+            : { pipelineInterviewDone: true };
+
     if (applicationsToSkip.length === 0) {
-      return res.status(400).json({ success: false, message: 'No eligible candidates found to skip' });
+      await prisma.job.update({ where: { id: jobId }, data: pipelineUpdate });
+      return res.json({
+        success: true,
+        message:
+          'No candidates at this pipeline stage. The round has been marked complete; you may continue.',
+        data: { updatedCount: 0 },
+      });
     }
 
     let newStatus = '';
@@ -1774,6 +1886,9 @@ router.post('/:jobId/skip-stage', authenticateToken, authorizeCompany, async (re
     } else if (stage === 'gd') {
       newStatus = 'GD_PASSED';
       stageName = 'Group Discussion';
+    } else {
+      newStatus = 'SELECTED';
+      stageName = 'Interview';
     }
 
     const decisionReason = `Skipped ${stageName} and advanced to next round`;
@@ -1784,6 +1899,8 @@ router.post('/:jobId/skip-stage', authenticateToken, authorizeCompany, async (re
       where: { id: { in: applicationIds } },
       data: { status: newStatus, decisionReason }
     });
+
+    await prisma.job.update({ where: { id: jobId }, data: pipelineUpdate });
 
     // Create notifications
     const notificationsData = applicationsToSkip.map(app => ({
