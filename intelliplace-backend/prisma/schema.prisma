@@ -118,10 +118,26 @@ model Interview {
   application   Application @relation(fields: [applicationId], references: [id])
   job           Job         @relation(fields: [jobId], references: [id])
   sessions      InterviewSession[]
+  proctorViolations InterviewProctorViolation[]
 
   @@index([applicationId])
   @@index([jobId])
   @@map("interviews")
+}
+
+model InterviewProctorViolation {
+  id           Int       @id @default(autoincrement())
+  interviewId  Int       @map("interview_id")
+  studentId    Int       @map("student_id")
+  type         String    // NO_FACE | MULTIPLE_FACES | LOOKING_AWAY | PHONE_DETECTED | TAB_SWITCH | EXIT_FULLSCREEN | COPY_PASTE
+  metadata     String?   @map("metadata")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  interview    Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@index([interviewId])
+  @@index([studentId])
+  @@map("interview_proctor_violations")
 }
 
 model InterviewSession {
@@ -134,6 +150,9 @@ model InterviewSession {
   answers       String?     // JSON array of answers
   /// Gemini aggregate summary when the session completes (JSON)
   overallEvaluation String? @map("overall_evaluation")
+  proctoringScore   Float?   @map("proctoring_score")
+  /// JSON: counts, weighted penalty breakdown, normalized 0–100 score
+  proctoringSummary String? @map("proctoring_summary")
   startedAt     DateTime    @default(now()) @map("started_at")
   completedAt   DateTime?   @map("completed_at")
   createdAt     DateTime    @default(now()) @map("created_at")

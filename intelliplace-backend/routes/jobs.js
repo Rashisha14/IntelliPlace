@@ -1,5 +1,6 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
+import { activeGDs } from '../lib/socket.js';
 import { authenticateToken } from '../middleware/auth.js';
 import multer from 'multer';
 import path from 'path';
@@ -33,7 +34,8 @@ const router = express.Router();
 const ELIGIBILITY_FILTERS = {
   SHORTLISTED_ONLY: ['SHORTLISTED'],
   APTITUDE_PASSED: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS'],
-  CODING_PASSED: ['CODING_PASSED', 'PASSED CODING', 'CODE PASS'],
+  // Include legacy / alternate labels so skip-round matches the same cohort as the company UI.
+  CODING_PASSED: ['CODING_PASSED', 'PASSED CODING', 'CODE PASS', 'CODE_PASSED'],
   GD_PASSED: ['GD_PASSED'],
   ALL_APPLICANTS: null,
 };
@@ -1922,7 +1924,7 @@ router.post('/:jobId/skip-stage', authenticateToken, authorizeCompany, async (re
       return res.status(404).json({ success: false, message: 'Job not found or access denied' });
     }
 
-    /** Sequential cohorts (dropdown removed — fixed pipeline order). */
+    /** Sequential cohorts — same labels as company RecruitmentProcess / stage tabs. */
     const sequentialStageFilter =
       stage === 'aptitude'
         ? 'SHORTLISTED_ONLY'
@@ -1931,30 +1933,6 @@ router.post('/:jobId/skip-stage', authenticateToken, authorizeCompany, async (re
           : stage === 'gd'
             ? 'CODING_PASSED'
             : 'GD_PASSED';
-    const whereClause = buildEligibilityWhere(jobId, sequentialStageFilter);
-    const applicationsToSkip = await prisma.application.findMany({
-      where: whereClause,
-      select: { id: true, studentId: true }
-    });
-
-    const pipelineUpdate =
-      stage === 'aptitude'
-        ? { pipelineAptitudeDone: true }
-        : stage === 'coding'
-          ? { pipelineCodingDone: true }
-          : stage === 'gd'
-            ? { pipelineGdDone: true }
-            : { pipelineInterviewDone: true };
-
-    if (applicationsToSkip.length === 0) {
-      await prisma.job.update({ where: { id: jobId }, data: pipelineUpdate });
-      return res.json({
-        success: true,
-        message:
-          'No candidates at this pipeline stage. The round has been marked complete; you may continue.',
-        data: { updatedCount: 0 },
-      });
-    }
 
     let newStatus = '';
     let stageName = '';
@@ -1972,33 +1950,80 @@ router.post('/:jobId/skip-stage', authenticateToken, authorizeCompany, async (re
       stageName = 'Interview';
     }
 
+    const whereClause = buildEligibilityWhere(jobId, sequentialStageFilter);
+    const applicationsToSkip = await prisma.application.findMany({
+      where: whereClause,
+      select: { id: true, studentId: true },
+    });
+
+    const pipelineUpdate =
+      stage === 'aptitude'
+        ? { pipelineAptitudeDone: true }
+        : stage === 'coding'
+          ? { pipelineCodingDone: true }
+          : stage === 'gd'
+            ? { pipelineGdDone: true }
+            : { pipelineInterviewDone: true };
+
+    const closeGdIfSkipped = async () => {
+      if (stage !== 'gd') return;
+      try {
+        await prisma.groupDiscussion.updateMany({
+          where: { jobId },
+          data: { status: 'COMPLETED' },
+        });
+      } catch (gdErr) {
+        console.warn('[skip-stage] Could not mark Group Discussion completed:', gdErr);
+      }
+      try {
+        activeGDs.delete(jobId);
+      } catch (_) {
+        /* ignore */
+      }
+    };
+
+    if (applicationsToSkip.length === 0) {
+      await prisma.job.update({ where: { id: jobId }, data: pipelineUpdate });
+      await closeGdIfSkipped();
+      return res.json({
+        success: true,
+        message:
+          'No candidates at this pipeline stage. The round has been marked complete; you may continue.',
+        data: { skippedCount: 0, advancedToStatus: newStatus, stage },
+      });
+    }
+
     const decisionReason = `Skipped ${stageName} and advanced to next round`;
 
-    // Bulk update statuses
-    const applicationIds = applicationsToSkip.map(app => app.id);
+    const applicationIds = applicationsToSkip.map((app) => app.id);
     await prisma.application.updateMany({
       where: { id: { in: applicationIds } },
-      data: { status: newStatus, decisionReason }
+      data: { status: newStatus, decisionReason },
     });
 
     await prisma.job.update({ where: { id: jobId }, data: pipelineUpdate });
+    await closeGdIfSkipped();
 
-    // Create notifications
-    const notificationsData = applicationsToSkip.map(app => ({
+    const notificationsData = applicationsToSkip.map((app) => ({
       studentId: app.studentId,
       title: `${stageName} Skipped`,
       message: `You have been automatically advanced past the ${stageName} for ${job.title}.`,
       decisionReason,
       jobId,
-      applicationId: app.id
+      applicationId: app.id,
     }));
 
     await prisma.notification.createMany({ data: notificationsData });
 
     res.json({
       success: true,
-      message: `Successfully skipped ${stageName} for ${applicationsToSkip.length} candidates.`,
-      skippedCount: applicationsToSkip.length
+      message: `Successfully skipped ${stageName} for ${applicationsToSkip.length} candidates. They are marked as passed this round and advanced (${newStatus}).`,
+      data: {
+        skippedCount: applicationsToSkip.length,
+        advancedToStatus: newStatus,
+        stage,
+        applicationIds,
+      },
     });
   } catch (error) {
     console.error('Error skipping stage:', error);

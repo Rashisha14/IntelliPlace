@@ -1798,4 +1798,170 @@ router.get(
   }
 );
 
+/** --- AI Proctoring (JPEG snapshots metadata only — no video stored) ---------------------------- */
+
+const PROCTOR_TYPES = new Set([
+  'NO_FACE',
+  'MULTIPLE_FACES',
+  'LOOKING_AWAY',
+  'PHONE_DETECTED',
+  'TAB_SWITCH',
+  'EXIT_FULLSCREEN',
+  'COPY_PASTE',
+]);
+
+const PROCTOR_WEIGHTS = {
+  NO_FACE: 4,
+  MULTIPLE_FACES: 12,
+  LOOKING_AWAY: 6,
+  PHONE_DETECTED: 15,
+  TAB_SWITCH: 8,
+  EXIT_FULLSCREEN: 5,
+  COPY_PASTE: 10,
+};
+
+function computeProctorAggregate(violations) {
+  const counts = {};
+  for (const v of violations) {
+    counts[v.type] = (counts[v.type] || 0) + 1;
+  }
+  let penalty = 0;
+  for (const [type, n] of Object.entries(counts)) {
+    const w = PROCTOR_WEIGHTS[type] ?? 5;
+    penalty += Math.min(n * w, w * 8);
+  }
+  const score = Math.round(Math.max(0, Math.min(100, 100 - penalty)) * 100) / 100;
+  return { score, counts, penaltyTotal: penalty };
+}
+
+router.post(
+  '/:jobId/interviews/:applicationId/proctoring/violation',
+  authenticateToken,
+  authorizeStudent,
+  async (req, res) => {
+    try {
+      const studentId = req.user.id;
+      const jobId = parseInt(req.params.jobId, 10);
+      const applicationId = parseInt(req.params.applicationId, 10);
+      const { type, clientTimestamp, metadata } = req.body || {};
+
+      if (!type || !PROCTOR_TYPES.has(String(type))) {
+        return res.status(400).json({ success: false, message: 'Invalid violation type' });
+      }
+
+      const application = await prisma.application.findFirst({
+        where: { id: applicationId, studentId, jobId },
+      });
+      if (!application) {
+        return res.status(404).json({ success: false, message: 'Application not found' });
+      }
+
+      const interview = await prisma.interview.findUnique({
+        where: { applicationId },
+        include: {
+          sessions: {
+            where: { status: 'ACTIVE' },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+      });
+
+      if (!interview?.sessions?.length) {
+        return res.status(400).json({
+          success: false,
+          message: 'No active interview session — start the interview before proctoring can log violations.',
+        });
+      }
+
+      let metaStr = null;
+      try {
+        const payload = {};
+        if (clientTimestamp != null) payload.clientTimestamp = clientTimestamp;
+        if (metadata != null && typeof metadata === 'object') Object.assign(payload, metadata);
+        if (typeof metadata === 'string') metaStr = metadata;
+        else if (Object.keys(payload).length) metaStr = JSON.stringify(payload);
+      } catch (_) {
+        metaStr = null;
+      }
+
+      await prisma.interviewProctorViolation.create({
+        data: {
+          interviewId: interview.id,
+          studentId,
+          type: String(type),
+          metadata: metaStr,
+        },
+      });
+
+      res.json({ success: true });
+    } catch (e) {
+      console.error('[Interview] proctoring violation:', e);
+      res.status(500).json({ success: false, message: 'Failed to record violation' });
+    }
+  }
+);
+
+router.post(
+  '/:jobId/interviews/:applicationId/proctoring/finalize',
+  authenticateToken,
+  authorizeStudent,
+  async (req, res) => {
+    try {
+      const studentId = req.user.id;
+      const jobId = parseInt(req.params.jobId, 10);
+      const applicationId = parseInt(req.params.applicationId, 10);
+
+      const application = await prisma.application.findFirst({
+        where: { id: applicationId, studentId, jobId },
+      });
+      if (!application) {
+        return res.status(404).json({ success: false, message: 'Application not found' });
+      }
+
+      const interview = await prisma.interview.findUnique({
+        where: { applicationId },
+        include: {
+          sessions: { orderBy: { createdAt: 'desc' }, take: 1 },
+        },
+      });
+
+      if (!interview?.sessions?.length) {
+        return res.status(404).json({ success: false, message: 'No interview session found' });
+      }
+
+      const violations = await prisma.interviewProctorViolation.findMany({
+        where: { interviewId: interview.id, studentId },
+      });
+      const agg = computeProctorAggregate(violations);
+      const summary = JSON.stringify({
+        counts: agg.counts,
+        penaltyTotal: agg.penaltyTotal,
+        score: agg.score,
+        finalizedAt: new Date().toISOString(),
+      });
+
+      await prisma.interviewSession.update({
+        where: { id: interview.sessions[0].id },
+        data: {
+          proctoringScore: agg.score,
+          proctoringSummary: summary,
+        },
+      });
+
+      res.json({
+        success: true,
+        data: {
+          score: agg.score,
+          counts: agg.counts,
+          penaltyTotal: agg.penaltyTotal,
+        },
+      });
+    } catch (e) {
+      console.error('[Interview] proctoring finalize:', e);
+      res.status(500).json({ success: false, message: 'Failed to finalize proctoring' });
+    }
+  }
+);
+
 export default router;

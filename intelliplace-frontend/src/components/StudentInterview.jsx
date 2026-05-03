@@ -14,13 +14,25 @@ import {
   User,
   Briefcase,
   Volume2,
+  ShieldAlert,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config.js';
 import { getCurrentUser } from '../utils/auth.js';
+import { useInterviewProctoring } from '../proctoring/useInterviewProctoring.js';
 
 function normalizeDisplayName(raw) {
   if (raw == null || raw === '') return '';
   return String(raw).trim().replace(/\s+/g, ' ');
+}
+
+function parseProctorSummary(raw) {
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'object') return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -49,6 +61,7 @@ const StudentInterview = ({
   const [qaPanelOpen, setQaPanelOpen] = useState(true);
 
   const localVideoRef = useRef(null);
+  const fullscreenRootRef = useRef(null);
   const streamRef = useRef(null);
   const [localStreamReady, setLocalStreamReady] = useState(false);
 
@@ -449,6 +462,26 @@ const StudentInterview = ({
     };
   }, [voiceStarted, agentToken, agentSettingsKey, wsUrl]);
 
+  const studentUserId = getCurrentUser()?.id;
+  const proctoringEnabled =
+    !!isOpen &&
+    !!jobId &&
+    !!applicationId &&
+    session?.status === 'ACTIVE' &&
+    voiceStarted &&
+    localStreamReady &&
+    !!studentUserId;
+
+  const { proctoringResult } = useInterviewProctoring({
+    enabled: proctoringEnabled,
+    videoRef: localVideoRef,
+    fullscreenRootRef,
+    jobId,
+    applicationId,
+    userId: studentUserId,
+    isOpen,
+  });
+
   const handleEndInterview = async () => {
     setEndingInterview(true);
     setAgentError(null);
@@ -489,9 +522,26 @@ const StudentInterview = ({
 
   const modeLabel = session?.mode === 'TECH' ? 'Technical' : 'HR';
   const overall = session?.overallEvaluation;
+  const proctorStored = parseProctorSummary(session?.proctoringSummary);
+  const proctorScoreDisplay =
+    session?.proctoringScore ??
+    proctorStored?.score ??
+    (proctoringResult?.score != null ? proctoringResult.score : null);
+  const proctorCountsDisplay = proctorStored?.counts ?? proctoringResult?.counts;
 
   return (
-    <div className="fixed inset-0 z-[100] flex flex-col bg-[#1b1b1f] text-zinc-100 shadow-2xl">
+    <div
+      ref={fullscreenRootRef}
+      className="fixed inset-0 z-[100] flex flex-col bg-[#1b1b1f] text-zinc-100 shadow-2xl"
+    >
+      {proctoringEnabled && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-amber-900/50 bg-amber-950/50 px-4 py-2 text-xs text-amber-100">
+          <ShieldAlert className="h-4 w-4 shrink-0 text-amber-400" aria-hidden />
+          <span>
+            AI proctoring is active: stay on this tab in fullscreen, face the camera, and keep phones out of frame.
+          </span>
+        </div>
+      )}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800/80 bg-[#252528] px-4">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600">
@@ -608,6 +658,29 @@ const StudentInterview = ({
                           )}
                           {overall.recommendation && (
                             <p className="mt-4 text-xs text-emerald-300/90">{overall.recommendation}</p>
+                          )}
+                        </div>
+                      )}
+                      {proctorScoreDisplay != null && (
+                        <div className="mt-6 rounded-xl border border-zinc-700/60 bg-zinc-900/50 px-4 py-4 text-left">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">
+                            Proctoring score
+                          </p>
+                          <p className="mt-2 text-3xl font-bold text-white">
+                            {typeof proctorScoreDisplay === 'number'
+                              ? proctorScoreDisplay.toFixed(1)
+                              : String(proctorScoreDisplay)}
+                            <span className="text-lg font-normal text-zinc-500">/100</span>
+                          </p>
+                          {proctorCountsDisplay && typeof proctorCountsDisplay === 'object' && (
+                            <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-zinc-400">
+                              {Object.entries(proctorCountsDisplay).map(([k, v]) => (
+                                <div key={k} className="flex justify-between gap-2 border-b border-zinc-800/80 py-1">
+                                  <dt className="font-mono text-[10px] uppercase text-zinc-500">{k}</dt>
+                                  <dd className="text-zinc-300">{String(v)}</dd>
+                                </div>
+                              ))}
+                            </dl>
                           )}
                         </div>
                       )}

@@ -16,6 +16,7 @@ import {
   Video,
   Users,
   FastForward,
+  FileCheck,
 } from 'lucide-react';
 import Navbar from '../../components/Navbar';
 import DashboardLayout from '../../components/DashboardLayout';
@@ -29,7 +30,7 @@ import ApplicationsList from '../../components/ApplicationsList';
 import Modal from '../../components/Modal';
 import CompanyGDManager from '../../components/CompanyGDManager';
 
-/** Fixed cohort per pipeline stage (order: aptitude → coding → gd → interview). */
+/** Fixed cohort per pipeline stage (order: shortlisting → aptitude → coding → gd → interview). */
 const PIPELINE_STAGE_COHORT = {
   aptitude: 'SHORTLISTED_ONLY',
   coding: 'APTITUDE_PASSED',
@@ -40,7 +41,7 @@ const PIPELINE_STAGE_COHORT = {
 const ELIGIBILITY_STATUS_MAP = {
   SHORTLISTED_ONLY: ['SHORTLISTED'],
   APTITUDE_PASSED: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS'],
-  CODING_PASSED: ['CODING_PASSED', 'PASSED CODING', 'CODE PASS'],
+  CODING_PASSED: ['CODING_PASSED', 'PASSED CODING', 'CODE PASS', 'CODE_PASSED'],
   GD_PASSED: ['GD_PASSED'],
 };
 
@@ -48,7 +49,7 @@ const RecruitmentProcess = () => {
   const navigate = useNavigate();
   const { jobId } = useParams();
   const user = getCurrentUser();
-  const [activeTab, setActiveTab] = useState('aptitude'); // 'aptitude', 'coding', or 'interview'
+  const [activeTab, setActiveTab] = useState('shortlisting');
   const [job, setJob] = useState(null);
   const [aptitudeTest, setAptitudeTest] = useState(null);
   const [codingTest, setCodingTest] = useState(null);
@@ -247,6 +248,8 @@ const RecruitmentProcess = () => {
 
   const pipeline = useMemo(
     () => ({
+      /** Job applications closed — required before aptitude/tests (existing backend rule). */
+      shortlistingDone: !!(job?.status === 'CLOSED'),
       aptitudeDone: !!(job?.pipelineAptitudeDone || aptitudeTest?.status === 'CLOSED'),
       codingDone: !!(job?.pipelineCodingDone || codingTest?.status === 'STOPPED'),
       gdDone: !!(job?.pipelineGdDone || job?.groupDiscussion?.status === 'COMPLETED'),
@@ -257,7 +260,8 @@ const RecruitmentProcess = () => {
 
   const tabAccessible = useMemo(
     () => ({
-      aptitude: true,
+      shortlisting: true,
+      aptitude: pipeline.shortlistingDone,
       coding: pipeline.aptitudeDone,
       gd: pipeline.codingDone,
       interview: pipeline.gdDone,
@@ -266,14 +270,19 @@ const RecruitmentProcess = () => {
   );
 
   useEffect(() => {
-    if (activeTab === 'coding' && !tabAccessible.coding) setActiveTab('aptitude');
-    if (activeTab === 'gd' && !tabAccessible.gd) {
-      setActiveTab(tabAccessible.coding ? 'coding' : 'aptitude');
-    }
-    if (activeTab === 'interview' && !tabAccessible.interview) {
-      if (tabAccessible.gd) setActiveTab('gd');
-      else if (tabAccessible.coding) setActiveTab('coding');
-      else setActiveTab('aptitude');
+    const a = tabAccessible;
+    if (activeTab === 'aptitude' && !a.aptitude) setActiveTab('shortlisting');
+    else if (activeTab === 'coding' && !a.coding)
+      setActiveTab(a.aptitude ? 'aptitude' : 'shortlisting');
+    else if (activeTab === 'gd' && !a.gd) {
+      if (a.coding) setActiveTab('coding');
+      else if (a.aptitude) setActiveTab('aptitude');
+      else setActiveTab('shortlisting');
+    } else if (activeTab === 'interview' && !a.interview) {
+      if (a.gd) setActiveTab('gd');
+      else if (a.coding) setActiveTab('coding');
+      else if (a.aptitude) setActiveTab('aptitude');
+      else setActiveTab('shortlisting');
     }
   }, [activeTab, tabAccessible]);
 
@@ -491,48 +500,79 @@ const RecruitmentProcess = () => {
         </div>
 
         {/* Tabs */}
-        <div className="card p-0 overflow-hidden">
+        <div className="card p-0 overflow-hidden max-w-[100vw]">
           <p className="px-6 pt-4 text-xs text-slate-500">
-            Pipeline runs in order: aptitude → coding → GD → interview. Finish or skip each stage before the next unlocks.
+            Pipeline runs in order: shortlisting → aptitude → coding → GD → interview. Close applications after
+            shortlisting to unlock tests; finish or skip each later stage before the next unlocks.
           </p>
-          <div className="flex border-b border-slate-200">
+          <div className="flex flex-wrap border-b border-slate-200">
             {[
+              { id: 'shortlisting', label: 'Shortlisting', icon: FileCheck },
               { id: 'aptitude', label: 'Aptitude Test', icon: ClipboardList },
               { id: 'coding', label: 'Coding Test', icon: Code },
               { id: 'gd', label: 'Group Discussion', icon: Users },
               { id: 'interview', label: 'Interview', icon: Video },
             ].map((tab) => {
               const locked = !tabAccessible[tab.id];
+              const doneHint =
+                tab.id === 'shortlisting' && pipeline.shortlistingDone
+                  ? 'Applications closed — next: Aptitude'
+                  : locked
+                    ? 'Complete or skip the previous stage to open this one'
+                    : undefined;
               return (
                 <button
                   key={tab.id}
                   type="button"
-                  title={
-                    locked
-                      ? 'Complete or skip the previous round to open this stage'
-                      : undefined
-                  }
+                  title={doneHint}
                   onClick={() => {
                     if (locked) {
-                      alert('Complete or skip the previous round before opening this stage.');
+                      alert(doneHint || 'This stage is not available yet.');
                       return;
                     }
                     setActiveTab(tab.id);
                   }}
-                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3.5 text-sm font-medium border-b-2 transition-colors ${
+                  className={`flex-1 min-w-[100px] flex items-center justify-center gap-2 px-3 py-3.5 text-sm font-medium border-b-2 transition-colors ${
                     activeTab === tab.id
                       ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50'
                       : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
                   } ${locked ? 'opacity-45 cursor-not-allowed' : ''}`}
                 >
-                  <tab.icon className="w-4 h-4" />
+                  <tab.icon className="w-4 h-4 shrink-0" />
                   <span className="hidden sm:inline">{tab.label}</span>
+                  {tab.id === 'shortlisting' && pipeline.shortlistingDone && (
+                    <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" aria-hidden />
+                  )}
                 </button>
               );
             })}
           </div>
           <div className="p-6">
-            {activeTab === 'aptitude' ? (
+            {activeTab === 'shortlisting' ? (
+              <div className="space-y-3 text-left">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+                  {pipeline.shortlistingDone ? (
+                    <p className="font-medium text-emerald-800">
+                      Applications are closed for this job. You can run the aptitude round in the next tab.
+                    </p>
+                  ) : (
+                    <p>
+                      Shortlist candidates (ATS / bulk / manual from the list below), then use{' '}
+                      <strong>Close applications</strong> when ready. Closing unlocks aptitude and coding tests — same as
+                      before.
+                    </p>
+                  )}
+                </div>
+                {jobId && (
+                  <ApplicationsList
+                    jobId={parseInt(jobId, 10)}
+                    initialJobStatus={job?.status}
+                    variant="embedded"
+                    onDataChanged={() => fetchJobAndTests(false)}
+                  />
+                )}
+              </div>
+            ) : activeTab === 'aptitude' ? (
               <AptitudeTestContent
                 test={aptitudeTest}
                 applications={aptitudeEligibleApplications}
@@ -761,6 +801,7 @@ const RecruitmentProcess = () => {
         <ApplicationsList
           jobId={parseInt(jobId)}
           initialJobStatus={job?.status}
+          onDataChanged={() => fetchJobAndTests(false)}
           onClose={() => {
             setShowApplicationsList(false);
             fetchJobAndTests(false); // Refresh after closing modal to update job status

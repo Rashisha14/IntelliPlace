@@ -13,13 +13,20 @@ import { Doughnut } from 'react-chartjs-2';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
-const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
+const ApplicationsList = ({
+  jobId,
+  onClose,
+  initialJobStatus,
+  variant = 'modal',
+  onDataChanged,
+}) => {
   const [applications, setApplications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState(null);
   const [jobStatus, setJobStatus] = useState(initialJobStatus || 'OPEN');
+  const embedded = variant === 'embedded';
   const [confirming, setConfirming] = useState(false);
   const [previewCV, setPreviewCV] = useState(null);
   const [expandedApp, setExpandedApp] = useState(null);
@@ -47,6 +54,7 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
         const apps = json.data.applications || [];
         setApplications(apps);
         await fetchAllCodingSnapshots();
+        onDataChanged?.();
       } else {
         setError(json.message || 'Failed to fetch applications');
       }
@@ -75,6 +83,10 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
   useEffect(() => {
     if (jobId) fetchApplications();
   }, [jobId]);
+
+  useEffect(() => {
+    if (initialJobStatus) setJobStatus(initialJobStatus);
+  }, [initialJobStatus]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -588,16 +600,37 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
     },
   };
 
+  const overlayZ = embedded ? undefined : { zIndex: 99999 };
   const modalContent = (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center p-4"
-      style={{ zIndex: 99999 }}
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      className={
+        embedded
+          ? 'relative w-full flex flex-col min-h-0'
+          : 'fixed inset-0 bg-black/50 flex items-center justify-center p-4'
+      }
+      style={overlayZ}
+      onClick={embedded ? undefined : (e) => e.target === e.currentTarget && onClose?.()}
     >
-      <div className="bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-gray-200">
+      <div
+        className={
+          embedded
+            ? 'bg-white rounded-lg border border-slate-200 w-full max-h-[min(85vh,920px)] overflow-hidden flex flex-col shadow-sm min-h-0'
+            : 'bg-white rounded-lg shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col border border-gray-200'
+        }
+      >
         <div className="p-6 border-b border-gray-200 flex-shrink-0">
           <div className="flex justify-between items-center gap-4">
-            <h2 className="text-2xl font-semibold text-gray-800">Applications</h2>
+            <div>
+              <h2 className="text-2xl font-semibold text-gray-800">
+                {embedded ? 'Shortlisting & applications' : 'Applications'}
+              </h2>
+              {embedded && (
+                <p className="mt-1 text-xs text-gray-600">
+                  Use ATS Shortlist / Shortlist all / manual decisions, then <strong>Close applications</strong> to
+                  unlock the Aptitude stage.
+                </p>
+              )}
+            </div>
             <div className="ml-auto flex items-center gap-3">
               {applications.length > 0 && (
                 <>
@@ -699,18 +732,21 @@ const ApplicationsList = ({ jobId, onClose, initialJobStatus }) => {
                   </button>
                 </div>
               )}
-              <button
-                onClick={onClose}
-                className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg text-2xl font-bold leading-none"
-                aria-label="Close"
-              >
-                ×
-              </button>
+              {!embedded && typeof onClose === 'function' && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg text-2xl font-bold leading-none"
+                  aria-label="Close"
+                >
+                  ×
+                </button>
+              )}
             </div>
           </div>
         </div>
 
-        <div className="p-6 overflow-y-auto flex-1 min-h-[200px] bg-gray-50">
+        <div className="p-6 overflow-y-auto flex-1 min-h-[240px] min-w-0 bg-gray-50">
           {atsProgress && (
             <div className="p-3 mb-4 rounded bg-blue-50 text-blue-800 border border-blue-200">
               <div className="flex items-center gap-2">
