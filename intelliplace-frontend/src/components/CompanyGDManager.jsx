@@ -41,10 +41,9 @@ export default function CompanyGDManager({
   initialGd,
   applications,
   token,
-  eligibilitySelector,
-  proceedBanner,
   eligibleList,
   onSkip,
+  pipelineNotice,
 }) {
   const [gdState, setGdState] = useState(() => hydrateGdStateFromDb(initialGd));
   const [topic, setTopic] = useState(initialGd?.topic || '');
@@ -238,14 +237,9 @@ export default function CompanyGDManager({
 
   const prepPresets = [60, 90, 120];
 
-  const pipelineChrome = (
-    <div className="space-y-4">
-      {eligibilitySelector && (
-        <div className="flex flex-wrap items-center gap-3">{eligibilitySelector}</div>
-      )}
-      {proceedBanner}
-    </div>
-  );
+  const pipelineChrome = pipelineNotice ? (
+    <div className="space-y-4">{pipelineNotice}</div>
+  ) : null;
 
   /* Lobby / setup ---------------------------------------------------------------- */
   if (!gdState || gdState.status === 'CREATED') {

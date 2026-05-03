@@ -29,16 +29,15 @@ import ApplicationsList from '../../components/ApplicationsList';
 import Modal from '../../components/Modal';
 import CompanyGDManager from '../../components/CompanyGDManager';
 
-const ELIGIBILITY_OPTIONS = [
-  { value: 'ALL_APPLICANTS', label: 'All applicants' },
-  { value: 'SHORTLISTED_ONLY', label: 'Shortlisted candidates' },
-  { value: 'APTITUDE_PASSED', label: 'Aptitude passed' },
-  { value: 'CODING_PASSED', label: 'Coding passed' },
-  { value: 'GD_PASSED', label: 'GD passed' },
-];
+/** Fixed cohort per pipeline stage (order: aptitude → coding → gd → interview). */
+const PIPELINE_STAGE_COHORT = {
+  aptitude: 'SHORTLISTED_ONLY',
+  coding: 'APTITUDE_PASSED',
+  gd: 'CODING_PASSED',
+  interview: 'GD_PASSED',
+};
 
 const ELIGIBILITY_STATUS_MAP = {
-  ALL_APPLICANTS: null,
   SHORTLISTED_ONLY: ['SHORTLISTED'],
   APTITUDE_PASSED: ['APTITUDE_PASSED', 'PASSED APTITUDE', 'APP PASS'],
   CODING_PASSED: ['CODING_PASSED', 'PASSED CODING', 'CODE PASS'],
@@ -54,24 +53,12 @@ const RecruitmentProcess = () => {
   const [aptitudeTest, setAptitudeTest] = useState(null);
   const [codingTest, setCodingTest] = useState(null);
   const [interviews, setInterviews] = useState([]);
-  const [gdTest, setGdTest] = useState(null);
   const [allApplications, setAllApplications] = useState([]);
   const [aptitudeEligibleApplications, setAptitudeEligibleApplications] = useState([]);
   const [codingEligibleApplications, setCodingEligibleApplications] = useState([]);
   const [gdEligibleApplications, setGdEligibleApplications] = useState([]);
   const [shortlistedApplications, setShortlistedApplications] = useState([]);
-  const [eligibilityFilters, setEligibilityFilters] = useState({
-    aptitude: 'SHORTLISTED_ONLY',
-    coding: 'APTITUDE_PASSED',
-    gd: 'CODING_PASSED',
-    interview: 'ALL_APPLICANTS',
-  });
-  const [proceededStages, setProceededStages] = useState({
-    aptitude: false,
-    coding: false,
-    gd: false,
-    interview: false,
-  });
+  const [markInterviewCompleteLoading, setMarkInterviewCompleteLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const isFetchingRef = useRef(false);
   
@@ -246,57 +233,49 @@ const RecruitmentProcess = () => {
 
   useEffect(() => {
     const apps = allApplications || [];
-    setAptitudeEligibleApplications(filterApplicationsByEligibility(apps, eligibilityFilters.aptitude));
-    setCodingEligibleApplications(filterApplicationsByEligibility(apps, eligibilityFilters.coding));
-    setGdEligibleApplications(filterApplicationsByEligibility(apps, eligibilityFilters.gd));
-    setShortlistedApplications(filterApplicationsByEligibility(apps, eligibilityFilters.interview));
-  }, [allApplications, eligibilityFilters, filterApplicationsByEligibility]);
+    setAptitudeEligibleApplications(
+      filterApplicationsByEligibility(apps, PIPELINE_STAGE_COHORT.aptitude)
+    );
+    setCodingEligibleApplications(
+      filterApplicationsByEligibility(apps, PIPELINE_STAGE_COHORT.coding)
+    );
+    setGdEligibleApplications(filterApplicationsByEligibility(apps, PIPELINE_STAGE_COHORT.gd));
+    setShortlistedApplications(
+      filterApplicationsByEligibility(apps, PIPELINE_STAGE_COHORT.interview)
+    );
+  }, [allApplications, filterApplicationsByEligibility]);
 
-  const eligibilityLabelMap = useMemo(
-    () =>
-      ELIGIBILITY_OPTIONS.reduce((acc, opt) => {
-        acc[opt.value] = opt.label;
-        return acc;
-      }, {}),
-    []
+  const pipeline = useMemo(
+    () => ({
+      aptitudeDone: !!(job?.pipelineAptitudeDone || aptitudeTest?.status === 'CLOSED'),
+      codingDone: !!(job?.pipelineCodingDone || codingTest?.status === 'STOPPED'),
+      gdDone: !!(job?.pipelineGdDone || job?.groupDiscussion?.status === 'COMPLETED'),
+      interviewDone: !!job?.pipelineInterviewDone,
+    }),
+    [job, aptitudeTest, codingTest]
   );
 
-  const eligibilityOptionsByStage = useMemo(() => {
-    return {
-      aptitude: ELIGIBILITY_OPTIONS.filter((o) => ['ALL_APPLICANTS', 'SHORTLISTED_ONLY'].includes(o.value)),
-      coding: ELIGIBILITY_OPTIONS.filter((o) => ['ALL_APPLICANTS', 'APTITUDE_PASSED'].includes(o.value)),
-      gd: ELIGIBILITY_OPTIONS.filter((o) => ['ALL_APPLICANTS', 'CODING_PASSED'].includes(o.value)),
-      interview: ELIGIBILITY_OPTIONS.filter((o) => ['ALL_APPLICANTS', 'GD_PASSED'].includes(o.value)),
-    };
-  }, []);
+  const tabAccessible = useMemo(
+    () => ({
+      aptitude: true,
+      coding: pipeline.aptitudeDone,
+      gd: pipeline.codingDone,
+      interview: pipeline.gdDone,
+    }),
+    [pipeline]
+  );
 
-  const eligibilityCountsByStage = useMemo(() => {
-    const countFor = (apps, optionValue) => {
-      const statuses = ELIGIBILITY_STATUS_MAP[optionValue];
-      if (!statuses) return apps.length;
-      const allowed = new Set(statuses);
-      return apps.filter((app) => allowed.has(String(app.status || '').toUpperCase())).length;
-    };
-    const apps = allApplications || [];
-    return {
-      aptitude: ELIGIBILITY_OPTIONS.reduce((acc, opt) => {
-        acc[opt.value] = countFor(apps, opt.value);
-        return acc;
-      }, {}),
-      coding: ELIGIBILITY_OPTIONS.reduce((acc, opt) => {
-        acc[opt.value] = countFor(apps, opt.value);
-        return acc;
-      }, {}),
-      gd: ELIGIBILITY_OPTIONS.reduce((acc, opt) => {
-        acc[opt.value] = countFor(apps, opt.value);
-        return acc;
-      }, {}),
-      interview: ELIGIBILITY_OPTIONS.reduce((acc, opt) => {
-        acc[opt.value] = countFor(apps, opt.value);
-        return acc;
-      }, {}),
-    };
-  }, [allApplications]);
+  useEffect(() => {
+    if (activeTab === 'coding' && !tabAccessible.coding) setActiveTab('aptitude');
+    if (activeTab === 'gd' && !tabAccessible.gd) {
+      setActiveTab(tabAccessible.coding ? 'coding' : 'aptitude');
+    }
+    if (activeTab === 'interview' && !tabAccessible.interview) {
+      if (tabAccessible.gd) setActiveTab('gd');
+      else if (tabAccessible.coding) setActiveTab('coding');
+      else setActiveTab('aptitude');
+    }
+  }, [activeTab, tabAccessible]);
 
   useEffect(() => {
     // Check authentication
@@ -320,14 +299,6 @@ const RecruitmentProcess = () => {
 
   const handleStartTest = async () => {
     if (!testToStart) return;
-    if (testToStart.type === 'coding' && !proceededStages.coding) {
-      alert('Please click "Proceed with selected list" for coding round first.');
-      return;
-    }
-    if (testToStart.type !== 'coding' && !proceededStages.aptitude) {
-      alert('Please click "Proceed with selected list" for aptitude round first.');
-      return;
-    }
     setStartLoading(true);
     try {
       const token = localStorage.getItem('token');
@@ -342,12 +313,7 @@ const RecruitmentProcess = () => {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          eligibilityFilter:
-            testToStart.type === 'coding'
-              ? eligibilityFilters.coding
-              : eligibilityFilters.aptitude,
-        }),
+        body: JSON.stringify({}),
       });
       const d = await res.json();
       if (!res.ok) {
@@ -415,11 +381,6 @@ const RecruitmentProcess = () => {
     try {
       const token = localStorage.getItem('token');
       const endpoint = `${API_BASE_URL}/jobs/${jobId}/skip-stage`;
-      
-      const filter = 
-        stageToSkip === 'aptitude' ? eligibilityFilters.aptitude :
-        stageToSkip === 'coding' ? eligibilityFilters.coding :
-        eligibilityFilters.gd;
 
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -427,10 +388,7 @@ const RecruitmentProcess = () => {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          stage: stageToSkip,
-          eligibilityFilter: filter,
-        }),
+        body: JSON.stringify({ stage: stageToSkip }),
       });
       const d = await res.json();
       if (!res.ok) {
@@ -446,6 +404,35 @@ const RecruitmentProcess = () => {
       alert('Failed to skip stage');
     } finally {
       setSkipLoading(false);
+    }
+  };
+
+  const handleMarkInterviewPhaseComplete = async () => {
+    setMarkInterviewCompleteLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/recruitment/mark-interview-complete`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(d.message || 'Could not mark interview phase complete');
+      } else {
+        alert(d.message || 'Interview phase marked complete.');
+        await fetchJobAndTests(false);
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Could not mark interview phase complete');
+    } finally {
+      setMarkInterviewCompleteLoading(false);
     }
   };
 
@@ -505,110 +492,137 @@ const RecruitmentProcess = () => {
 
         {/* Tabs */}
         <div className="card p-0 overflow-hidden">
+          <p className="px-6 pt-4 text-xs text-slate-500">
+            Pipeline runs in order: aptitude → coding → GD → interview. Finish or skip each stage before the next unlocks.
+          </p>
           <div className="flex border-b border-slate-200">
             {[
-              { id: 'aptitude',  label: 'Aptitude Test',   icon: ClipboardList },
-              { id: 'coding',    label: 'Coding Test',     icon: Code          },
-              { id: 'gd',        label: 'Group Discussion', icon: Users         },
-              { id: 'interview', label: 'Interview',       icon: Video         },
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3.5 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === tab.id
-                    ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <tab.icon className="w-4 h-4" />
-                <span className="hidden sm:inline">{tab.label}</span>
-              </button>
-            ))}
+              { id: 'aptitude', label: 'Aptitude Test', icon: ClipboardList },
+              { id: 'coding', label: 'Coding Test', icon: Code },
+              { id: 'gd', label: 'Group Discussion', icon: Users },
+              { id: 'interview', label: 'Interview', icon: Video },
+            ].map((tab) => {
+              const locked = !tabAccessible[tab.id];
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  title={
+                    locked
+                      ? 'Complete or skip the previous round to open this stage'
+                      : undefined
+                  }
+                  onClick={() => {
+                    if (locked) {
+                      alert('Complete or skip the previous round before opening this stage.');
+                      return;
+                    }
+                    setActiveTab(tab.id);
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3.5 text-sm font-medium border-b-2 transition-colors ${
+                    activeTab === tab.id
+                      ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50'
+                      : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
+                  } ${locked ? 'opacity-45 cursor-not-allowed' : ''}`}
+                >
+                  <tab.icon className="w-4 h-4" />
+                  <span className="hidden sm:inline">{tab.label}</span>
+                </button>
+              );
+            })}
           </div>
           <div className="p-6">
             {activeTab === 'aptitude' ? (
               <AptitudeTestContent
                 test={aptitudeTest}
                 applications={aptitudeEligibleApplications}
-                eligibilityFilter={eligibilityFilters.aptitude}
-                eligibilityOptions={eligibilityOptionsByStage.aptitude}
-                disabledOptionValues={eligibilityOptionsByStage.aptitude
-                  .filter((o) => (eligibilityCountsByStage.aptitude?.[o.value] || 0) === 0)
-                  .map((o) => o.value)}
-                proceeded={proceededStages.aptitude}
-                onProceed={() => setProceededStages(prev => ({ ...prev, aptitude: true }))}
-                onEligibilityChange={(value) => {
-                  setEligibilityFilters(prev => ({ ...prev, aptitude: value }));
-                  setProceededStages(prev => ({ ...prev, aptitude: false }));
-                }}
+                roundComplete={pipeline.aptitudeDone}
+                applicationsClosed={job?.status === 'CLOSED'}
                 onCreate={() => setIsCreateAptitudeOpen(true)}
                 onEdit={() => setIsEditAptitudeOpen(true)}
-                onStart={() => { setTestToStart({ type: 'aptitude' }); setIsStartConfirmOpen(true); }}
-                onStop={() => { setTestToStart({ type: 'aptitude' }); setIsStopConfirmOpen(true); }}
+                onStart={() => {
+                  setTestToStart({ type: 'aptitude' });
+                  setIsStartConfirmOpen(true);
+                }}
+                onStop={() => {
+                  setTestToStart({ type: 'aptitude' });
+                  setIsStopConfirmOpen(true);
+                }}
                 onView={() => setIsViewTestOpen(true)}
-                onSkip={() => { setStageToSkip('aptitude'); setIsSkipConfirmOpen(true); }}
+                onSkip={
+                  pipeline.aptitudeDone
+                    ? undefined
+                    : () => {
+                        setStageToSkip('aptitude');
+                        setIsSkipConfirmOpen(true);
+                      }
+                }
               />
             ) : activeTab === 'coding' ? (
               <CodingTestContent
                 test={codingTest}
                 jobId={jobId}
                 applications={codingEligibleApplications}
-                eligibilityFilter={eligibilityFilters.coding}
-                eligibilityOptions={eligibilityOptionsByStage.coding}
-                disabledOptionValues={eligibilityOptionsByStage.coding
-                  .filter((o) => (eligibilityCountsByStage.coding?.[o.value] || 0) === 0)
-                  .map((o) => o.value)}
-                proceeded={proceededStages.coding}
-                onProceed={() => setProceededStages(prev => ({ ...prev, coding: true }))}
-                onEligibilityChange={(value) => {
-                  setEligibilityFilters(prev => ({ ...prev, coding: value }));
-                  setProceededStages(prev => ({ ...prev, coding: false }));
-                }}
+                roundComplete={pipeline.codingDone}
+                applicationsClosed={job?.status === 'CLOSED'}
                 onCreate={() => setIsCreateCodingOpen(true)}
                 onEdit={() => setIsEditCodingOpen(true)}
-                onStart={() => { setTestToStart({ type: 'coding' }); setIsStartConfirmOpen(true); }}
-                onStop={() => { setTestToStart({ type: 'coding' }); setIsStopConfirmOpen(true); }}
-                onRestart={() => { setTestToStart({ type: 'coding' }); setIsStartConfirmOpen(true); }}
-                onSkip={() => { setStageToSkip('coding'); setIsSkipConfirmOpen(true); }}
+                onStart={() => {
+                  setTestToStart({ type: 'coding' });
+                  setIsStartConfirmOpen(true);
+                }}
+                onStop={() => {
+                  setTestToStart({ type: 'coding' });
+                  setIsStopConfirmOpen(true);
+                }}
+                onRestart={() => {
+                  setTestToStart({ type: 'coding' });
+                  setIsStartConfirmOpen(true);
+                }}
+                onSkip={
+                  pipeline.codingDone
+                    ? undefined
+                    : () => {
+                        setStageToSkip('coding');
+                        setIsSkipConfirmOpen(true);
+                      }
+                }
               />
             ) : activeTab === 'gd' ? (
               <GDContent
                 job={job}
                 jobId={jobId}
                 applications={gdEligibleApplications}
-                eligibilityFilter={eligibilityFilters.gd}
-                eligibilityOptions={eligibilityOptionsByStage.gd}
-                disabledOptionValues={eligibilityOptionsByStage.gd
-                  .filter((o) => (eligibilityCountsByStage.gd?.[o.value] || 0) === 0)
-                  .map((o) => o.value)}
-                proceeded={proceededStages.gd}
-                onProceed={() => setProceededStages(prev => ({ ...prev, gd: true }))}
-                onEligibilityChange={(value) => {
-                  setEligibilityFilters(prev => ({ ...prev, gd: value }));
-                  setProceededStages(prev => ({ ...prev, gd: false }));
-                }}
-                onSkip={() => { setStageToSkip('gd'); setIsSkipConfirmOpen(true); }}
+                onSkip={
+                  pipeline.gdDone
+                    ? undefined
+                    : () => {
+                        setStageToSkip('gd');
+                        setIsSkipConfirmOpen(true);
+                      }
+                }
               />
             ) : (
               <InterviewContent
                 interviews={interviews}
                 applications={shortlistedApplications}
-                eligibilityFilter={eligibilityFilters.interview}
-                eligibilityOptions={eligibilityOptionsByStage.interview}
-                disabledOptionValues={eligibilityOptionsByStage.interview
-                  .filter((o) => (eligibilityCountsByStage.interview?.[o.value] || 0) === 0)
-                  .map((o) => o.value)}
-                proceeded={proceededStages.interview}
-                onProceed={() => setProceededStages(prev => ({ ...prev, interview: true }))}
-                onEligibilityChange={(value) => {
-                  setEligibilityFilters(prev => ({ ...prev, interview: value }));
-                  setProceededStages(prev => ({ ...prev, interview: false }));
+                roundComplete={pipeline.interviewDone}
+                onSkip={
+                  pipeline.interviewDone
+                    ? undefined
+                    : () => {
+                        setStageToSkip('interview');
+                        setIsSkipConfirmOpen(true);
+                      }
+                }
+                onMarkInterviewPhaseComplete={
+                  pipeline.interviewDone ? undefined : handleMarkInterviewPhaseComplete
+                }
+                markInterviewPhaseCompleteLoading={markInterviewCompleteLoading}
+                onStartInterview={(application) => {
+                  setSelectedApplication(application);
+                  setIsInterviewOpen(true);
                 }}
-                onSkip={() => { setStageToSkip('interview'); setIsSkipConfirmOpen(true); }}
-                job={job}
-                jobId={jobId}
-                onStartInterview={(application) => { setSelectedApplication(application); setIsInterviewOpen(true); }}
                 onRefresh={() => fetchJobAndTests(false)}
               />
             )}
@@ -673,10 +687,10 @@ const RecruitmentProcess = () => {
           job?.status !== 'CLOSED'
             ? `You must close applications for this job before starting any tests.`
             : testToStart?.type === 'coding'
-              ? `Starting the coding test will allow ${eligibilityLabelMap[eligibilityFilters.coding]?.toLowerCase() || 'eligible candidates'} to take the test. Continue?`
-              : `Starting the test will allow ${eligibilityLabelMap[eligibilityFilters.aptitude]?.toLowerCase() || 'eligible candidates'} to take the test. Continue?`
+              ? `Applicants who cleared the aptitude round will be invited to take this coding test. Continue?`
+              : `Shortlisted applicants will be invited to take this aptitude test. Continue?`
         }
-        type={job?.status !== 'CLOSED' ? "error" : "warning"}
+        type={job?.status !== 'CLOSED' ? 'error' : 'warning'}
         onClose={() => setIsStartConfirmOpen(false)}
         actions={
           job?.status !== 'CLOSED'
@@ -686,9 +700,6 @@ const RecruitmentProcess = () => {
                 {
                   label: startLoading ? 'Starting...' : 'Start Test',
                   onClick: handleStartTest,
-                  disabled:
-                    (testToStart?.type === 'coding' && !proceededStages.coding) ||
-                    (testToStart?.type !== 'coding' && !proceededStages.aptitude),
                   autoClose: false,
                 },
               ]
@@ -714,7 +725,11 @@ const RecruitmentProcess = () => {
       <Modal
         open={isSkipConfirmOpen}
         title={`Skip ${stageToSkip === 'aptitude' ? 'Aptitude Test' : stageToSkip === 'coding' ? 'Coding Test' : stageToSkip === 'gd' ? 'Group Discussion' : 'Interview'}`}
-        message={`Are you sure you want to skip this round? All eligible candidates will be automatically marked as passed and advanced to the next stage.`}
+        message={
+          stageToSkip === 'interview'
+            ? 'This permanently marks all GD-passed candidates as selected for this job and completes the interview round. Continue?'
+            : 'Eligible candidates at this pipeline stage will be marked as passed and advanced. You cannot undo this bulk action. Continue?'
+        }
         type="warning"
         onClose={() => setIsSkipConfirmOpen(false)}
         actions={[
@@ -778,64 +793,12 @@ const EligibleStudentsList = ({ applications, title }) => (
   </div>
 );
 
-const EligibilitySelector = ({
-  value,
-  onChange,
-  label = 'Eligibility',
-  options = ELIGIBILITY_OPTIONS,
-  disabledOptionValues = [],
-}) => (
-  <div className="flex items-center gap-3">
-    <span className="text-sm font-medium text-slate-700">{label}</span>
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="border border-slate-300 rounded-md px-3 py-2 text-sm bg-white"
-    >
-      {options.map((opt) => (
-        <option
-          key={opt.value}
-          value={opt.value}
-          disabled={disabledOptionValues.includes(opt.value)}
-          className={disabledOptionValues.includes(opt.value) ? 'text-slate-300' : ''}
-        >
-          {opt.label}
-        </option>
-      ))}
-    </select>
-  </div>
-);
-
-const ProceedBanner = ({ count, proceeded, onProceed }) => (
-  <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 flex items-center justify-between">
-    <p className="text-sm text-slate-700">
-      Selected list: <span className="font-semibold">{count}</span> candidates
-      {proceeded ? ' (proceeded)' : ''}
-    </p>
-    {!proceeded ? (
-      <button
-        type="button"
-        onClick={onProceed}
-        className="px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
-      >
-        Proceed with selected list
-      </button>
-    ) : (
-      <span className="text-xs text-green-700 font-medium">Ready to continue</span>
-    )}
-  </div>
-);
-
 // Aptitude Test Content Component
 const AptitudeTestContent = ({
   test,
   applications,
-  eligibilityFilter,
-  eligibilityOptions,
-  disabledOptionValues,
-  proceeded,
-  onProceed,
-  onEligibilityChange,
+  roundComplete,
+  applicationsClosed,
   onCreate,
   onEdit,
   onStart,
@@ -860,40 +823,38 @@ const AptitudeTestContent = ({
           <Plus className="w-5 h-5" />
           Create Aptitude Test
         </button>
-        <button
-          onClick={onSkip}
-          className="inline-flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-3"
-        >
-          <FastForward className="w-5 h-5" />
-          Skip Round
-        </button>
-        <div className="mt-6 flex justify-center">
-          <EligibilitySelector
-            value={eligibilityFilter}
-            options={eligibilityOptions}
-            disabledOptionValues={disabledOptionValues}
-            onChange={onEligibilityChange}
-            label="Aptitude Eligibility"
-          />
+        {onSkip && (
+          <button
+            onClick={onSkip}
+            className="inline-flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-3"
+          >
+            <FastForward className="w-5 h-5" />
+            Skip Round
+          </button>
+        )}
+        {roundComplete && (
+          <p className="mt-4 text-sm text-green-800 bg-green-50 border border-green-200 rounded px-4 py-2 inline-block">
+            This stage is complete. Continue in the Coding tab.
+          </p>
+        )}
+        <div className="mt-8 text-sm text-slate-600 border-t pt-6 max-w-xl mx-auto">
+          Candidates: <strong>shortlisted</strong> applicants only.
         </div>
-        <div className="mt-4">
-          <ProceedBanner count={applications?.length || 0} proceeded={proceeded} onProceed={onProceed} />
-        </div>
-        <EligibleStudentsList applications={applications} title="Eligible" />
+        <EligibleStudentsList applications={applications} title="Cohort at this stage" />
       </div>
     );
   }
 
+  const startBlocked = roundComplete || !applicationsClosed || test.status === 'STARTED';
+  const restartBlocked = roundComplete || !applicationsClosed;
+
   return (
     <div className="space-y-6">
-      <EligibilitySelector
-        value={eligibilityFilter}
-        options={eligibilityOptions}
-        disabledOptionValues={disabledOptionValues}
-        onChange={onEligibilityChange}
-        label="Aptitude Eligibility"
-      />
-      <ProceedBanner count={applications?.length || 0} proceeded={proceeded} onProceed={onProceed} />
+      {roundComplete && (
+        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900">
+          Aptitude stage is closed. Coding is available when you open that tab (after this round was finished or skipped).
+        </div>
+      )}
       {/* Status Badge */}
       <div className="flex items-center justify-between">
         <div>
@@ -939,19 +900,33 @@ const AptitudeTestContent = ({
           <div className="text-sm text-gray-600 mb-1">Status</div>
           <div className="text-2xl font-bold text-gray-800">{test.status}</div>
         </div>
-      </div>      {/* Actions */}
+      </div>
+      <p className="text-xs text-slate-500 pt-2">
+        Cohort: <strong>shortlisted</strong> applicants (fixed by pipeline).
+      </p>
+
+      {/* Actions */}
       <div className="flex flex-wrap gap-3 pt-4 border-t">
         {test.status === 'CREATED' && (
           <>
             <button
+              type="button"
               onClick={onStart}
-              disabled={!proceeded}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              disabled={startBlocked}
+              title={
+                roundComplete
+                  ? 'Round already complete'
+                  : !applicationsClosed
+                    ? 'Close job applications first'
+                    : ''
+              }
+              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
             >
               <Play className="w-4 h-4" />
               Start Test
             </button>
             <button
+              type="button"
               onClick={onEdit}
               className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
@@ -962,6 +937,7 @@ const AptitudeTestContent = ({
         )}
         {test.status === 'STARTED' && (
           <button
+            type="button"
             onClick={onStop}
             className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
           >
@@ -972,14 +948,16 @@ const AptitudeTestContent = ({
         {test.status === 'STOPPED' && (
           <>
             <button
+              type="button"
               onClick={onStart}
-              disabled={!proceeded}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              disabled={restartBlocked}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
             >
               <Play className="w-4 h-4" />
               Restart Test
             </button>
             <button
+              type="button"
               onClick={onEdit}
               className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
@@ -990,6 +968,7 @@ const AptitudeTestContent = ({
         )}
         {test.status !== 'STOPPED' && test.status !== 'STARTED' && (
           <button
+            type="button"
             onClick={onView}
             className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
           >
@@ -999,11 +978,17 @@ const AptitudeTestContent = ({
         )}
         {(test.status === 'CREATED' || test.status === 'CLOSED' || test.status === 'STOPPED') && (
           <button
+            type="button"
             onClick={() => {
-              if(window.confirm('Are you sure you want to recreate this test? This will permanently delete the current test and all its questions.')) {
+              if (
+                window.confirm(
+                  'Are you sure you want to recreate this test? This will permanently delete the current test and all its questions.'
+                )
+              ) {
                 onCreate();
               }
             }}
+            disabled={test.status === 'STARTED'}
             className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
             title="Delete this test and start over"
           >
@@ -1011,16 +996,19 @@ const AptitudeTestContent = ({
             Recreate Test
           </button>
         )}
-        <button
-          onClick={onSkip}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-auto"
-        >
-          <FastForward className="w-4 h-4" />
-          Skip Round
-        </button>
+        {onSkip && (
+          <button
+            type="button"
+            onClick={onSkip}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-auto"
+          >
+            <FastForward className="w-4 h-4" />
+            Skip Round
+          </button>
+        )}
       </div>
 
-      <EligibleStudentsList applications={applications} title="Eligible" />
+      <EligibleStudentsList applications={applications} title="Cohort at this stage" />
     </div>
   );
 };
@@ -1030,12 +1018,8 @@ const CodingTestContent = ({
   test,
   jobId,
   applications,
-  eligibilityFilter,
-  eligibilityOptions,
-  disabledOptionValues,
-  proceeded,
-  onProceed,
-  onEligibilityChange,
+  roundComplete,
+  applicationsClosed,
   onCreate,
   onEdit,
   onStart,
@@ -1054,32 +1038,32 @@ const CodingTestContent = ({
           Create a coding test to evaluate candidates' programming skills
         </p>
         <button
+          type="button"
           onClick={onCreate}
           className="inline-flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
         >
           <Plus className="w-5 h-5" />
           Create Coding Test
         </button>
-        <button
-          onClick={onSkip}
-          className="inline-flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-3"
-        >
-          <FastForward className="w-5 h-5" />
-          Skip Round
-        </button>
-        <div className="mt-6 flex justify-center">
-          <EligibilitySelector
-            value={eligibilityFilter}
-            options={eligibilityOptions}
-            disabledOptionValues={disabledOptionValues}
-            onChange={onEligibilityChange}
-            label="Coding Eligibility"
-          />
+        {onSkip && (
+          <button
+            type="button"
+            onClick={onSkip}
+            className="inline-flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-3"
+          >
+            <FastForward className="w-5 h-5" />
+            Skip Round
+          </button>
+        )}
+        {roundComplete && (
+          <p className="mt-4 text-sm text-green-800 bg-green-50 border border-green-200 rounded px-4 py-2 inline-block">
+            This stage is complete. Continue in Group Discussion.
+          </p>
+        )}
+        <div className="mt-8 text-sm text-slate-600 border-t pt-6 max-w-xl mx-auto">
+          Candidates: <strong>cleared aptitude</strong> (fixed cohort).
         </div>
-        <div className="mt-4">
-          <ProceedBanner count={applications?.length || 0} proceeded={proceeded} onProceed={onProceed} />
-        </div>
-        <EligibleStudentsList applications={applications} title="Eligible" />
+        <EligibleStudentsList applications={applications} title="Cohort at this stage" />
       </div>
     );
   }
@@ -1096,16 +1080,20 @@ const CodingTestContent = ({
     71: 'Python',
   };
 
+  const startBlocked = roundComplete || !applicationsClosed || test.status === 'STARTED';
+  const restartBlocked = roundComplete || !applicationsClosed;
+
   return (
     <div className="space-y-6">
-      <EligibilitySelector
-        value={eligibilityFilter}
-        options={eligibilityOptions}
-        disabledOptionValues={disabledOptionValues}
-        onChange={onEligibilityChange}
-        label="Coding Eligibility"
-      />
-      <ProceedBanner count={applications?.length || 0} proceeded={proceeded} onProceed={onProceed} />
+      {roundComplete && (
+        <div className="rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-900">
+          Coding evaluation is closed. Group Discussion unlocks once this stage is finished or skipped.
+        </div>
+      )}
+      <p className="text-xs text-slate-500">
+        Cohort: <strong>aptitude‑passed</strong> applicants only (pipeline order).
+      </p>
+
       {/* Status Badge */}
       <div className="flex items-center justify-between">
         <div>
@@ -1182,14 +1170,23 @@ const CodingTestContent = ({
         {test.status === 'CREATED' && (
           <>
             <button
+              type="button"
               onClick={onStart}
-              disabled={!proceeded}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              disabled={startBlocked}
+              title={
+                roundComplete
+                  ? 'Round already complete'
+                  : !applicationsClosed
+                    ? 'Close job applications first'
+                    : ''
+              }
+              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
             >
               <Play className="w-4 h-4" />
               Start Test
             </button>
             <button
+              type="button"
               onClick={onEdit}
               className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
@@ -1200,6 +1197,7 @@ const CodingTestContent = ({
         )}
         {test.status === 'STARTED' && (
           <button
+            type="button"
             onClick={onStop}
             className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
           >
@@ -1210,14 +1208,16 @@ const CodingTestContent = ({
         {test.status === 'STOPPED' && (
           <>
             <button
+              type="button"
               onClick={onRestart}
-              disabled={!proceeded}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              disabled={restartBlocked}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
             >
               <Play className="w-4 h-4" />
               Restart Test
             </button>
             <button
+              type="button"
               onClick={onEdit}
               className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
@@ -1226,16 +1226,19 @@ const CodingTestContent = ({
             </button>
           </>
         )}
-        <button
-          onClick={onSkip}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-auto"
-        >
-          <FastForward className="w-4 h-4" />
-          Skip Round
-        </button>
+        {onSkip && (
+          <button
+            type="button"
+            onClick={onSkip}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-auto"
+          >
+            <FastForward className="w-4 h-4" />
+            Skip Round
+          </button>
+        )}
       </div>
 
-      <EligibleStudentsList applications={applications} title="Eligible" />
+      <EligibleStudentsList applications={applications} title="Cohort at this stage" />
       <CodingSubmissionsSection jobId={jobId} applications={applications} />
     </div>
   );
@@ -1347,18 +1350,7 @@ const CodingSubmissionsSection = ({ jobId, applications }) => {
   );
 };
 
-const GDContent = ({
-  job,
-  jobId,
-  applications,
-  eligibilityFilter,
-  eligibilityOptions,
-  disabledOptionValues,
-  proceeded,
-  onProceed,
-  onEligibilityChange,
-  onSkip
-}) => {
+const GDContent = ({ job, jobId, applications, onSkip }) => {
   return (
     <CompanyGDManager
       jobId={jobId}
@@ -1366,20 +1358,13 @@ const GDContent = ({
       applications={applications}
       token={localStorage.getItem('token')}
       onSkip={onSkip}
-      eligibilitySelector={
-        <EligibilitySelector
-          value={eligibilityFilter}
-          options={eligibilityOptions}
-          disabledOptionValues={disabledOptionValues}
-          onChange={onEligibilityChange}
-          label="GD Eligibility"
-        />
-      }
-      proceedBanner={
-        <ProceedBanner count={applications?.length || 0} proceeded={proceeded} onProceed={onProceed} />
-      }
       eligibleList={
-        <EligibleStudentsList applications={applications} title="Eligible" />
+        <EligibleStudentsList applications={applications} title="Cohort at this stage (coding‑passed)" />
+      }
+      pipelineNotice={
+        <p className="text-xs text-slate-500">
+          Invite list is fixed to candidates who cleared coding (minimum 3 to run a GD).
+        </p>
       }
     />
   );
@@ -1389,24 +1374,64 @@ const GDContent = ({
 const InterviewContent = ({
   interviews,
   applications,
-  eligibilityFilter,
-  eligibilityOptions,
-  disabledOptionValues,
-  proceeded,
-  onProceed,
-  onEligibilityChange,
+  roundComplete,
   onSkip,
-  job,
-  jobId,
+  onMarkInterviewPhaseComplete,
+  markInterviewPhaseCompleteLoading,
   onStartInterview,
   onRefresh,
 }) => {
   const hasInterviews = interviews && interviews.length > 0;
 
+  const cohortHint = (
+    <p className="text-xs text-slate-600 mb-4">
+      Cohort is fixed to <strong>GD‑passed</strong> candidates.&nbsp;
+      <strong>Skip round</strong> marks everyone in that cohort as selected.&nbsp;
+      <strong>Mark interview phase complete</strong> closes the phase without changing application statuses.
+    </p>
+  );
+
+  const actionRow = (
+    <div className="flex flex-wrap gap-3 items-center justify-center md:justify-end mb-6">
+      <button
+        type="button"
+        onClick={() => {
+          document.getElementById('candidates-list-section')?.scrollIntoView({ behavior: 'smooth' });
+        }}
+        className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+      >
+        <Video className="w-4 h-4" />
+        Go to candidates
+      </button>
+      {onMarkInterviewPhaseComplete && (
+        <button
+          type="button"
+          onClick={onMarkInterviewPhaseComplete}
+          disabled={!!markInterviewPhaseCompleteLoading || !!roundComplete}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 transition-colors disabled:opacity-50"
+        >
+          <CheckCircle className="w-4 h-4" />
+          {markInterviewPhaseCompleteLoading ? 'Saving…' : 'Mark interview phase complete'}
+        </button>
+      )}
+      {onSkip && (
+        <button
+          type="button"
+          onClick={onSkip}
+          disabled={!!roundComplete}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-800 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors disabled:opacity-50"
+        >
+          <FastForward className="w-4 h-4" />
+          Skip Round
+        </button>
+      )}
+    </div>
+  );
+
   const candidatesList = (
     <div id="candidates-list-section" className="mt-8 border-t pt-6 text-left">
       <h4 className="text-lg font-semibold text-gray-800 mb-4">
-        Eligible Candidates
+        Cohort at this stage
       </h4>
       {applications && applications.length > 0 ? (
         <div className="space-y-3">
@@ -1454,9 +1479,10 @@ const InterviewContent = ({
                     )}
                   </div>
                   <button
+                    type="button"
                     onClick={() => onStartInterview(application)}
-                    disabled={!proceeded}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    disabled={!!roundComplete}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50"
                   >
                     <Video className="w-4 h-4" />
                     {existingInterview ? 'View Q&A / Evaluate' : 'Start Interview'}
@@ -1476,46 +1502,19 @@ const InterviewContent = ({
 
   if (!hasInterviews) {
     return (
-      <div className="text-center py-12">
+      <div className="py-12 text-center">
+        {roundComplete ? (
+          <div className="mb-8 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-green-900 text-sm max-w-xl mx-auto">
+            Interview phase is marked complete for this job.
+          </div>
+        ) : null}
         <Video className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-        <h3 className="text-lg font-semibold text-gray-800 mb-2">No Interviews Started</h3>
-        <p className="text-gray-600 mb-6">Start individual interviews with eligible candidates</p>
-        <button
-          onClick={() => {
-            if (!proceeded) {
-              alert('Please proceed candidates to this stage first.');
-              return;
-            }
-            if (!applications || applications.length === 0) {
-              alert('No eligible candidates to interview.');
-              return;
-            }
-            document.getElementById('candidates-list-section')?.scrollIntoView({ behavior: 'smooth' });
-          }}
-          className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-        >
-          <Video className="w-5 h-5" />
-          Start Interview
-        </button>
-        <button
-          onClick={onSkip}
-          className="inline-flex items-center gap-2 px-6 py-3 bg-slate-100 text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors ml-3"
-        >
-          <FastForward className="w-5 h-5" />
-          Skip Round
-        </button>
-        <div className="mt-6 flex justify-center">
-          <EligibilitySelector
-            value={eligibilityFilter}
-            options={eligibilityOptions}
-            disabledOptionValues={disabledOptionValues}
-            onChange={onEligibilityChange}
-            label="Interview Eligibility"
-          />
-        </div>
-        <div className="mt-4">
-          <ProceedBanner count={applications?.length || 0} proceeded={proceeded} onProceed={onProceed} />
-        </div>
+        <h3 className="text-lg font-semibold text-gray-800 mb-2">Interview</h3>
+        <p className="text-gray-600 mb-4">
+          Conduct AI-powered interviews when ready, or skip / mark phase complete below.
+        </p>
+        {cohortHint}
+        {actionRow}
         {candidatesList}
       </div>
     );
@@ -1523,30 +1522,51 @@ const InterviewContent = ({
 
   return (
     <div className="space-y-6">
-      <EligibilitySelector
-        value={eligibilityFilter}
-        options={eligibilityOptions}
-        disabledOptionValues={disabledOptionValues}
-        onChange={onEligibilityChange}
-        label="Interview Eligibility"
-      />
-      <ProceedBanner count={applications?.length || 0} proceeded={proceeded} onProceed={onProceed} />
-      <div className="flex items-center justify-between">
+      {roundComplete ? (
+        <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-green-900 text-sm">
+          Interview phase is complete. Actions below may be unavailable.
+        </div>
+      ) : null}
+      {cohortHint}
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b pb-4">
         <div>
-          <h3 className="text-xl font-bold text-gray-800 mb-2">
-            Interview Management
-          </h3>
+          <h3 className="text-xl font-bold text-gray-800 mb-2">Interview management</h3>
           <p className="text-sm text-gray-600">
-            Conduct AI-powered interviews and review candidate Q&A with Gemini evaluation
+            Review sessions and Gemini evaluations here.
           </p>
         </div>
-        <button
-          onClick={onRefresh}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex flex-wrap gap-2 items-center">
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Refresh
+          </button>
+          {onMarkInterviewPhaseComplete && (
+            <button
+              type="button"
+              onClick={onMarkInterviewPhaseComplete}
+              disabled={!!markInterviewPhaseCompleteLoading || !!roundComplete}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-700 text-white rounded-lg hover:bg-emerald-800 transition-colors disabled:opacity-50"
+            >
+              <CheckCircle className="w-4 h-4" />
+              {markInterviewPhaseCompleteLoading ? 'Saving…' : 'Mark phase complete'}
+            </button>
+          )}
+          {onSkip && (
+            <button
+              type="button"
+              onClick={onSkip}
+              disabled={!!roundComplete}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-800 border border-slate-300 rounded-lg hover:bg-slate-200 transition-colors disabled:opacity-50"
+            >
+              <FastForward className="w-4 h-4" />
+              Skip round
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Shortlisted Applications */}
@@ -1604,8 +1624,10 @@ const InterviewContent = ({
                   </div>
                   {interview.application && (
                     <button
+                      type="button"
                       onClick={() => onStartInterview(interview.application)}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors"
+                      disabled={!!roundComplete}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors disabled:opacity-50"
                     >
                       <Video className="w-4 h-4" />
                       View Q&A / Evaluate
