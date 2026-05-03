@@ -8,9 +8,13 @@ export default function setupGDSockets(io) {
     console.log('[Socket] User connected:', socket.id);
 
     socket.on('join_gd', async ({ jobId, userId, role, userName }) => {
-      const parsedJobId = parseInt(jobId);
+      const parsedJobId = parseInt(String(jobId ?? ''), 10);
+      if (!Number.isFinite(parsedJobId) || parsedJobId <= 0) {
+        console.warn('[Socket] join_gd ignored: invalid jobId', jobId);
+        return;
+      }
       socket.join(`gd_${parsedJobId}`);
-      console.log(`[Socket] ${role} ${userId} joined room gd_${parsedJobId}`);
+      console.log(`[Socket] ${role} ${userId} joined socket room gd_${parsedJobId}`);
 
       if (!activeGDs.has(parsedJobId)) {
         // Fetch from DB if missing in memory (e.g. after server restart)
@@ -75,24 +79,42 @@ export default function setupGDSockets(io) {
       };
 
       socket.data.gdJobId = parsedJobId;
-      socket.data.gdUserId = Number(userId) || null;
+      socket.data.gdUserId = normalizeStudentId(userId);
       socket.data.gdRole = role;
       socket.data.gdUserName = userName || null;
 
       if (role === 'student' && currentState) {
-        const sid = Number(userId);
-        const inScope = !Array.isArray(currentState.invitedStudentIds) || currentState.invitedStudentIds.length === 0 || currentState.invitedStudentIds.includes(sid);
-        if (sid && inScope) {
-          const joined = new Set((currentState.joinedStudentIds || []).map(Number));
+        const sid = normalizeStudentId(userId);
+        const invites = (currentState.invitedStudentIds || [])
+          .map((x) => normalizeStudentId(x))
+          .filter(Boolean);
+        const openInvite = invites.length === 0;
+        const inScope = openInvite || (sid != null && invites.includes(sid));
+
+        if (sid != null && inScope) {
+          const joined = new Set(
+            (currentState.joinedStudentIds || [])
+              .map((x) => normalizeStudentId(x))
+              .filter(Boolean)
+          );
           joined.add(sid);
           currentState.joinedStudentIds = Array.from(joined);
 
-          const participants = Array.isArray(currentState.joinedParticipants) ? currentState.joinedParticipants : [];
-          if (!participants.some((p) => Number(p.studentId) === sid)) {
+          const participants = Array.isArray(currentState.joinedParticipants)
+            ? [...currentState.joinedParticipants]
+            : [];
+          if (!participants.some((p) => normalizeStudentId(p.studentId) === sid)) {
             participants.push({ studentId: sid, name: userName || `Student ${sid}` });
           }
           currentState.joinedParticipants = participants;
+        } else if (sid != null && !inScope) {
+          console.warn(
+            `[Socket] Student ${sid} not in invited list for job ${parsedJobId} (invites: ${invites.join(',') || 'none'})`
+          );
+        } else {
+          console.warn('[Socket] join_gd: student missing valid userId', userId);
         }
+
         const roomPayload = buildRoomUpdatePayload(currentState);
         io.to(`gd_${parsedJobId}`).emit('gd_room_update', roomPayload);
         io.to(`gd_${parsedJobId}`).emit('gd_recruiter_ready', {
@@ -101,12 +123,12 @@ export default function setupGDSockets(io) {
             ? 'All invited candidates joined. Recruiter can start GD.'
             : 'Waiting for all invited candidates to join.',
         });
+        io.to(`gd_${parsedJobId}`).emit('gd_state_update', currentState);
+      } else if (role !== 'student') {
+        socket.emit('gd_room_update', buildRoomUpdatePayload(currentState));
       }
 
-      socket.emit(
-        'gd_state_update',
-        currentState
-      );
+      socket.emit('gd_state_update', currentState);
     });
 
     socket.on('request_speak', ({ jobId, studentId, studentName }) => {
@@ -128,16 +150,20 @@ export default function setupGDSockets(io) {
 
     socket.on('disconnect', () => {
       const parsedJobId = Number(socket.data?.gdJobId);
-      const userId = Number(socket.data?.gdUserId);
+      const userId = normalizeStudentId(socket.data?.gdUserId);
       const role = socket.data?.gdRole;
       const userName = socket.data?.gdUserName;
       if (parsedJobId && role === 'student' && userId) {
         const gd = activeGDs.get(parsedJobId);
         if (gd) {
-          const remaining = new Set((gd.joinedStudentIds || []).map(Number));
+          const remaining = new Set(
+            (gd.joinedStudentIds || []).map((x) => normalizeStudentId(x)).filter(Boolean)
+          );
           remaining.delete(userId);
           gd.joinedStudentIds = Array.from(remaining);
-          gd.joinedParticipants = (gd.joinedParticipants || []).filter((p) => Number(p.studentId) !== userId);
+          gd.joinedParticipants = (gd.joinedParticipants || []).filter(
+            (p) => normalizeStudentId(p.studentId) !== userId
+          );
           const roomPayload = buildRoomUpdatePayload(gd);
           io.to(`gd_${parsedJobId}`).emit('gd_room_update', roomPayload);
           io.to(`gd_${parsedJobId}`).emit('gd_recruiter_ready', {
@@ -146,11 +172,17 @@ export default function setupGDSockets(io) {
               ? 'All invited candidates joined. Recruiter can start GD.'
               : `${userName || 'A candidate'} left. Waiting for all invited candidates to join.`,
           });
+          io.to(`gd_${parsedJobId}`).emit('gd_state_update', gd);
         }
       }
       console.log('[Socket] User disconnected:', socket.id);
     });
   });
+}
+
+function normalizeStudentId(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function buildRoomUpdatePayload(gd) {

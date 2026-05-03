@@ -109,13 +109,13 @@ const RecruitmentProcess = () => {
     try {
       // Fetch job details from jobs list (since there's no single job endpoint)
       try {
-        const jobsRes = await fetch(`${API_BASE_URL}/jobs?limit=100`, {
+        const jobsRes = await fetch(`${API_BASE_URL}/jobs/my-jobs`, {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
         });
         if (jobsRes.ok) {
           const jobsData = await jobsRes.json();
           const allJobs = jobsData.data?.jobs || [];
-          const foundJob = allJobs.find(j => j.id === parseInt(jobId));
+          const foundJob = allJobs.find((j) => j.id === parseInt(jobId, 10));
           if (foundJob) {
             setJob(foundJob);
           }
@@ -260,25 +260,61 @@ const RecruitmentProcess = () => {
     [allApplications, filterApplicationsByEligibility]
   );
 
+  /** Coding-passed cohort (eligible for GD) — proves coding round produced results or was skipped. */
+  const hasCodingPassedApplicants = useMemo(
+    () =>
+      filterApplicationsByEligibility(allApplications || [], PIPELINE_STAGE_COHORT.gd).length > 0,
+    [allApplications, filterApplicationsByEligibility]
+  );
+
+  /** GD-passed cohort (eligible for interviews) — unlocks Interview tab when skip/advanced left DB flags stale. */
+  const hasGdPassedApplicants = useMemo(
+    () =>
+      filterApplicationsByEligibility(allApplications || [], PIPELINE_STAGE_COHORT.interview).length >
+      0,
+    [allApplications, filterApplicationsByEligibility]
+  );
+
   const canStartAptitudeTest = !!(job?.status === 'CLOSED' || hasShortlistedApplicants);
   const canStartCodingTest = !!(job?.status === 'CLOSED' || hasAptitudePassedApplicants);
 
   const pipeline = useMemo(
     () => ({
-      /** Job applications closed — required before aptitude/tests (existing backend rule). */
       shortlistingDone: !!(job?.status === 'CLOSED'),
-      aptitudeDone: !!(job?.pipelineAptitudeDone || aptitudeTest?.status === 'CLOSED'),
-      codingDone: !!(job?.pipelineCodingDone || codingTest?.status === 'STOPPED'),
-      gdDone: !!(job?.pipelineGdDone || job?.groupDiscussion?.status === 'COMPLETED'),
+      aptitudeDone: !!(
+        job?.pipelineAptitudeDone ||
+        aptitudeTest?.status === 'CLOSED' ||
+        hasAptitudePassedApplicants
+      ),
+      codingDone: !!(
+        job?.pipelineCodingDone ||
+        codingTest?.status === 'STOPPED' ||
+        hasCodingPassedApplicants
+      ),
+      gdDone: !!(
+        job?.pipelineGdDone ||
+        job?.groupDiscussion?.status === 'COMPLETED' ||
+        hasGdPassedApplicants
+      ),
       interviewDone: !!job?.pipelineInterviewDone,
     }),
-    [job, aptitudeTest, codingTest]
+    [
+      job,
+      aptitudeTest,
+      codingTest,
+      hasAptitudePassedApplicants,
+      hasCodingPassedApplicants,
+      hasGdPassedApplicants,
+    ]
   );
 
   const tabAccessible = useMemo(
     () => ({
       shortlisting: true,
-      aptitude: pipeline.shortlistingDone || hasShortlistedApplicants,
+      aptitude:
+        pipeline.shortlistingDone ||
+        hasShortlistedApplicants ||
+        pipeline.aptitudeDone,
       coding: pipeline.aptitudeDone,
       gd: pipeline.codingDone,
       interview: pipeline.gdDone,

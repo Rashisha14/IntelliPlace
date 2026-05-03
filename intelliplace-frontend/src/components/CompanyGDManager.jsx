@@ -125,12 +125,18 @@ export default function CompanyGDManager({
   useEffect(() => {
     if (!jobId || !token) return;
 
-    const backendUrl = API_BASE_URL.replace('/api', '');
-    const newSocket = io(backendUrl, { withCredentials: true });
+    const backendUrl = API_BASE_URL.replace(/\/api\/?$/, '');
+    const numericJobId = parseInt(String(jobId), 10);
+    const newSocket = io(backendUrl, {
+      withCredentials: true,
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionDelay: 800,
+    });
 
     newSocket.on('connect', () => {
       newSocket.emit('join_gd', {
-        jobId,
+        jobId: numericJobId,
         userId: 'company',
         role: 'company',
         userName: 'Recruiter',
@@ -159,6 +165,20 @@ export default function CompanyGDManager({
       newSocket.disconnect();
     };
   }, [jobId, token]);
+
+  useEffect(() => {
+    if (!isSetupOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setIsSetupOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isSetupOpen]);
 
   useEffect(() => {
     let timer;
@@ -342,15 +362,40 @@ export default function CompanyGDManager({
         {eligibleList && <div className="mt-8 border-t pt-6 text-left">{eligibleList}</div>}
 
         {isSetupOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 text-left">
-            <div className="w-full max-w-md overflow-hidden rounded-lg bg-white shadow-xl">
-              <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-                <h3 className="text-lg font-bold">Setup Group Discussion</h3>
-                <button type="button" onClick={() => setIsSetupOpen(false)} aria-label="Close">
-                  <X className="h-5 w-5 text-gray-400 hover:text-gray-600" />
-                </button>
+          <div
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/50 p-4 py-8 text-left sm:flex sm:min-h-full sm:items-start sm:justify-center sm:py-12"
+            onClick={() => setIsSetupOpen(false)}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="gd-setup-title"
+          >
+            <div
+              className="relative mx-auto my-2 flex w-full max-h-[min(calc(100vh-2rem),42rem)] max-w-lg flex-col overflow-hidden rounded-lg bg-white shadow-xl sm:my-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 sm:px-6 sm:py-4">
+                <h3 id="gd-setup-title" className="text-lg font-bold text-gray-900">
+                  Setup Group Discussion
+                </h3>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsSetupOpen(false)}
+                    className="rounded-lg px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-100"
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsSetupOpen(false)}
+                    className="rounded-full p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                    aria-label="Close setup"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
               </div>
-              <div className="space-y-4 p-6">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-6">
                 <div>
                   <label className="mb-1 block text-sm font-medium">Discussion topic</label>
                   <textarea
@@ -446,7 +491,7 @@ export default function CompanyGDManager({
                     </p>
                   )}
                   {pickedStudentIds.length > 0 && (
-                    <div className="mt-3 max-h-36 overflow-y-auto rounded border border-gray-200 bg-white p-3 text-left">
+                    <div className="mt-3 max-h-[min(12rem,calc(100vh-20rem))] overflow-y-auto rounded border border-gray-200 bg-white p-3 text-left sm:max-h-48">
                       <p className="mb-2 text-xs font-semibold text-gray-700">
                         Selected ({pickedStudentIds.length})
                       </p>
@@ -459,11 +504,11 @@ export default function CompanyGDManager({
                   )}
                 </div>
               </div>
-              <div className="flex justify-end gap-3 border-t bg-gray-50 px-6 py-4">
+              <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t bg-gray-50 px-4 py-3 sm:gap-3 sm:px-6 sm:py-4">
                 <button
                   type="button"
                   onClick={() => setIsSetupOpen(false)}
-                  className="rounded px-4 py-2 text-gray-600 hover:bg-gray-100"
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-200/80"
                 >
                   Cancel
                 </button>
