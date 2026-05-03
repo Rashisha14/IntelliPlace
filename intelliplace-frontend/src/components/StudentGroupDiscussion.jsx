@@ -12,7 +12,7 @@ import {
   Radio,
   Volume2,
 } from 'lucide-react';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL, getRealtimeBaseUrl } from '../config';
 import { getCurrentUser } from '../utils/auth';
 
 const MAX_HOLD_MS = 90_000;
@@ -91,15 +91,23 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
   useEffect(() => {
     if (!isOpen || !jobId || user == null || user.id == null) return;
 
-    const backendUrl = API_BASE_URL.replace(/\/api\/?$/, '');
+    const rt = getRealtimeBaseUrl();
     const numericJobId = parseInt(String(jobId), 10);
     const numericUserId = Number(user.id);
 
-    const newSocket = io(backendUrl, {
+    const newSocket = io(rt, {
+      path: '/socket.io',
       withCredentials: true,
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 800,
+    });
+
+    newSocket.on('connect_error', (err) => {
+      showToast(
+        `Cannot reach live room (${err?.message || 'network error'}). Open this app using your recruiter PC’s Wi‑Fi IP and port (same URL they use for testing), not localhost.`,
+        'error'
+      );
     });
 
     newSocket.on('connect', () => {
@@ -133,7 +141,7 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
       }
       if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
     };
-  }, [isOpen, jobId, user?.id, user?.name]);
+  }, [isOpen, jobId, user?.id, user?.name, showToast]);
 
   useEffect(() => {
     const st = gdState?.status;

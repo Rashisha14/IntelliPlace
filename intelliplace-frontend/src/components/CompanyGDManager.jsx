@@ -16,7 +16,7 @@ import {
   FastForward,
   Shuffle,
 } from 'lucide-react';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL, getRealtimeBaseUrl } from '../config';
 import Swal from 'sweetalert2';
 
 function uniqueStudentIdsFromApplications(apps) {
@@ -92,6 +92,8 @@ export default function CompanyGDManager({
     joinedParticipants: [],
   });
   const [readyNotice, setReadyNotice] = useState('');
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [realtimeError, setRealtimeError] = useState('');
   const [isSetupOpen, setIsSetupOpen] = useState(false);
   const [inviteCount, setInviteCount] = useState(3);
   const [pickedStudentIds, setPickedStudentIds] = useState([]);
@@ -125,9 +127,10 @@ export default function CompanyGDManager({
   useEffect(() => {
     if (!jobId || !token) return;
 
-    const backendUrl = API_BASE_URL.replace(/\/api\/?$/, '');
+    const rt = getRealtimeBaseUrl();
     const numericJobId = parseInt(String(jobId), 10);
-    const newSocket = io(backendUrl, {
+    const newSocket = io(rt, {
+      path: '/socket.io',
       withCredentials: true,
       transports: ['websocket', 'polling'],
       reconnection: true,
@@ -135,12 +138,23 @@ export default function CompanyGDManager({
     });
 
     newSocket.on('connect', () => {
+      setRealtimeConnected(true);
+      setRealtimeError('');
       newSocket.emit('join_gd', {
         jobId: numericJobId,
         userId: 'company',
         role: 'company',
         userName: 'Recruiter',
       });
+    });
+
+    newSocket.on('disconnect', () => {
+      setRealtimeConnected(false);
+    });
+
+    newSocket.on('connect_error', (err) => {
+      setRealtimeConnected(false);
+      setRealtimeError(err?.message || 'Realtime connection failed');
     });
 
     newSocket.on('gd_state_update', (state) => {
@@ -549,6 +563,23 @@ export default function CompanyGDManager({
           <p className="mt-2 text-sm text-zinc-500">
             Candidates are joining the room. Start is enabled only when all invited candidates join and minimum 3 are present.
           </p>
+
+          <div
+            className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+              realtimeError
+                ? 'border-amber-500/40 bg-amber-900/20 text-amber-100'
+                : realtimeConnected
+                  ? 'border-emerald-500/30 bg-emerald-900/15 text-emerald-200'
+                  : 'border-zinc-600 bg-zinc-900/40 text-zinc-400'
+            }`}
+          >
+            Realtime (Socket.IO):{' '}
+            {realtimeError
+              ? `${realtimeError} — use the same Wi‑Fi IP + port as this page (see dev proxy), not raw :5000 on another device when testing locally.`
+              : realtimeConnected
+                ? 'Connected — joins from phones on your network should appear here if they open the student app via your PC’s LAN URL.'
+                : 'Connecting…'}
+          </div>
 
           <div className="mt-6 grid gap-3 md:grid-cols-3">
             <div className="rounded-xl border border-white/10 bg-[#12171f] p-4">
