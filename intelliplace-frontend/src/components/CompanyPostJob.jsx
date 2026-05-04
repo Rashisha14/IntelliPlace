@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { X, Download } from 'lucide-react';
-import { API_BASE_URL } from '../config';
 
 const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
   if (!isOpen) return null;
@@ -75,7 +74,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
         if (form.deadline) formData.append('deadline', form.deadline);
         formData.append('jobDescriptionFile', jobDescriptionFile);
 
-        const res = await fetch(`${API_BASE_URL}/jobs`, {
+        const res = await fetch('http://localhost:5000/api/jobs', {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}` },
           body: formData
@@ -95,7 +94,7 @@ const CompanyPostJob = ({ isOpen, onClose, onCreated }) => {
           requiredSkills: form.requiredSkills ? form.requiredSkills.split(',').map(s => s.trim()).filter(s => s) : [],
           deadline: form.deadline || null,
         };
-        const res = await fetch(`${API_BASE_URL}/jobs`, {
+        const res = await fetch('http://localhost:5000/api/jobs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
           body: JSON.stringify(body)

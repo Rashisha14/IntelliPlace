@@ -14,7 +14,6 @@ import {
   Eye
 } from 'lucide-react';
 import { getCurrentUser } from '../utils/auth';
-import { API_BASE_URL } from '../config';
 
 const getStatusBadgeClasses = (status) => {
   const s = status ? status.toUpperCase() : 'UNKNOWN';
@@ -88,8 +87,8 @@ const JobList = () => {
     setLoading(true);
     try {
       const [jobsRes, applicationsRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/jobs`),
-        fetch(`${API_BASE_URL}/jobs/my-applications`, {
+        fetch('http://localhost:5000/api/jobs'),
+        fetch('http://localhost:5000/api/jobs/my-applications', {
           headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
         })
       ]);
@@ -275,7 +274,7 @@ const JobList = () => {
     form.append('backlog', applyState.backlog);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/jobs/${selectedJob.id}/apply`, {
+      const res = await fetch(`http://localhost:5000/api/jobs/${selectedJob.id}/apply`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
         body: form

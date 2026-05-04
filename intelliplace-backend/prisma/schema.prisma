@@ -8,23 +8,23 @@ datasource db {
 }
 
 model Student {
-  id                  Int                          @id @default(autoincrement())
-  name                String
-  email               String                       @unique
-  password            String
-  rollNumber          String?                      @map("roll_number")
-  cgpa                Float?
-  backlog             Int?
-  cvUrl               String?                      @map("cv_url")
-  cvData              Bytes?                       @map("cv_data")
-  phone               String?
-  createdAt           DateTime                     @default(now()) @map("created_at")
-  updatedAt           DateTime                     @updatedAt @map("updated_at")
-  applications        Application[]
+  id            Int            @id @default(autoincrement())
+  name          String
+  email         String         @unique
+  password      String
+  rollNumber    String?        @map("roll_number")
+  cgpa          Float?
+  backlog       Int?
+  cvUrl         String?        @map("cv_url")
+  cvData        Bytes?         @map("cv_data")
+  phone         String?
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  applications  Application[]
+  notifications Notification[]
+  codingSubmissions CodingSubmission[]
   aptitudeSubmissions AptitudeSubmission[]
-  codingSubmissions   CodingSubmission[]
-  gdParticipants      GroupDiscussionParticipant[]
-  notifications       Notification[]
+  gdParticipants GroupDiscussionParticipant[]
 
   @@index([email])
   @@map("students")
@@ -47,35 +47,36 @@ model Company {
 }
 
 model Job {
-  id                        Int              @id @default(autoincrement())
-  title                     String
-  description               String
-  location                  String?
-  type                      String
-  salary                    String?
-  requiredSkills            String?          @map("required_skills")
-  minCgpa                   Float?           @map("min_cgpa")
-  includeCgpaInShortlisting Boolean?         @default(true) @map("include_cgpa_in_shortlisting")
-  allowBacklog              Boolean?         @map("allow_backlog")
-  maxBacklog                Int?             @map("max_backlog")
-  jobDescriptionFileUrl     String?          @map("job_description_file_url")
-  deadline                  DateTime?        @map("deadline")
-  companyId                 Int              @map("company_id")
-  status                    String           @default("OPEN")
-  createdAt                 DateTime         @default(now()) @map("created_at")
-  updatedAt                 DateTime         @updatedAt @map("updated_at")
-  pipelineAptitudeDone      Boolean          @default(false) @map("pipeline_aptitude_done")
-  pipelineCodingDone        Boolean          @default(false) @map("pipeline_coding_done")
-  pipelineGdDone            Boolean          @default(false) @map("pipeline_gd_done")
-  pipelineInterviewDone     Boolean          @default(false) @map("pipeline_interview_done")
-  adminApproved             Boolean          @default(false) @map("admin_approved")
-  applications              Application[]
-  aptitudeTest              AptitudeTest?
-  codingTest                CodingTest?
-  groupDiscussion           GroupDiscussion?
-  interviews                Interview[]
-  company                   Company          @relation(fields: [companyId], references: [id])
-  notifications             Notification[]
+  id                   Int            @id @default(autoincrement())
+  title                String
+  description          String
+  location             String?
+  type                 String
+  salary               String?
+  requiredSkills       String?        @map("required_skills")
+  minCgpa              Float?         @map("min_cgpa")
+  includeCgpaInShortlisting Boolean?  @default(true) @map("include_cgpa_in_shortlisting")
+  allowBacklog         Boolean?       @map("allow_backlog")
+  maxBacklog           Int?           @map("max_backlog")
+  jobDescriptionFileUrl String?        @map("job_description_file_url")
+  deadline              DateTime?      @map("deadline")
+  companyId            Int            @map("company_id")
+  status               String         @default("OPEN")
+  adminApproved        Boolean        @default(false) @map("admin_approved")
+  // Aptitude round finished (stopped or skipped); unlocks Coding.
+  pipelineAptitudeDone Boolean        @default(false) @map("pipeline_aptitude_done")
+  pipelineCodingDone   Boolean        @default(false) @map("pipeline_coding_done")
+  pipelineGdDone       Boolean        @default(false) @map("pipeline_gd_done")
+  pipelineInterviewDone Boolean       @default(false) @map("pipeline_interview_done")
+  createdAt            DateTime       @default(now()) @map("created_at")
+  updatedAt            DateTime       @updatedAt @map("updated_at")
+  applications         Application[]
+  interviews           Interview[]
+  company              Company        @relation(fields: [companyId], references: [id])
+  notifications        Notification[]
+  codingTest           CodingTest?
+  aptitudeTest         AptitudeTest?
+  groupDiscussion      GroupDiscussion?
 
   @@index([companyId])
   @@map("jobs")
@@ -105,19 +106,19 @@ model Application {
 }
 
 model Interview {
-  id                Int                         @id @default(autoincrement())
-  applicationId     Int                         @unique @map("application_id")
-  jobId             Int                         @map("job_id")
-  date              DateTime
-  type              String
-  status            String                      @default("SCHEDULED")
-  notes             String?
-  createdAt         DateTime                    @default(now()) @map("created_at")
-  updatedAt         DateTime                    @updatedAt @map("updated_at")
+  id            Int         @id @default(autoincrement())
+  applicationId Int         @unique @map("application_id")
+  jobId         Int         @map("job_id")
+  date          DateTime
+  type          String
+  status        String      @default("SCHEDULED")
+  notes         String?
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  application   Application @relation(fields: [applicationId], references: [id])
+  job           Job         @relation(fields: [jobId], references: [id])
+  sessions      InterviewSession[]
   proctorViolations InterviewProctorViolation[]
-  sessions          InterviewSession[]
-  application       Application                 @relation(fields: [applicationId], references: [id])
-  job               Job                         @relation(fields: [jobId], references: [id])
 
   @@index([applicationId])
   @@index([jobId])
@@ -125,13 +126,14 @@ model Interview {
 }
 
 model InterviewProctorViolation {
-  id          Int       @id @default(autoincrement())
-  interviewId Int       @map("interview_id")
-  studentId   Int       @map("student_id")
-  type        String
-  metadata    String?   @map("metadata")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  id           Int       @id @default(autoincrement())
+  interviewId  Int       @map("interview_id")
+  studentId    Int       @map("student_id")
+  type         String    // NO_FACE | MULTIPLE_FACES | LOOKING_AWAY | PHONE_DETECTED | TAB_SWITCH | EXIT_FULLSCREEN | COPY_PASTE
+  metadata     String?   @map("metadata")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  interview    Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
 
   @@index([interviewId])
   @@index([studentId])
@@ -139,46 +141,46 @@ model InterviewProctorViolation {
 }
 
 model InterviewSession {
-  id                   Int                       @id @default(autoincrement())
-  interviewId          Int                       @map("interview_id")
-  mode                 String
-  status               String                    @default("ACTIVE")
-  currentQuestionIndex Int                       @default(0) @map("current_question_index")
-  questions            String
-  answers              String?
-  startedAt            DateTime                  @default(now()) @map("started_at")
-  completedAt          DateTime?                 @map("completed_at")
-  createdAt            DateTime                  @default(now()) @map("created_at")
-  updatedAt            DateTime                  @updatedAt @map("updated_at")
+  id            Int         @id @default(autoincrement())
+  interviewId  Int         @map("interview_id")
+  mode          String      // "TECH" or "HR"
+  status        String      @default("ACTIVE") // ACTIVE, COMPLETED, CANCELLED
+  currentQuestionIndex Int  @default(0) @map("current_question_index")
+  questions     String      // JSON array of questions
+  answers       String?     // JSON array of answers
   /// Gemini aggregate summary when the session completes (JSON)
-  overallEvaluation    String?                   @map("overall_evaluation")
-  proctoringScore      Float?                    @map("proctoring_score")
+  overallEvaluation String? @map("overall_evaluation")
+  proctoringScore   Float?   @map("proctoring_score")
   /// JSON: counts, weighted penalty breakdown, normalized 0–100 score
-  proctoringSummary    String?                   @map("proctoring_summary")
-  questionAnswers      InterviewQuestionAnswer[]
-  interview            Interview                 @relation(fields: [interviewId], references: [id])
+  proctoringSummary String? @map("proctoring_summary")
+  startedAt     DateTime    @default(now()) @map("started_at")
+  completedAt   DateTime?   @map("completed_at")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  interview     Interview   @relation(fields: [interviewId], references: [id])
+  questionAnswers InterviewQuestionAnswer[]
 
   @@index([interviewId])
   @@map("interview_sessions")
 }
 
 model InterviewQuestionAnswer {
-  id              Int              @id @default(autoincrement())
-  sessionId       Int              @map("session_id")
-  questionIndex   Int              @map("question_index")
-  questionText    String           @map("question_text")
-  transcribedText String?          @map("transcribed_text")
-  audioUrl        String?          @map("audio_url")
-  videoUrl        String?          @map("video_url")
-  contentScore    Float?           @map("content_score")
-  confidenceScore Float?           @map("confidence_score")
-  emotionScores   String?          @map("emotion_scores")
-  overallScore    Float?           @map("overall_score")
-  feedback        String?
-  analysisData    String?          @map("analysis_data")
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
-  session         InterviewSession @relation(fields: [sessionId], references: [id])
+  id                Int            @id @default(autoincrement())
+  sessionId         Int            @map("session_id")
+  questionIndex     Int            @map("question_index")
+  questionText      String         @map("question_text")
+  transcribedText   String?        @map("transcribed_text") // Speech-to-Text result
+  audioUrl          String?        @map("audio_url") // URL to stored audio file
+  videoUrl          String?        @map("video_url") // URL to stored video file
+  contentScore      Float?         @map("content_score") // Gemini AI score (0-10)
+  confidenceScore   Float?         @map("confidence_score") // Audio analysis (0-10)
+  emotionScores     String?        @map("emotion_scores") // JSON: {happy: 0.8, neutral: 0.2, ...}
+  overallScore      Float?         @map("overall_score") // Combined score (0-10)
+  feedback          String?        // AI-generated feedback
+  analysisData      String?        @map("analysis_data") // Full analysis JSON
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+  session           InterviewSession @relation(fields: [sessionId], references: [id])
 
   @@index([sessionId])
   @@index([questionIndex])
@@ -217,64 +219,64 @@ model Admin {
 }
 
 model CodingTest {
-  id               Int                @id @default(autoincrement())
-  jobId            Int                @unique @map("job_id")
-  title            String
-  description      String?
-  allowedLanguages String             @map("allowed_languages")
-  timeLimit        Int                @default(60) @map("time_limit")
-  cutoff           Float?
-  status           String             @default("CREATED")
-  startedAt        DateTime?          @map("started_at")
-  createdAt        DateTime           @default(now()) @map("created_at")
-  updatedAt        DateTime           @updatedAt @map("updated_at")
-  questions        CodingQuestion[]
-  submissions      CodingSubmission[]
-  job              Job                @relation(fields: [jobId], references: [id])
+  id            Int              @id @default(autoincrement())
+  jobId         Int              @unique @map("job_id")
+  title         String
+  description   String?
+  allowedLanguages String        @map("allowed_languages") // JSON array of language IDs
+  timeLimit     Int              @default(60) @map("time_limit") // in minutes
+  cutoff        Float?          // minimum score to pass (percentage)
+  status        String           @default("CREATED")
+  startedAt     DateTime?        @map("started_at")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+  job           Job              @relation(fields: [jobId], references: [id])
+  questions     CodingQuestion[]
+  submissions   CodingSubmission[]
 
   @@index([jobId])
   @@map("coding_tests")
 }
 
 model CodingQuestion {
-  id              Int        @id @default(autoincrement())
-  testId          Int        @map("test_id")
-  title           String
-  description     String
-  difficulty      String     @default("MEDIUM")
-  points          Int        @default(10)
-  testCases       String     @map("test_cases")
-  expectedOutputs String     @map("expected_outputs")
-  sampleInput     String?    @map("sample_input")
-  sampleOutput    String?    @map("sample_output")
-  sampleCases     Json?      @map("sample_cases")
-  constraints     String?
-  createdAt       DateTime   @default(now()) @map("created_at")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
-  test            CodingTest @relation(fields: [testId], references: [id])
+  id            Int          @id @default(autoincrement())
+  testId        Int          @map("test_id")
+  title         String
+  description   String       // Problem statement
+  difficulty    String       @default("MEDIUM") // EASY, MEDIUM, HARD
+  points        Int          @default(10)
+  testCases     String       @map("test_cases") // JSON array of test cases
+  expectedOutputs String     @map("expected_outputs") // JSON array of expected outputs
+  sampleInput   String?      @map("sample_input")
+  sampleOutput  String?      @map("sample_output")
+  sampleCases   Json?        @map("sample_cases") // [{input, output}, ...] - multiple sample cases
+  constraints   String?      // Problem constraints
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  test          CodingTest   @relation(fields: [testId], references: [id])
 
   @@index([testId])
   @@map("coding_questions")
 }
 
 model CodingSubmission {
-  id              Int        @id @default(autoincrement())
-  testId          Int        @map("test_id")
-  questionId      Int        @map("question_id")
-  studentId       Int        @map("student_id")
-  languageId      Int        @map("language_id")
-  code            String
-  status          String?
-  score           Float?
-  executionTime   Float?     @map("execution_time")
-  memoryUsed      Int?       @map("memory_used")
-  judge0Token     String?    @map("judge0_token")
-  errorMessage    String?    @map("error_message")
-  testCaseResults String?    @map("test_case_results")
-  createdAt       DateTime   @default(now()) @map("created_at")
-  updatedAt       DateTime   @updatedAt @map("updated_at")
-  student         Student    @relation(fields: [studentId], references: [id])
-  test            CodingTest @relation(fields: [testId], references: [id])
+  id            Int            @id @default(autoincrement())
+  testId        Int            @map("test_id")
+  questionId    Int            @map("question_id")
+  studentId     Int            @map("student_id")
+  languageId    Int            @map("language_id") // Judge0 language ID
+  code          String         // Submitted code
+  status        String?        // PENDING, ACCEPTED, WRONG_ANSWER, TIME_LIMIT_EXCEEDED, etc.
+  score         Float?         // Score for this question
+  executionTime Float?         @map("execution_time") // in seconds
+  memoryUsed    Int?           @map("memory_used") // in bytes
+  judge0Token   String?        @map("judge0_token") // Judge0 submission token
+  errorMessage  String?         @map("error_message")
+  testCaseResults String?      @map("test_case_results") // JSON array of test case results
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  test          CodingTest     @relation(fields: [testId], references: [id])
+  student       Student        @relation(fields: [studentId], references: [id])
 
   @@index([testId])
   @@index([questionId])
@@ -283,52 +285,52 @@ model CodingSubmission {
 }
 
 model AptitudeTest {
-  id             Int                  @id @default(autoincrement())
-  jobId          Int                  @unique @map("job_id")
-  sections       Json
-  cutoff         Int?
-  totalQuestions Int?                 @map("total_questions")
-  status         String               @default("CREATED")
-  startedAt      DateTime?            @map("started_at")
-  createdAt      DateTime             @default(now()) @map("created_at")
-  updatedAt      DateTime             @updatedAt @map("updated_at")
-  questions      AptitudeQuestion[]
-  submissions    AptitudeSubmission[]
-  job            Job                  @relation(fields: [jobId], references: [id])
+  id            Int                @id @default(autoincrement())
+  jobId         Int                @unique @map("job_id")
+  sections      Json               // JSON array of sections
+  cutoff        Int?
+  totalQuestions Int?              @map("total_questions")
+  status        String             @default("CREATED")
+  startedAt     DateTime?          @map("started_at")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+  job           Job                @relation(fields: [jobId], references: [id])
+  questions     AptitudeQuestion[]
+  submissions   AptitudeSubmission[]
 
   @@index([jobId])
   @@map("aptitude_tests")
 }
 
 model AptitudeQuestion {
-  id           Int          @id @default(autoincrement())
-  testId       Int          @map("test_id")
-  section      String
-  questionText String       @map("question_text")
-  options      Json
-  correctIndex Int          @map("correct_index")
-  marks        Int          @default(1)
-  createdAt    DateTime     @default(now()) @map("created_at")
-  updatedAt    DateTime     @updatedAt @map("updated_at")
-  test         AptitudeTest @relation(fields: [testId], references: [id])
+  id            Int          @id @default(autoincrement())
+  testId        Int          @map("test_id")
+  section       String
+  questionText  String       @map("question_text")
+  options       Json         // JSON array of options
+  correctIndex  Int          @map("correct_index")
+  marks         Int          @default(1)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  test          AptitudeTest @relation(fields: [testId], references: [id])
 
   @@index([testId])
   @@map("aptitude_questions")
 }
 
 model AptitudeSubmission {
-  id          Int          @id @default(autoincrement())
-  testId      Int          @map("test_id")
-  studentId   Int          @map("student_id")
-  answers     Json
-  score       Float?
-  percentage  Float?
-  status      String?
-  submittedAt DateTime?    @map("submitted_at")
-  createdAt   DateTime     @default(now()) @map("created_at")
-  updatedAt   DateTime     @updatedAt @map("updated_at")
-  student     Student      @relation(fields: [studentId], references: [id])
-  test        AptitudeTest @relation(fields: [testId], references: [id])
+  id            Int            @id @default(autoincrement())
+  testId        Int            @map("test_id")
+  studentId     Int            @map("student_id")
+  answers       Json           // JSON object mapping question IDs to selected answers
+  score         Float?
+  percentage    Float?
+  status        String?        // PASSED, FAILED, etc.
+  submittedAt   DateTime?      @map("submitted_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  test          AptitudeTest   @relation(fields: [testId], references: [id])
+  student       Student        @relation(fields: [studentId], references: [id])
 
   @@index([testId])
   @@index([studentId])
@@ -336,39 +338,38 @@ model AptitudeSubmission {
 }
 
 model GroupDiscussion {
-  id                    Int       @id @default(autoincrement())
-  jobId                 Int       @unique @map("job_id")
-  topic                 String
-  status                String    @default("CREATED")
-  prepDuration          Int       @default(120)
-  /// Live discussion auto-end length; API clamps to 5–15 minutes (300–900 seconds)
-  discussionDurationSec Int       @default(900) @map("discussion_duration_sec")
-  startedAt             DateTime? @map("started_at")
-  prepStartedAt         DateTime? @map("prep_started_at")
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
-
-  job          Job                          @relation(fields: [jobId], references: [id])
-  participants GroupDiscussionParticipant[]
+  id            Int            @id @default(autoincrement())
+  jobId         Int            @unique @map("job_id")
+  topic         String
+  status        String         @default("CREATED") // CREATED, PREP, ACTIVE, COMPLETED
+  prepDuration  Int            @default(120) // in seconds
+  startedAt     DateTime?      @map("started_at")
+  prepStartedAt DateTime?      @map("prep_started_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  
+  job           Job            @relation(fields: [jobId], references: [id])
+  participants  GroupDiscussionParticipant[]
 
   @@map("group_discussions")
 }
 
 model GroupDiscussionParticipant {
-  id              Int             @id @default(autoincrement())
-  gdId            Int             @map("gd_id")
-  studentId       Int             @map("student_id")
-  status          String          @default("WAITING")
-  joinedAt        DateTime        @default(now()) @map("joined_at")
-  queuePosition   Int?            @map("queue_position")
-  audioUrl        String?         @map("audio_url")
-  transcribedText String?         @map("transcribed_text")
-  score           Float?
-  feedback        String?
-  createdAt       DateTime        @default(now()) @map("created_at")
-  updatedAt       DateTime        @updatedAt @map("updated_at")
-  gd              GroupDiscussion @relation(fields: [gdId], references: [id])
-  student         Student         @relation(fields: [studentId], references: [id])
+  id            Int            @id @default(autoincrement())
+  gdId          Int            @map("gd_id")
+  studentId     Int            @map("student_id")
+  status        String         @default("WAITING") // WAITING, IN_QUEUE, SPEAKING, DONE, FAILED, PASSED
+  joinedAt      DateTime       @default(now()) @map("joined_at")
+  queuePosition Int?           @map("queue_position")
+  audioUrl      String?        @map("audio_url")
+  transcribedText String?      @map("transcribed_text")
+  score         Float?
+  feedback      String?
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  
+  gd            GroupDiscussion @relation(fields: [gdId], references: [id])
+  student       Student        @relation(fields: [studentId], references: [id])
 
   @@index([gdId])
   @@index([studentId])

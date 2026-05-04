@@ -7,10 +7,6 @@ import {
   advanceSpeaker,
   broadcastDeepgramOutput,
   clearGdFloorIdleTimer,
-  clearGdDiscussionEndTimer,
-  scheduleGdDiscussionEnd,
-  clampPrepDurationSec,
-  clampDiscussionDurationSec,
   transitionPrepToActiveIfElapsed,
 } from '../lib/socket.js';
 import { DeepgramClient } from '@deepgram/sdk';
@@ -44,8 +40,7 @@ function getRoomSummary(state) {
 router.post('/:jobId/gd/initialize', authenticateToken, authorizeCompany, async (req, res) => {
   try {
     const jobId = parseInt(req.params.jobId);
-    const { topic, prepDuration, discussionDurationSec: rawDiscussionSec } = req.body;
-    const discussionDurationSec = clampDiscussionDurationSec(rawDiscussionSec);
+    const { topic, prepDuration } = req.body;
     const selectedStudentIds = Array.isArray(req.body?.selectedStudentIds)
       ? [...new Set(req.body.selectedStudentIds.map((v) => Number(v)).filter(Boolean))]
       : [];
@@ -81,8 +76,7 @@ router.post('/:jobId/gd/initialize', authenticateToken, authorizeCompany, async 
         data: {
           jobId,
           topic: String(topic).trim(),
-          prepDuration: clampPrepDurationSec(prepDuration),
-          discussionDurationSec,
+          prepDuration: parseInt(prepDuration) || 120,
           // Keep DB status compatible with existing persisted values.
           status: 'CREATED',
           prepStartedAt: null,
@@ -93,8 +87,7 @@ router.post('/:jobId/gd/initialize', authenticateToken, authorizeCompany, async 
         where: { jobId },
         data: {
           topic: String(topic).trim(),
-          prepDuration: clampPrepDurationSec(prepDuration),
-          discussionDurationSec,
+          prepDuration: parseInt(prepDuration) || 120,
           // Keep DB status compatible with existing persisted values.
           status: 'CREATED',
           prepStartedAt: null,
@@ -116,8 +109,6 @@ router.post('/:jobId/gd/initialize', authenticateToken, authorizeCompany, async 
       prepEndTime: null,
       topic: gd.topic,
       prepDuration: gd.prepDuration,
-      discussionDurationSec: clampDiscussionDurationSec(gd.discussionDurationSec),
-      discussionEndTime: null,
       invitedStudentIds: selectedStudentIds,
       joinedStudentIds,
       joinedParticipants: oldJoinedParticipants.filter((p) => selectedStudentIds.includes(Number(p.studentId))),
@@ -185,29 +176,22 @@ router.post('/:jobId/gd/start', authenticateToken, authorizeCompany, async (req,
       return res.status(400).json({ success: false, message: 'All invited candidates must join before starting GD', data: room });
     }
 
-    const prepDuration = clampPrepDurationSec(state.prepDuration || req.body?.prepDuration || 120);
-    const discussionDurationSec = clampDiscussionDurationSec(
-      req.body?.discussionDurationSec ?? state.discussionDurationSec ?? 0
-    );
+    const prepDuration = Number(state.prepDuration || req.body?.prepDuration || 120);
     const prepStartedAt = new Date();
     const prepEndTime = prepStartedAt.getTime() + prepDuration * 1000;
 
     state.status = 'PREP';
     state.prepEndTime = prepEndTime;
-    state.prepDuration = prepDuration;
-    state.discussionDurationSec = discussionDurationSec;
-    state.discussionEndTime = null;
     state.queue = Array.isArray(state.queue) ? state.queue : [];
     state.activeSpeaker = null;
     state.micHot = null;
     state.discussionStartedAt = null;
     state.floorGrantedAt = null;
     clearGdFloorIdleTimer(jobId);
-    clearGdDiscussionEndTimer(jobId);
 
     await prisma.groupDiscussion.update({
       where: { jobId },
-      data: { status: 'PREP', prepStartedAt, prepDuration, discussionDurationSec },
+      data: { status: 'PREP', prepStartedAt, prepDuration },
     });
 
     io?.to(`gd_${jobId}`).emit('gd_state_update', state);
@@ -237,14 +221,12 @@ router.post('/:jobId/gd/stop', authenticateToken, authorizeCompany, async (req, 
     const gdState = activeGDs.get(jobId);
     if (gdState) {
       clearGdFloorIdleTimer(jobId);
-      clearGdDiscussionEndTimer(jobId);
       gdState.status = 'COMPLETED';
       gdState.activeSpeaker = null;
       gdState.queue = [];
       gdState.prepEndTime = null;
       gdState.micHot = null;
       gdState.discussionStartedAt = null;
-      gdState.discussionEndTime = null;
       gdState.floorGrantedAt = null;
       if (req.io) req.io.to(`gd_${jobId}`).emit('gd_state_update', gdState);
     }
@@ -265,7 +247,6 @@ router.post('/:jobId/gd/pause', authenticateToken, authorizeCompany, async (req,
     const gdState = activeGDs.get(jobId);
     if (gdState && gdState.status === 'ACTIVE') {
       clearGdFloorIdleTimer(jobId);
-      clearGdDiscussionEndTimer(jobId);
       gdState.status = 'PAUSED';
       gdState.micHot = null;
       if (req.io) req.io.to(`gd_${jobId}`).emit('gd_state_update', gdState);
@@ -286,10 +267,7 @@ router.post('/:jobId/gd/resume', authenticateToken, authorizeCompany, async (req
     const gdState = activeGDs.get(jobId);
     if (gdState && gdState.status === 'PAUSED') {
       gdState.status = 'ACTIVE';
-      if (req.io) {
-        req.io.to(`gd_${jobId}`).emit('gd_state_update', gdState);
-        scheduleGdDiscussionEnd(jobId, req.io);
-      }
+      if (req.io) req.io.to(`gd_${jobId}`).emit('gd_state_update', gdState);
     }
     res.json({ success: true });
   } catch (error) {
