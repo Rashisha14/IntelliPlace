@@ -513,8 +513,36 @@ router.post('/:jobId/gd/ai-evaluate', authenticateToken, authorizeCompany, async
       participants: convo.participants,
       turns: convo.turns,
     });
-    if (!ai?.rankings?.length) {
-      return res.status(500).json({ success: false, message: 'AI evaluation failed or returned empty rankings' });
+    let rankings = Array.isArray(ai?.rankings) ? ai.rankings : [];
+    let source = 'gemini';
+    if (!rankings.length) {
+      // Fallback: deterministic ranking from transcript volume + turn frequency.
+      const agg = new Map();
+      for (const t of convo.turns) {
+        const sid = Number(t.studentId);
+        if (!Number.isFinite(sid)) continue;
+        const words = String(t.text || '').trim().split(/\s+/).filter(Boolean).length;
+        const row = agg.get(sid) || {
+          studentId: sid,
+          turns: 0,
+          words: 0,
+        };
+        row.turns += 1;
+        row.words += words;
+        agg.set(sid, row);
+      }
+      rankings = Array.from(agg.values())
+        .map((r) => ({
+          studentId: r.studentId,
+          score: Math.min(10, Math.max(1, Math.round((r.words / Math.max(1, r.turns)) / 8 + r.turns / 2))),
+          rank: 999,
+          reason: 'Fallback ranking from participation volume (AI output unavailable).',
+          strengths: ['Participated in discussion'],
+          improvements: ['Use AI evaluation after Gemini/API recovery for quality-based ranking'],
+        }))
+        .sort((a, b) => b.score - a.score)
+        .map((r, idx) => ({ ...r, rank: idx + 1 }));
+      source = 'fallback';
     }
 
     const applications = await prisma.application.findMany({
@@ -522,14 +550,14 @@ router.post('/:jobId/gd/ai-evaluate', authenticateToken, authorizeCompany, async
       select: { id: true, studentId: true },
     });
     const appByStudentId = new Map(applications.map((a) => [Number(a.studentId), a.id]));
-    const recommendations = ai.rankings
+    const recommendations = rankings
       .map((r) => ({
         studentId: r.studentId,
         applicationId: appByStudentId.get(Number(r.studentId)) || null,
         suggestedStatus: r.score >= 7 ? 'GD_PASSED' : 'GD_FAILED',
         ...r,
       }))
-      .filter((r) => r.applicationId != null);
+      .filter((r) => Number.isFinite(Number(r.studentId)));
 
     res.json({
       success: true,
@@ -537,6 +565,7 @@ router.post('/:jobId/gd/ai-evaluate', authenticateToken, authorizeCompany, async
         topic: convo.topic,
         participants: convo.participants,
         rankings: recommendations,
+        source,
       },
     });
   } catch (error) {

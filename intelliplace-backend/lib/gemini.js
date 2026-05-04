@@ -666,6 +666,9 @@ export async function evaluateGdConversationGemini({
   const participantList = (participants || [])
     .map((p) => `${p.studentId}: ${p.name || `Student ${p.studentId}`}`)
     .join('\n');
+  const sidByName = new Map(
+    (participants || []).map((p) => [String(p.name || '').trim().toLowerCase(), Number(p.studentId)])
+  );
 
   const transcript = turns
     .map(
@@ -729,10 +732,16 @@ Return ONLY valid JSON (no markdown) in this exact format:
       const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) jsonStr = jsonMatch[1].trim();
       const parsed = JSON.parse(jsonStr);
-      const rows = Array.isArray(parsed.rankings) ? parsed.rankings : [];
+      const rows = Array.isArray(parsed.rankings)
+        ? parsed.rankings
+        : Array.isArray(parsed)
+          ? parsed
+          : [];
       const rankings = rows
         .map((r) => ({
-          studentId: Number(r.studentId),
+          studentId: Number.isFinite(Number(r.studentId))
+            ? Number(r.studentId)
+            : sidByName.get(String(r.name || r.studentName || '').trim().toLowerCase()),
           score: Math.min(10, Math.max(0, Math.round(Number(r.score) || 0))),
           rank: Math.max(1, Math.round(Number(r.rank) || 999)),
           reason: typeof r.reason === 'string' ? r.reason.trim() : '',

@@ -439,23 +439,19 @@ export default function CompanyGDManager({
       const rankings = Array.isArray(data?.data?.rankings) ? data.data.rankings : [];
       setAiRankings(rankings);
       if (rankings.length === 0) {
-        Swal.fire({ icon: 'info', title: 'No AI rankings produced' });
+        Swal.fire({ icon: 'info', title: 'No rankings produced' });
+      } else if (data?.data?.source === 'fallback') {
+        Swal.fire({
+          icon: 'warning',
+          title: 'AI unavailable - fallback ranking used',
+          text: 'Gemini response was unavailable/empty, so ranking used participation heuristics.',
+        });
       }
     } catch (err) {
       Swal.fire({ icon: 'error', title: err?.message || 'AI evaluation failed' });
     } finally {
       setRunningAiEval(false);
     }
-  };
-
-  const applyAiSuggestions = () => {
-    if (!aiRankings.length) return;
-    const next = {};
-    for (const row of aiRankings) {
-      if (row?.applicationId) next[row.applicationId] = row.suggestedStatus || 'GD_FAILED';
-    }
-    setEvaluations((prev) => ({ ...prev, ...next }));
-    Swal.fire({ icon: 'success', title: 'AI suggestions applied' });
   };
 
   const prepPresets = [60, 90, 120];
@@ -1058,14 +1054,6 @@ export default function CompanyGDManager({
                 >
                   <Sparkles className="h-3.5 w-3.5" />
                   {runningAiEval ? 'Evaluating…' : 'AI Evaluate'}
-                </button>
-                <button
-                  type="button"
-                  onClick={applyAiSuggestions}
-                  disabled={!aiRankings.length}
-                  className="rounded-lg border border-indigo-400/40 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-900/30 disabled:opacity-50"
-                >
-                  Apply AI suggestions
                 </button>
               </div>
             </div>
