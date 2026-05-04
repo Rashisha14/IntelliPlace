@@ -1,7 +1,7 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
 import { activeGDs } from '../lib/socket.js';
-import { authenticateToken, authorizeAdmin } from '../middleware/auth.js';
+import { authenticateToken } from '../middleware/auth.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -80,7 +80,10 @@ const authorizeStudent = (req, res, next) => {
   next();
 };
 
-
+const authorizeAdmin = (req, res, next) => {
+  if (!req.user || req.user.userType !== 'admin') return res.status(403).json({ success: false, message: 'Admin access required' });
+  next();
+};
 
 
 router.post('/', authenticateToken, authorizeCompany, upload.single('jobDescriptionFile'), async (req, res) => {
@@ -332,26 +335,17 @@ router.patch('/:jobId/admin-approve', authenticateToken, authorizeAdmin, async (
   try {
     const jobId = parseInt(req.params.jobId);
     const { approved } = req.body; // boolean
-    console.log(`[Admin Approve DEBUG] JobID: ${jobId}, Approved: ${approved}, User:`, req.user);
-    
     if (approved === undefined) {
       return res.status(400).json({ success: false, message: '`approved` boolean is required' });
     }
     const job = await prisma.job.findUnique({ where: { id: jobId } });
-    if (!job) {
-      console.log(`[Admin Approve DEBUG] Job ${jobId} not found`);
-      return res.status(404).json({ success: false, message: 'Job not found' });
-    }
+    if (!job) return res.status(404).json({ success: false, message: 'Job not found' });
 
-    console.log(`[Admin Approve] Attempting to ${approved ? 'approve' : 'reject'} job ${jobId} by admin ${req.user.id || req.user.username}`);
-    
     const updated = await prisma.job.update({
       where: { id: jobId },
       data: { adminApproved: !!approved },
       include: { company: { select: { id: true, companyName: true } } },
     });
-
-    console.log(`[Admin Approve] Successfully ${approved ? 'approved' : 'rejected'} job ${jobId}`);
     res.json({
       success: true,
       message: approved ? 'Job approved — now visible to students' : 'Job rejected — hidden from students',
@@ -359,7 +353,7 @@ router.patch('/:jobId/admin-approve', authenticateToken, authorizeAdmin, async (
     });
   } catch (error) {
     console.error('Error updating job approval:', error);
-    res.status(500).json({ success: false, message: 'Server error updating job approval', error: error.message });
+    res.status(500).json({ success: false, message: 'Server error updating job approval' });
   }
 });
 

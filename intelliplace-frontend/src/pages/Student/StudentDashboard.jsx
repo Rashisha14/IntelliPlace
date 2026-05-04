@@ -7,7 +7,6 @@ import {
 import DashboardLayout from '../../components/DashboardLayout';
 import { getCurrentUser } from '../../utils/auth';
 import JobList from '../../components/JobList';
-import { API_BASE_URL } from '../../config';
 
 /* ─── Stat card definition ───────────────────────────────────── */
 const STAT_DEFS = [
@@ -42,7 +41,7 @@ const StudentDashboard = () => {
     (async () => {
       try {
         const res = await fetch(
-          `${API_BASE_URL}/dashboard/student/stats/${currentUser.id}`,
+          `http://localhost:5000/api/dashboard/student/stats/${currentUser.id}`,
           { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
         );
         if (!res.ok) return;

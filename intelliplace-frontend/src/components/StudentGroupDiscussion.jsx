@@ -16,10 +16,14 @@ import { API_BASE_URL, getRealtimeBaseUrl } from '../config';
 import { getCurrentUser } from '../utils/auth';
 import SelfCameraPreview from './SelfCameraPreview';
 
-/** Hard cap per push-to-talk hold (ms). */
 const MAX_HOLD_MS = 60_000;
 /** Server skips to next speaker if mic not opened within this window after floor is granted */
 const FLOOR_CLAIM_DEADLINE_SEC = 10;
+/** While holding PTT: if RMS stays near silence this long after last sound → auto-stop */
+const SILENCE_AUTO_STOP_MS = 12_000;
+/** Ignore silence detection briefly after starting mic */
+const SILENCE_ARM_MS = 3_500;
+const RMS_SILENT_BELOW = 1.85;
 
 /** Float32 mono (-1..1) → little-endian int16 PCM for Deepgram `linear16`. */
 function floatTo16BitLinearPcm(input) {
@@ -46,9 +50,6 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
   const [claimSecsLeft, setClaimSecsLeft] = useState(null);
   /** Live Deepgram line for whoever is on the mic (partial + finals while hot). */
   const [liveCaption, setLiveCaption] = useState(null);
-  /** Elapsed whole seconds while the mic is open (PTT). */
-  const [micHoldSec, setMicHoldSec] = useState(0);
-  const [discussionRemainingSec, setDiscussionRemainingSec] = useState(null);
 
   const user = getCurrentUser();
 
@@ -58,8 +59,10 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
   const audioChunksRef = useRef([]);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
+  const lastSoundRef = useRef(0);
+  const holdStartedAtRef = useRef(0);
   const holdingRef = useRef(false);
-  /** True while MediaRecorder gathering — used for MAX_HOLD_MS cap */
+  /** True while MediaRecorder gathering — used for reliable 90s cap */
   const recordingActiveRef = useRef(false);
   /** Prevent Space key default scroll */
   const pttEligibleRef = useRef(false);
@@ -268,37 +271,6 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
     return () => clearInterval(id);
   }, [gdState?.status, gdState?.discussionStartedAt]);
 
-  useEffect(() => {
-    if (!isSpeaking) {
-      setMicHoldSec(0);
-      return undefined;
-    }
-    const t0 = Date.now();
-    const id = setInterval(() => {
-      setMicHoldSec(Math.min(Math.floor(MAX_HOLD_MS / 1000), Math.floor((Date.now() - t0) / 1000)));
-    }, 250);
-    return () => clearInterval(id);
-  }, [isSpeaking]);
-
-  useEffect(() => {
-    if (
-      (gdState?.status !== 'ACTIVE' && gdState?.status !== 'PAUSED') ||
-      !gdState?.discussionEndTime
-    ) {
-      setDiscussionRemainingSec(null);
-      return undefined;
-    }
-    const end = Number(gdState.discussionEndTime);
-    if (!Number.isFinite(end)) {
-      setDiscussionRemainingSec(null);
-      return undefined;
-    }
-    const tick = () => setDiscussionRemainingSec(Math.max(0, Math.floor((end - Date.now()) / 1000)));
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [gdState?.status, gdState?.discussionEndTime]);
-
   const stopRecording = useCallback(async () => {
     const jid = parseInt(String(jobId), 10);
     if (Number.isFinite(jid)) {
@@ -442,6 +414,8 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
 
       mediaRecorderRef.current = recorder;
       recordingActiveRef.current = true;
+      holdStartedAtRef.current = Date.now();
+      lastSoundRef.current = Date.now();
       recorder.start();
       setIsSpeaking(true);
       if (Number.isFinite(jid)) {
@@ -484,6 +458,15 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
           }
           const avg = sum / dataArray.length;
           setAudioLevel(Math.min(1, avg / 48));
+          const now = Date.now();
+          if (now - holdStartedAtRef.current < SILENCE_ARM_MS) return;
+
+          if (avg > RMS_SILENT_BELOW) {
+            lastSoundRef.current = now;
+          } else if (now - lastSoundRef.current >= SILENCE_AUTO_STOP_MS) {
+            stopRecording();
+            showToast('No sound detected — turn ended.', 'info');
+          }
         }, 220);
       } catch (audioErr) {
         console.error(audioErr);
@@ -496,9 +479,7 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
       }
 
       recordingTimeoutRef.current = setTimeout(() => {
-        if (!recordingActiveRef.current) return;
-        void stopRecording();
-        showToast(`Maximum speaking time (${MAX_HOLD_MS / 1000}s) reached.`, 'info');
+        if (recordingActiveRef.current) stopRecording();
       }, MAX_HOLD_MS);
     } catch (err) {
       console.error(err);
@@ -722,16 +703,6 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
                 <p className="mt-1 font-mono text-[11px] tabular-nums text-zinc-500">
                   Discussion {Math.floor(discussionElapsedSec / 60)}:
                   {(discussionElapsedSec % 60).toString().padStart(2, '0')}
-                  {discussionRemainingSec != null && (
-                    <span
-                      className={
-                        discussionRemainingSec <= 120 ? ' ml-2 text-amber-400/95' : ' ml-2 text-zinc-500'
-                      }
-                    >
-                      · Ends in {Math.floor(discussionRemainingSec / 60)}:
-                      {(discussionRemainingSec % 60).toString().padStart(2, '0')}
-                    </span>
-                  )}
                 </p>
               )}
           </div>
@@ -940,8 +911,8 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
                         </p>
                       )}
                       <p className="mt-2 text-sm text-zinc-400">
-                        Hold Space or press and hold the green mic — up to {MAX_HOLD_MS / 1000}s per hold, then it
-                        stops automatically. Release anytime sooner to finish.
+                        Hold Space or press and hold the green mic — max {MAX_HOLD_MS / 1000}s per hold. Release to
+                        finish. Extended silence ({SILENCE_AUTO_STOP_MS / 1000}s) ends your turn early.
                       </p>
                     </div>
 
@@ -969,18 +940,9 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
                               >
                                 {isSpeaking ? 'Live — release to send' : 'Mic armed'}
                               </p>
-                              {isSpeaking && (
-                                <p className="mt-1 font-mono text-sm tabular-nums text-red-300/95">
-                                  Mic on{' '}
-                                  {String(Math.floor(micHoldSec / 60)).padStart(2, '0')}:
-                                  {String(micHoldSec % 60).padStart(2, '0')} /{' '}
-                                  {String(Math.floor(MAX_HOLD_MS / 60000)).padStart(2, '0')}:
-                                  {String(Math.floor((MAX_HOLD_MS % 60000) / 1000)).padStart(2, '0')}
-                                </p>
-                              )}
                               <p className="mt-1 max-w-[20rem] text-xs leading-relaxed text-zinc-500">
-                                Hold <kbd className="rounded border border-zinc-600 bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">Space</kbd> or press and hold the button below. Stops
-                                automatically after {MAX_HOLD_MS / 1000}s.
+                                Hold <kbd className="rounded border border-zinc-600 bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">Space</kbd> or press and hold the button below. Max{' '}
+                                {MAX_HOLD_MS / 1000}s; silence {SILENCE_AUTO_STOP_MS / 1000}s ends early.
                               </p>
                             </div>
                             <div
@@ -1058,14 +1020,6 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
                           <span className="relative text-[9px] font-medium uppercase tracking-wider text-white/70">
                             to talk
                           </span>
-                          {isSpeaking && (
-                            <span className="relative font-mono text-xs font-semibold tabular-nums text-white/95">
-                              {String(Math.floor(micHoldSec / 60)).padStart(2, '0')}:
-                              {String(micHoldSec % 60).toString().padStart(2, '0')} /{' '}
-                              {String(Math.floor(MAX_HOLD_MS / 60000)).padStart(2, '0')}:
-                              {String(Math.floor((MAX_HOLD_MS % 60000) / 1000)).padStart(2, '0')}
-                            </span>
-                          )}
                         </button>
                       </>
                     )}

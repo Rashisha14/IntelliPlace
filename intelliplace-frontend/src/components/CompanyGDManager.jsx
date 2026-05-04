@@ -52,27 +52,9 @@ function pickedIdLabel(apps, studentId) {
   return `Student #${studentId}`;
 }
 
-const GD_DISCUSSION_MIN_SEC = 300;
-const GD_DISCUSSION_MAX_SEC = 900;
-
-function clampRecruiterDiscussionSec(v) {
-  const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return GD_DISCUSSION_MAX_SEC;
-  return Math.min(GD_DISCUSSION_MAX_SEC, Math.max(GD_DISCUSSION_MIN_SEC, n));
-}
-
-const PREP_MIN_SEC = 30;
-const PREP_MAX_SEC = 600;
-
-function clampRecruiterPrepSec(v) {
-  const n = parseInt(String(v), 10);
-  if (!Number.isFinite(n)) return 120;
-  return Math.min(PREP_MAX_SEC, Math.max(PREP_MIN_SEC, n));
-}
-
 function hydrateGdStateFromDb(gd) {
   if (!gd) return null;
-  const prepDuration = clampRecruiterPrepSec(gd.prepDuration ?? 120);
+  const prepDuration = Number(gd.prepDuration) || 120;
   const prepEndTime = gd.prepStartedAt
     ? new Date(gd.prepStartedAt).getTime() + prepDuration * 1000
     : null;
@@ -82,8 +64,6 @@ function hydrateGdStateFromDb(gd) {
     queue: [],
     activeSpeaker: null,
     prepEndTime,
-    discussionDurationSec: clampRecruiterDiscussionSec(gd.discussionDurationSec),
-    discussionEndTime: null,
     invitedStudentIds: [],
     joinedStudentIds: [],
     joinedParticipants: [],
@@ -104,12 +84,7 @@ export default function CompanyGDManager({
 }) {
   const [gdState, setGdState] = useState(() => hydrateGdStateFromDb(initialGd));
   const [topic, setTopic] = useState(initialGd?.topic || '');
-  const [prepTime, setPrepTime] = useState(
-    clampRecruiterPrepSec(initialGd?.prepDuration ?? 120)
-  );
-  const [discussionDurationSec, setDiscussionDurationSec] = useState(
-    clampRecruiterDiscussionSec(initialGd?.discussionDurationSec)
-  );
+  const [prepTime, setPrepTime] = useState(Number(initialGd?.prepDuration) || 120);
   const [timeLeft, setTimeLeft] = useState(0);
   const [transcripts, setTranscripts] = useState([]);
   const [liveCaption, setLiveCaption] = useState(null);
@@ -291,26 +266,6 @@ export default function CompanyGDManager({
     return () => clearInterval(id);
   }, [gdState?.status, gdState?.discussionStartedAt]);
 
-  const [discussionRemainingSec, setDiscussionRemainingSec] = useState(null);
-  useEffect(() => {
-    if (
-      (gdState?.status !== 'ACTIVE' && gdState?.status !== 'PAUSED') ||
-      !gdState?.discussionEndTime
-    ) {
-      setDiscussionRemainingSec(null);
-      return undefined;
-    }
-    const end = Number(gdState.discussionEndTime);
-    if (!Number.isFinite(end)) {
-      setDiscussionRemainingSec(null);
-      return undefined;
-    }
-    const tick = () => setDiscussionRemainingSec(Math.max(0, Math.floor((end - Date.now()) / 1000)));
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [gdState?.status, gdState?.discussionEndTime]);
-
   const handleInitializeGD = async () => {
     if (!topic.trim()) {
       Swal.fire({ icon: 'error', title: 'Topic required' });
@@ -334,18 +289,13 @@ export default function CompanyGDManager({
         },
         body: JSON.stringify({
           topic,
-          prepDuration: clampRecruiterPrepSec(prepTime),
-          discussionDurationSec: clampRecruiterDiscussionSec(discussionDurationSec),
+          prepDuration: Number(prepTime) || 120,
           selectedStudentIds,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || 'Failed to initialize GD');
       setRoom(data?.data?.room || room);
-      const savedGd = data?.data?.gd;
-      if (savedGd && savedGd.discussionDurationSec != null) {
-        setDiscussionDurationSec(clampRecruiterDiscussionSec(savedGd.discussionDurationSec));
-      }
       setIsSetupOpen(false);
       Swal.fire({
         icon: 'success',
@@ -365,10 +315,7 @@ export default function CompanyGDManager({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          prepDuration: clampRecruiterPrepSec(prepTime),
-          discussionDurationSec: clampRecruiterDiscussionSec(discussionDurationSec),
-        }),
+        body: JSON.stringify({ prepDuration: Number(prepTime) || 120 }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || 'Failed to start GD');
@@ -447,12 +394,7 @@ export default function CompanyGDManager({
     }
   };
 
-  const prepPresets = [60, 120];
-  const discussionPresets = [
-    { sec: 300, label: '5 min' },
-    { sec: 600, label: '10 min' },
-    { sec: 900, label: '15 min' },
-  ];
+  const prepPresets = [60, 90, 120];
 
   const pipelineChrome = pipelineNotice ? (
     <div className="space-y-4">{pipelineNotice}</div>
@@ -536,10 +478,7 @@ export default function CompanyGDManager({
                   />
                 </div>
                 <div>
-                  <p className="mb-2 text-sm font-medium">Prep time (starts when you click Start GD)</p>
-                  <p className="mb-2 text-xs text-gray-600">
-                    Quick presets or enter any duration in seconds ({PREP_MIN_SEC}–{PREP_MAX_SEC}s).
-                  </p>
+                  <p className="mb-2 text-sm font-medium">Prep time (after you start GD)</p>
                   <div className="flex flex-wrap gap-2">
                     {prepPresets.map((s) => (
                       <button
@@ -556,56 +495,14 @@ export default function CompanyGDManager({
                       </button>
                     ))}
                   </div>
-                  <label className="mt-2 block text-xs font-medium text-gray-600">
-                    Manual (seconds)
-                  </label>
                   <input
                     type="number"
-                    min={PREP_MIN_SEC}
-                    max={PREP_MAX_SEC}
-                    className="mt-1 w-full rounded border p-2"
+                    min={30}
+                    max={300}
+                    className="mt-2 w-full rounded border p-2"
                     value={prepTime}
                     onChange={(e) =>
-                      setPrepTime(clampRecruiterPrepSec(parseInt(e.target.value, 10)))
-                    }
-                  />
-                </div>
-
-                <div>
-                  <p className="mb-2 text-sm font-medium">Total discussion time (live phase)</p>
-                  <p className="mb-2 text-xs text-gray-600">
-                    The session ends automatically after this time (you can still end it early). Allowed range:{' '}
-                    <strong>5–15 minutes</strong> (enforced server-side).
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {discussionPresets.map(({ sec, label }) => (
-                      <button
-                        key={sec}
-                        type="button"
-                        onClick={() => setDiscussionDurationSec(sec)}
-                        className={`rounded-full px-3 py-1 text-sm font-semibold ${
-                          Number(discussionDurationSec) === sec
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                  <label className="mt-2 block text-xs font-medium text-gray-600">
-                    Manual (seconds, {GD_DISCUSSION_MIN_SEC}–{GD_DISCUSSION_MAX_SEC})
-                  </label>
-                  <input
-                    type="number"
-                    min={GD_DISCUSSION_MIN_SEC}
-                    max={GD_DISCUSSION_MAX_SEC}
-                    className="mt-1 w-full rounded border p-2"
-                    value={discussionDurationSec}
-                    onChange={(e) =>
-                      setDiscussionDurationSec(
-                        clampRecruiterDiscussionSec(parseInt(e.target.value, 10))
-                      )
+                      setPrepTime(parseInt(e.target.value, 10) || 120)
                     }
                   />
                 </div>
@@ -794,29 +691,6 @@ export default function CompanyGDManager({
             )}
           </div>
 
-          <div className="mt-6 rounded-xl border border-white/10 bg-[#12171f] p-4">
-            <p className="text-sm font-semibold text-zinc-200">Total discussion time (5–15 min)</p>
-            <p className="mt-1 text-xs text-zinc-500">
-              Applies when the session goes live after prep. You can change this until you press Start GD.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {discussionPresets.map(({ sec, label }) => (
-                <button
-                  key={sec}
-                  type="button"
-                  onClick={() => setDiscussionDurationSec(sec)}
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                    Number(discussionDurationSec) === sec
-                      ? 'bg-emerald-600 text-white'
-                      : 'border border-white/15 bg-black/30 text-zinc-300 hover:bg-white/10'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
           <div className="mt-8 flex flex-wrap gap-3">
             <button
               type="button"
@@ -911,17 +785,6 @@ export default function CompanyGDManager({
                 Discussion {Math.floor(discussionElapsedSec / 60)}:
                 {(discussionElapsedSec % 60).toString().padStart(2, '0')}
               </span>
-              {discussionRemainingSec != null && (
-                <span
-                  className={`font-mono text-xs tabular-nums ${
-                    discussionRemainingSec <= 120 ? 'font-bold text-amber-300' : 'text-zinc-400'
-                  }`}
-                  title="Time until auto-end (if configured)"
-                >
-                  Left {Math.floor(discussionRemainingSec / 60)}:
-                  {(discussionRemainingSec % 60).toString().padStart(2, '0')}
-                </span>
-              )}
               {gdState.status === 'PAUSED' ? (
                 <span className="rounded-full bg-amber-500/20 px-3 py-1 text-xs font-bold text-amber-200 ring-1 ring-amber-500/40">
                   Paused
@@ -1143,17 +1006,9 @@ export default function CompanyGDManager({
                   confirmButtonText: 'Restart',
                 }).then((result) => {
                   if (result.isConfirmed) {
-                    setGdState(
-                      hydrateGdStateFromDb({
-                        status: 'CREATED',
-                        topic: '',
-                        prepDuration: 120,
-                        discussionDurationSec: GD_DISCUSSION_MAX_SEC,
-                      })
-                    );
+                    setGdState(hydrateGdStateFromDb({ status: 'CREATED', topic: '', prepDuration: 120 }));
                     setTopic('');
                     setPrepTime(120);
-                    setDiscussionDurationSec(GD_DISCUSSION_MAX_SEC);
                     setTranscripts([]);
                   }
                 });

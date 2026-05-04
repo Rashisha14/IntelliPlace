@@ -8,7 +8,6 @@ export const activeGDs = new Map();
 export const FLOOR_OPEN_MIC_DEADLINE_MS = 10_000;
 
 const floorIdleTimers = new Map();
-const discussionEndTimers = new Map();
 
 export function clearGdFloorIdleTimer(jobId) {
   const jid = resolveGdJobId(jobId);
@@ -65,74 +64,6 @@ export function resolveGdJobId(jobId) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-/** Prep window length in seconds (recruiter UI: 30–600). */
-export function clampPrepDurationSec(raw) {
-  const n = parseInt(String(raw ?? ''), 10);
-  if (!Number.isFinite(n)) return 120;
-  return Math.min(600, Math.max(30, n));
-}
-
-/** Total live GD time: clamp to 5–15 minutes (seconds). Invalid/missing → 15 min. */
-export function clampDiscussionDurationSec(raw) {
-  const n = parseInt(String(raw ?? ''), 10);
-  if (!Number.isFinite(n) || n <= 0) return 900;
-  return Math.min(900, Math.max(300, n));
-}
-
-export function clearGdDiscussionEndTimer(jobId) {
-  const jid = resolveGdJobId(jobId);
-  if (jid == null) return;
-  const t = discussionEndTimers.get(jid);
-  if (t) clearTimeout(t);
-  discussionEndTimers.delete(jid);
-}
-
-async function finalizeGdTimedOut(jid, io) {
-  clearGdDiscussionEndTimer(jid);
-  const gdState = activeGDs.get(jid);
-  if (!gdState) return;
-  if (gdState.status !== 'ACTIVE' && gdState.status !== 'PAUSED') return;
-  try {
-    await prisma.groupDiscussion.update({
-      where: { jobId: jid },
-      data: { status: 'COMPLETED' },
-    });
-    await prisma.job.update({
-      where: { id: jid },
-      data: { pipelineGdDone: true },
-    });
-  } catch (e) {
-    console.error('[GD] timed auto-complete failed', e);
-    return;
-  }
-  clearGdFloorIdleTimer(jid);
-  gdState.status = 'COMPLETED';
-  gdState.activeSpeaker = null;
-  gdState.queue = [];
-  gdState.prepEndTime = null;
-  gdState.micHot = null;
-  gdState.discussionStartedAt = null;
-  gdState.discussionEndTime = null;
-  gdState.floorGrantedAt = null;
-  io?.to(`gd_${jid}`).emit('gd_state_update', gdState);
-}
-
-export function scheduleGdDiscussionEnd(jobId, io) {
-  const jid = resolveGdJobId(jobId);
-  if (jid == null || !io) return;
-  clearGdDiscussionEndTimer(jid);
-  const gd = activeGDs.get(jid);
-  if (!gd || gd.status !== 'ACTIVE' || !gd.discussionEndTime) return;
-  const ms = Number(gd.discussionEndTime) - Date.now();
-  if (!Number.isFinite(ms)) return;
-  if (ms <= 0) {
-    void finalizeGdTimedOut(jid, io);
-    return;
-  }
-  const tid = setTimeout(() => void finalizeGdTimedOut(jid, io), ms);
-  discussionEndTimers.set(jid, tid);
-}
-
 /** If discussion is live and the queue is waiting, give the floor to the next person */
 export function assignFirstSpeakerIfIdle(jobId, io) {
   const jid = resolveGdJobId(jobId);
@@ -164,10 +95,6 @@ export async function transitionPrepToActiveIfElapsed(jobId, io) {
   gd.floorGrantedAt = null;
   clearGdFloorIdleTimer(jid);
 
-  const dur = clampDiscussionDurationSec(gd.discussionDurationSec);
-  gd.discussionDurationSec = dur;
-  gd.discussionEndTime = dur > 0 ? Date.now() + dur * 1000 : null;
-
   try {
     await prisma.groupDiscussion.update({
       where: { jobId: jid },
@@ -181,7 +108,6 @@ export async function transitionPrepToActiveIfElapsed(jobId, io) {
   assignFirstSpeakerIfIdle(jid, io);
   if (io) {
     io.to(`gd_${jid}`).emit('gd_state_update', gd);
-    scheduleGdDiscussionEnd(jid, io);
   }
   return true;
 }
@@ -218,8 +144,6 @@ export default function setupGDSockets(io) {
               joinedParticipants: [],
               micHot: null,
               discussionStartedAt: null,
-              discussionDurationSec: 900,
-              discussionEndTime: null,
               floorGrantedAt: null,
             });
           } else {
@@ -229,13 +153,6 @@ export default function setupGDSockets(io) {
             const discussionStartedAt =
               gdDb.status === 'ACTIVE' && gdDb.startedAt
                 ? new Date(gdDb.startedAt).getTime()
-                : null;
-            const discDur = clampDiscussionDurationSec(gdDb.discussionDurationSec ?? 0);
-            const discussionEndTime =
-              gdDb.status === 'ACTIVE' &&
-              discussionStartedAt != null &&
-              discDur > 0
-                ? discussionStartedAt + discDur * 1000
                 : null;
             activeGDs.set(parsedJobId, {
               status: gdDb.status,
@@ -248,8 +165,6 @@ export default function setupGDSockets(io) {
               joinedParticipants: [],
               micHot: null,
               discussionStartedAt,
-              discussionDurationSec: discDur,
-              discussionEndTime,
               floorGrantedAt: null,
             });
           } else {
@@ -264,8 +179,6 @@ export default function setupGDSockets(io) {
               joinedParticipants: [],
               micHot: null,
               discussionStartedAt: null,
-              discussionDurationSec: 900,
-              discussionEndTime: null,
               floorGrantedAt: null,
             });
           }
@@ -285,8 +198,6 @@ export default function setupGDSockets(io) {
             joinedParticipants: [],
             micHot: null,
             discussionStartedAt: null,
-            discussionDurationSec: 900,
-            discussionEndTime: null,
             floorGrantedAt: null,
           });
         }
@@ -307,7 +218,6 @@ export default function setupGDSockets(io) {
       ensureGdQueue(currentState);
       await transitionPrepToActiveIfElapsed(parsedJobId, io);
       assignFirstSpeakerIfIdle(parsedJobId, io);
-      scheduleGdDiscussionEnd(parsedJobId, io);
 
       if (role === 'student' && currentState) {
         const sid = normalizeStudentId(userId);
