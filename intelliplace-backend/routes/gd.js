@@ -10,6 +10,7 @@ import {
   transitionPrepToActiveIfElapsed,
 } from '../lib/socket.js';
 import { DeepgramClient } from '@deepgram/sdk';
+import { evaluateGdConversationGemini } from '../lib/gemini.js';
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -33,6 +34,60 @@ function getRoomSummary(state) {
     joinedCount,
     allJoined,
     canStart: allJoined && joinedCount >= 3,
+  };
+}
+
+async function buildConversationForJob(jobId) {
+  const gdDb = await prisma.groupDiscussion.findUnique({
+    where: { jobId },
+    select: { id: true, topic: true, status: true },
+  });
+  if (!gdDb) return null;
+  const rows = await prisma.groupDiscussionParticipant.findMany({
+    where: { gdId: gdDb.id },
+    orderBy: { createdAt: 'asc' },
+    select: {
+      studentId: true,
+      transcribedText: true,
+      createdAt: true,
+      student: { select: { id: true, name: true } },
+    },
+  });
+  let turns = rows
+    .map((r) => ({
+      studentId: Number(r.studentId),
+      name: r.student?.name || `Student ${r.studentId}`,
+      text: String(r.transcribedText || '').trim(),
+      timestamp: r.createdAt,
+    }))
+    .filter((t) => t.text.length > 0);
+  // Fallback to in-memory transcript if DB has no turns (e.g., transient DB issues during live run)
+  if (turns.length === 0) {
+    const mem = activeGDs.get(jobId);
+    if (Array.isArray(mem?.transcriptTurns) && mem.transcriptTurns.length > 0) {
+      turns = mem.transcriptTurns
+        .map((t) => ({
+          studentId: Number(t.studentId),
+          name: t.name || `Student ${t.studentId}`,
+          text: String(t.text || '').trim(),
+          timestamp: t.timestamp || null,
+        }))
+        .filter((t) => Number.isFinite(t.studentId) && t.text.length > 0);
+    }
+  }
+
+  const participantsById = new Map();
+  for (const t of turns) {
+    if (!participantsById.has(t.studentId)) {
+      participantsById.set(t.studentId, { studentId: t.studentId, name: t.name });
+    }
+  }
+  return {
+    gdId: gdDb.id,
+    topic: gdDb.topic || '',
+    status: gdDb.status || 'CREATED',
+    turns,
+    participants: Array.from(participantsById.values()),
   };
 }
 
@@ -105,6 +160,7 @@ router.post('/:jobId/gd/initialize', authenticateToken, authorizeCompany, async 
     const state = {
       status: 'LOBBY',
       queue: existing?.queue || [],
+      transcriptTurns: [],
       activeSpeaker: null,
       prepEndTime: null,
       topic: gd.topic,
@@ -182,6 +238,7 @@ router.post('/:jobId/gd/start', authenticateToken, authorizeCompany, async (req,
 
     state.status = 'PREP';
     state.prepEndTime = prepEndTime;
+    state.transcriptTurns = [];
     state.queue = Array.isArray(state.queue) ? state.queue : [];
     state.activeSpeaker = null;
     state.micHot = null;
@@ -223,6 +280,7 @@ router.post('/:jobId/gd/stop', authenticateToken, authorizeCompany, async (req, 
       clearGdFloorIdleTimer(jobId);
       gdState.status = 'COMPLETED';
       gdState.activeSpeaker = null;
+      gdState.transcriptTurns = [];
       gdState.queue = [];
       gdState.prepEndTime = null;
       gdState.micHot = null;
@@ -328,17 +386,33 @@ router.post('/:jobId/gd/submit-speech', authenticateToken, authorizeStudent, exp
     const gdDb = await prisma.groupDiscussion.findUnique({ where: { jobId } });
     if (!gdDb) throw new Error('GD not found');
 
-    const participant = await prisma.groupDiscussionParticipant.create({
-      data: {
-        gdId: gdDb.id,
-        studentId,
-        status: 'SPEAKING_DONE',
-        transcribedText,
-      }
-    });
-
     const studentRecord = await prisma.student.findUnique({ where: { id: studentId }});
     const finalSpeakerName = studentRecord?.name || req.user.name || 'Student';
+
+    try {
+      await prisma.groupDiscussionParticipant.create({
+        data: {
+          gdId: gdDb.id,
+          studentId,
+          status: 'SPEAKING_DONE',
+          transcribedText,
+        }
+      });
+    } catch (persistErr) {
+      // Keep the live session flowing even if DB write momentarily fails.
+      console.error('[GD] submit-speech DB save failed:', persistErr?.message || persistErr);
+    }
+
+    const mem = activeGDs.get(jobId);
+    if (mem) {
+      if (!Array.isArray(mem.transcriptTurns)) mem.transcriptTurns = [];
+      mem.transcriptTurns.push({
+        studentId,
+        name: finalSpeakerName,
+        text: transcribedText,
+        timestamp: new Date().toISOString(),
+      });
+    }
 
     // Broadcast output heavily
     broadcastDeepgramOutput(jobId, req.io, {
@@ -392,6 +466,82 @@ router.post('/:jobId/gd/evaluate', authenticateToken, authorizeCompany, async (r
   } catch (error) {
     console.error('Error evaluating GD:', error);
     res.status(500).json({ success: false, message: 'Failed to save evaluations' });
+  }
+});
+
+// Company: View full saved GD conversation (from DB transcripts)
+router.get('/:jobId/gd/conversation', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.jobId, 10);
+    const job = await prisma.job.findUnique({ where: { id: jobId }, select: { companyId: true } });
+    if (!job || job.companyId !== req.user.id) {
+      return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+    }
+    const convo = await buildConversationForJob(jobId);
+    if (!convo) return res.status(404).json({ success: false, message: 'GD not found' });
+    res.json({
+      success: true,
+      data: {
+        topic: convo.topic,
+        status: convo.status,
+        participants: convo.participants,
+        turns: convo.turns,
+      },
+    });
+  } catch (error) {
+    console.error('Error loading GD conversation:', error);
+    res.status(500).json({ success: false, message: 'Failed to load GD conversation' });
+  }
+});
+
+// Company: AI evaluate GD transcript and rank participants
+router.post('/:jobId/gd/ai-evaluate', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const jobId = parseInt(req.params.jobId, 10);
+    const job = await prisma.job.findUnique({ where: { id: jobId }, select: { companyId: true } });
+    if (!job || job.companyId !== req.user.id) {
+      return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+    }
+    const convo = await buildConversationForJob(jobId);
+    if (!convo) return res.status(404).json({ success: false, message: 'GD not found' });
+    if (!convo.turns.length) {
+      return res.status(400).json({ success: false, message: 'No transcript content available to evaluate' });
+    }
+
+    const ai = await evaluateGdConversationGemini({
+      topic: convo.topic,
+      participants: convo.participants,
+      turns: convo.turns,
+    });
+    if (!ai?.rankings?.length) {
+      return res.status(500).json({ success: false, message: 'AI evaluation failed or returned empty rankings' });
+    }
+
+    const applications = await prisma.application.findMany({
+      where: { jobId },
+      select: { id: true, studentId: true },
+    });
+    const appByStudentId = new Map(applications.map((a) => [Number(a.studentId), a.id]));
+    const recommendations = ai.rankings
+      .map((r) => ({
+        studentId: r.studentId,
+        applicationId: appByStudentId.get(Number(r.studentId)) || null,
+        suggestedStatus: r.score >= 7 ? 'GD_PASSED' : 'GD_FAILED',
+        ...r,
+      }))
+      .filter((r) => r.applicationId != null);
+
+    res.json({
+      success: true,
+      data: {
+        topic: convo.topic,
+        participants: convo.participants,
+        rankings: recommendations,
+      },
+    });
+  } catch (error) {
+    console.error('Error running AI GD evaluation:', error);
+    res.status(500).json({ success: false, message: error?.message || 'Failed to evaluate GD with AI' });
   }
 });
 

@@ -14,7 +14,6 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL, getRealtimeBaseUrl } from '../config';
 import { getCurrentUser } from '../utils/auth';
-import SelfCameraPreview from './SelfCameraPreview';
 
 const MAX_HOLD_MS = 60_000;
 /** Server skips to next speaker if mic not opened within this window after floor is granted */
@@ -670,10 +669,6 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
             ? 'Ended'
             : 'Lobby';
 
-  /** Local preview whenever the room is open; not gated on socket join so it shows during “Connecting…”. */
-  const selfCamActive =
-    isOpen && (gdState == null || gdState.status !== 'COMPLETED');
-
   return (
     <div className="fixed inset-0 z-[200] flex flex-col bg-[#0b0f14] text-zinc-100">
       {/* Top bar — meeting chrome */}
@@ -741,21 +736,6 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
           role="status"
         >
           {toast.message}
-        </div>
-      )}
-
-      {selfCamActive && (
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-emerald-500/20 bg-gradient-to-r from-zinc-900/90 to-[#0c1219] px-3 py-2 sm:px-4">
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400/90">Your video</p>
-            <p className="truncate text-xs text-zinc-500">Preview only — not shared with others</p>
-          </div>
-          <SelfCameraPreview
-            compact
-            active
-            className="h-[5rem] w-[8rem] shrink-0 sm:h-[5.5rem] sm:w-[8.75rem]"
-            style={{ minHeight: '5rem', minWidth: '8rem' }}
-          />
         </div>
       )}
 

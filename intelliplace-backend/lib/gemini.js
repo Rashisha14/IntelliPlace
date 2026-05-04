@@ -646,3 +646,110 @@ Rules: One perAnswerEvaluations entry per turn in the transcript (same questionI
   if (lastError) console.error('[Gemini] evaluateInterviewSessionEndGemini:', lastError.message || lastError);
   return null;
 }
+
+/**
+ * Rank GD participants from full discussion transcript.
+ * @param {object} params
+ * @param {string} params.topic
+ * @param {Array<{studentId:number,name:string}>} params.participants
+ * @param {Array<{studentId:number,name:string,text:string,timestamp?:string}>} params.turns
+ * @returns {Promise<{rankings:Array<{studentId:number,score:number,rank:number,reason:string,strengths:string[],improvements:string[]}>}|null>}
+ */
+export async function evaluateGdConversationGemini({
+  topic = '',
+  participants = [],
+  turns = [],
+}) {
+  if (!GEMINI_API_KEY) return null;
+  if (!Array.isArray(turns) || turns.length === 0) return null;
+
+  const participantList = (participants || [])
+    .map((p) => `${p.studentId}: ${p.name || `Student ${p.studentId}`}`)
+    .join('\n');
+
+  const transcript = turns
+    .map(
+      (t, i) =>
+        `Turn ${i + 1} | studentId=${t.studentId} | ${t.name}\n${String(t.text || '').trim()}`
+    )
+    .join('\n\n');
+
+  const prompt = `You are evaluating a Group Discussion (GD) for hiring.
+
+Topic: ${topic || 'General'}
+
+Participants:
+${participantList}
+
+Transcript:
+${transcript}
+
+Task:
+- Rank all participants by discussion performance.
+- Consider clarity, relevance, reasoning quality, collaboration, and communication.
+- Use ONLY evidence from transcript text.
+
+Return ONLY valid JSON (no markdown) in this exact format:
+{
+  "rankings": [
+    {
+      "studentId": <number>,
+      "score": <0-10 integer>,
+      "rank": <1 is best>,
+      "reason": "<1-2 sentence reason>",
+      "strengths": ["<short>", "..."],
+      "improvements": ["<short>", "..."]
+    }
+  ]
+}`;
+
+  const makeRequest = async (url) => {
+    const body = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: 0.35,
+        maxOutputTokens: 4096,
+        responseMimeType: 'application/json',
+      },
+    };
+    return axios.post(url, body, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 90000,
+    });
+  };
+
+  let lastError = null;
+  for (const model of GEMINI_MODELS) {
+    try {
+      const url = `${GEMINI_BASE}/models/${model.trim()}:generateContent?key=${GEMINI_API_KEY}`;
+      const response = await makeRequest(url);
+      const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error('Empty GD evaluation response');
+      let jsonStr = text.trim();
+      const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) jsonStr = jsonMatch[1].trim();
+      const parsed = JSON.parse(jsonStr);
+      const rows = Array.isArray(parsed.rankings) ? parsed.rankings : [];
+      const rankings = rows
+        .map((r) => ({
+          studentId: Number(r.studentId),
+          score: Math.min(10, Math.max(0, Math.round(Number(r.score) || 0))),
+          rank: Math.max(1, Math.round(Number(r.rank) || 999)),
+          reason: typeof r.reason === 'string' ? r.reason.trim() : '',
+          strengths: Array.isArray(r.strengths) ? r.strengths.map(String) : [],
+          improvements: Array.isArray(r.improvements) ? r.improvements.map(String) : [],
+        }))
+        .filter((r) => Number.isFinite(r.studentId));
+      if (rankings.length === 0) return null;
+      rankings.sort((a, b) => a.rank - b.rank || b.score - a.score);
+      return { rankings };
+    } catch (err) {
+      lastError = err;
+      if (err.response?.status === 404) continue;
+      console.error('[Gemini] evaluateGdConversationGemini:', err.message || err);
+      return null;
+    }
+  }
+  if (lastError) console.error('[Gemini] evaluateGdConversationGemini:', lastError.message || lastError);
+  return null;
+}

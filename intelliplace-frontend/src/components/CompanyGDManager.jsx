@@ -12,13 +12,13 @@ import {
   Radio,
   Pause,
   MessageSquareQuote,
+  Sparkles,
   Plus,
   FastForward,
   Shuffle,
 } from 'lucide-react';
 import { API_BASE_URL, getRealtimeBaseUrl } from '../config';
 import Swal from 'sweetalert2';
-import SelfCameraPreview from './SelfCameraPreview';
 
 function uniqueStudentIdsFromApplications(apps) {
   const seen = new Set();
@@ -99,6 +99,10 @@ export default function CompanyGDManager({
   const [readyNotice, setReadyNotice] = useState('');
   const [realtimeConnected, setRealtimeConnected] = useState(false);
   const [realtimeError, setRealtimeError] = useState('');
+  const [savedConversation, setSavedConversation] = useState([]);
+  const [aiRankings, setAiRankings] = useState([]);
+  const [loadingConversation, setLoadingConversation] = useState(false);
+  const [runningAiEval, setRunningAiEval] = useState(false);
   const [isSetupOpen, setIsSetupOpen] = useState(false);
   const [inviteCount, setInviteCount] = useState(3);
   const [pickedStudentIds, setPickedStudentIds] = useState([]);
@@ -109,6 +113,14 @@ export default function CompanyGDManager({
     () => uniqueStudentIdsFromApplications(applications),
     [applications]
   );
+  const appByStudentId = useMemo(() => {
+    const m = new Map();
+    for (const a of applications || []) {
+      const sid = Number(a.studentId || a.student?.id);
+      if (sid) m.set(sid, a);
+    }
+    return m;
+  }, [applications]);
 
   const openSetupModal = useCallback(() => {
     const pool = uniqueStudentIdsFromApplications(applications);
@@ -394,7 +406,64 @@ export default function CompanyGDManager({
     }
   };
 
+  const loadSavedConversation = useCallback(async () => {
+    if (!jobId || !token) return;
+    setLoadingConversation(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/conversation`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || 'Failed to load conversation');
+      setSavedConversation(Array.isArray(data?.data?.turns) ? data.data.turns : []);
+    } catch (err) {
+      setSavedConversation([]);
+      Swal.fire({ icon: 'error', title: err?.message || 'Failed to load conversation' });
+    } finally {
+      setLoadingConversation(false);
+    }
+  }, [jobId, token]);
+
+  const runAiEvaluation = async () => {
+    if (!jobId || !token) return;
+    setRunningAiEval(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/ai-evaluate`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.message || 'AI evaluation failed');
+      }
+      const rankings = Array.isArray(data?.data?.rankings) ? data.data.rankings : [];
+      setAiRankings(rankings);
+      if (rankings.length === 0) {
+        Swal.fire({ icon: 'info', title: 'No AI rankings produced' });
+      }
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: err?.message || 'AI evaluation failed' });
+    } finally {
+      setRunningAiEval(false);
+    }
+  };
+
+  const applyAiSuggestions = () => {
+    if (!aiRankings.length) return;
+    const next = {};
+    for (const row of aiRankings) {
+      if (row?.applicationId) next[row.applicationId] = row.suggestedStatus || 'GD_FAILED';
+    }
+    setEvaluations((prev) => ({ ...prev, ...next }));
+    Swal.fire({ icon: 'success', title: 'AI suggestions applied' });
+  };
+
   const prepPresets = [60, 90, 120];
+
+  useEffect(() => {
+    if (gdState?.status !== 'COMPLETED') return;
+    void loadSavedConversation();
+  }, [gdState?.status, loadSavedConversation]);
 
   const pipelineChrome = pipelineNotice ? (
     <div className="space-y-4">{pipelineNotice}</div>
@@ -755,10 +824,6 @@ export default function CompanyGDManager({
         {pipelineChrome}
 
         <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#0b0f14] text-zinc-100 shadow-xl">
-          <SelfCameraPreview
-            active={gdState.status === 'ACTIVE' || gdState.status === 'PAUSED'}
-            className="absolute bottom-3 right-3 z-20 w-36 sm:bottom-4 sm:right-4 sm:w-44"
-          />
           <header className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 bg-[#0f1419] px-5 py-4">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600/30 text-indigo-300">
@@ -946,6 +1011,78 @@ export default function CompanyGDManager({
           <p className="mb-6 text-sm text-zinc-500">
             Passed candidates can move forward in your pipeline configuration.
           </p>
+
+          <div className="mb-8 rounded-xl border border-white/10 bg-[#12171f] p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h5 className="text-sm font-semibold text-zinc-200">Saved GD conversation</h5>
+              <button
+                type="button"
+                onClick={loadSavedConversation}
+                className="rounded-lg border border-white/20 px-3 py-1 text-xs font-semibold text-zinc-300 hover:bg-white/5"
+              >
+                Refresh
+              </button>
+            </div>
+            {loadingConversation ? (
+              <p className="text-xs text-zinc-500">Loading saved transcript…</p>
+            ) : savedConversation.length ? (
+              <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                {savedConversation.map((turn, idx) => (
+                  <div key={`${turn.studentId}-${idx}`} className="rounded-lg border border-white/5 bg-black/30 px-3 py-2">
+                    <p className="text-xs font-semibold text-indigo-200">
+                      #{idx + 1} · {turn.name || `Student ${turn.studentId}`}
+                    </p>
+                    <p className="mt-1 text-sm leading-relaxed text-zinc-300">{turn.text}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-500">No saved transcript turns yet.</p>
+            )}
+          </div>
+
+          <div className="mb-8 rounded-xl border border-indigo-500/30 bg-indigo-950/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-indigo-200">AI Evaluate & Rank</p>
+                <p className="text-xs text-zinc-400">
+                  Uses Gemini to rank candidates from the full saved GD conversation.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={runAiEvaluation}
+                  disabled={runningAiEval}
+                  className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-500 disabled:opacity-60"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  {runningAiEval ? 'Evaluating…' : 'AI Evaluate'}
+                </button>
+                <button
+                  type="button"
+                  onClick={applyAiSuggestions}
+                  disabled={!aiRankings.length}
+                  className="rounded-lg border border-indigo-400/40 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-900/30 disabled:opacity-50"
+                >
+                  Apply AI suggestions
+                </button>
+              </div>
+            </div>
+            {aiRankings.length > 0 && (
+              <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
+                {aiRankings.map((r) => (
+                  <div key={r.studentId} className="rounded-lg border border-indigo-500/20 bg-black/25 px-3 py-2">
+                    <p className="text-sm font-semibold text-indigo-100">
+                      Rank #{r.rank} · {appByStudentId.get(Number(r.studentId))?.student?.name || `Student ${r.studentId}`} · Score {r.score}/10
+                    </p>
+                    <p className="mt-1 text-xs text-zinc-300">{r.reason}</p>
+                    <p className="mt-1 text-[11px] text-zinc-500">Suggested: {r.suggestedStatus}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           <div className="mb-10 max-h-[420px] space-y-2 overflow-y-auto pr-2">
             {(applications || []).map((app) => (
