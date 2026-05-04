@@ -27,7 +27,7 @@ const StatusBadge = ({ status }) => {
   else if (['SHORTLISTED', 'APP PASS', 'PASSED APTITUDE', 'APTITUDE_PASSED',
             'CODE PASS', 'PASSED CODING', 'CODING_PASSED', 'SELECTED', 'HIRED', 'OFFERED'].includes(s)) cls = 'badge-green';
   else if (['APP FAIL', 'FAILED APTITUDE', 'APTITUDE_FAILED', 'CODE FAIL',
-            'FAILED CODING', 'CODING_FAILED', 'INTERVIEW FAIL', 'FAILED INTERVIEW', 'REJECTED'].includes(s)) cls = 'badge-red';
+            'FAILED CODING', 'CODING_FAILED', 'INTERVIEW FAIL', 'FAILED INTERVIEW', 'INTERVIEW_FAILED', 'REJECTED'].includes(s)) cls = 'badge-red';
   else if (['GD_PASSED', 'GD_FAILED', 'INTERVIEW_SCHEDULED'].includes(s)) cls = 'badge-purple';
   return <span className={`badge ${cls} font-semibold`}>{status}</span>;
 };
@@ -38,7 +38,7 @@ const STAGES = ['Applied', 'Shortlisted', 'Aptitude', 'Coding', 'GD', 'Interview
 const getStageIndex = (status) => {
   const s = (status || '').toUpperCase();
   if (['SELECTED','HIRED','OFFERED'].includes(s)) return 6;
-  if (['INTERVIEW_SCHEDULED','INTERVIEW FAIL','FAILED INTERVIEW'].includes(s)) return 5;
+  if (['INTERVIEW_SCHEDULED','INTERVIEW FAIL','FAILED INTERVIEW','INTERVIEW_FAILED'].includes(s)) return 5;
   if (['GD_PASSED','GD_FAILED'].includes(s)) return 5;
   if (['CODE PASS','PASSED CODING','CODING_PASSED','CODING_STARTED','CODE FAIL','FAILED CODING','CODING_FAILED'].includes(s)) return 3;
   if (['SHORTLISTED','APP PASS','PASSED APTITUDE','APTITUDE_PASSED','FAILED APTITUDE','APTITUDE_FAILED','APTITUDE_STARTED'].includes(s)) return 2;

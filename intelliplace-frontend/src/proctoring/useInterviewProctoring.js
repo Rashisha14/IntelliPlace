@@ -32,8 +32,15 @@ export function useInterviewProctoring({
   applicationId,
   userId,
   isOpen = true,
+  onViolation,
 }) {
   const [proctoringResult, setProctoringResult] = useState(null);
+  const [liveWarnings, setLiveWarnings] = useState([]);
+
+  const pushLiveWarning = (type, metadata = {}) => {
+    const record = { type, metadata, at: Date.now() };
+    setLiveWarnings((prev) => [...prev.slice(-7), record]);
+  };
 
   useEffect(() => {
     if (!enabled || !jobId || !applicationId) return undefined;
@@ -61,8 +68,20 @@ export function useInterviewProctoring({
 
     const { logViolation } = createViolationLogger({ jobId, applicationId, getToken });
 
+    const reportViolation = (type, metadata = {}) => {
+      pushLiveWarning(type, metadata);
+      if (typeof onViolation === 'function') {
+        try {
+          onViolation({ type, metadata, at: Date.now() });
+        } catch {
+          /* ignore callback errors */
+        }
+      }
+      void logViolation(type, metadata);
+    };
+
     detachGuards = attachBrowserBehaviorGuards((type, meta) => {
-      void logViolation(type, {
+      reportViolation(type, {
         ...(meta || {}),
         userId,
       });
@@ -102,15 +121,15 @@ export function useInterviewProctoring({
         }
 
         if (face.faceCount === 0) {
-          void logViolation('NO_FACE', {});
+          reportViolation('NO_FACE', {});
           lookingAwayAccumMs = 0;
         } else if (face.faceCount > 1) {
-          void logViolation('MULTIPLE_FACES', { count: face.faceCount });
+          reportViolation('MULTIPLE_FACES', { count: face.faceCount });
           lookingAwayAccumMs = 0;
         } else if (face.suspiciousGaze) {
           lookingAwayAccumMs += TICK_MS;
           if (lookingAwayAccumMs >= LOOK_AWAY_HOLD_MS) {
-            void logViolation('LOOKING_AWAY', {
+            reportViolation('LOOKING_AWAY', {
               yawMetric: face.yawMetric,
               sustainedMsApprox: lookingAwayAccumMs,
             });
@@ -124,7 +143,7 @@ export function useInterviewProctoring({
         const phone = await detectPhoneInJpeg(jpegBlob);
         if (phone.error) return;
         if (phone.violated) {
-          void logViolation('PHONE_DETECTED', { confidence: phone.maxConfidence });
+          reportViolation('PHONE_DETECTED', { confidence: phone.maxConfidence });
         }
       }, TICK_MS);
     })();
@@ -137,13 +156,16 @@ export function useInterviewProctoring({
 
       void finalizeOnStop();
     };
-  }, [enabled, jobId, applicationId, videoRef, fullscreenRootRef, userId]);
+  }, [enabled, jobId, applicationId, videoRef, fullscreenRootRef, userId, onViolation]);
 
   useEffect(() => {
-    if (!isOpen) setProctoringResult(null);
+    if (!isOpen) {
+      setProctoringResult(null);
+      setLiveWarnings([]);
+    }
   }, [isOpen]);
 
-  return { proctoringResult };
+  return { proctoringResult, liveWarnings };
 }
 
 export default useInterviewProctoring;

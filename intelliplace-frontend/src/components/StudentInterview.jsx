@@ -80,6 +80,9 @@ const StudentInterview = ({
   const [transcript, setTranscript] = useState([]);
 
   const [endingInterview, setEndingInterview] = useState(false);
+  const [criticalWarnings, setCriticalWarnings] = useState(0);
+  const [warningModal, setWarningModal] = useState(null);
+  const autoStopTriggeredRef = useRef(false);
 
   const appendTranscript = useCallback((role, text) => {
     const t = String(text || '').trim();
@@ -192,6 +195,9 @@ const StudentInterview = ({
       userPiecesRef.current = [];
       setConnectingAgent(false);
       setEndingInterview(false);
+      setCriticalWarnings(0);
+      setWarningModal(null);
+      autoStopTriggeredRef.current = false;
       autoFinalizingRef.current = false;
       setCandidateDisplayName(
         normalizeDisplayName(candidateDisplayNameProp) || normalizeDisplayName(getCurrentUser()?.name)
@@ -332,6 +338,21 @@ const StudentInterview = ({
       if (data.data.webSocketUrl) {
         setWsUrl(data.data.webSocketUrl);
       }
+      // New interview attempt: clear previous proctoring violations/counters.
+      try {
+        await fetch(
+          `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/proctoring/reset`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` },
+          }
+        );
+      } catch (_) {
+        /* ignore reset failures */
+      }
+      setCriticalWarnings(0);
+      setWarningModal(null);
+      autoStopTriggeredRef.current = false;
       setVoiceStarted(true);
     } catch (e) {
       console.error(e);
@@ -472,7 +493,7 @@ const StudentInterview = ({
     localStreamReady &&
     !!studentUserId;
 
-  const { proctoringResult } = useInterviewProctoring({
+  const { proctoringResult, liveWarnings } = useInterviewProctoring({
     enabled: proctoringEnabled,
     videoRef: localVideoRef,
     fullscreenRootRef,
@@ -480,7 +501,27 @@ const StudentInterview = ({
     applicationId,
     userId: studentUserId,
     isOpen,
+    onViolation: (evt) => {
+      if (!evt || (evt.type !== 'PHONE_DETECTED' && evt.type !== 'MULTIPLE_FACES')) return;
+      const msg =
+        evt.type === 'PHONE_DETECTED'
+          ? 'Mobile phone detected. Keep phones away from camera view.'
+          : 'Multiple faces detected. Only you should be visible.';
+      setWarningModal(msg);
+      setCriticalWarnings((prev) => prev + 1);
+    },
   });
+
+  const latestCriticalWarning = [...(liveWarnings || [])]
+    .reverse()
+    .find((w) => w?.type === 'PHONE_DETECTED' || w?.type === 'MULTIPLE_FACES');
+
+  useEffect(() => {
+    if (criticalWarnings < 3 || autoStopTriggeredRef.current || !voiceStarted || endingInterview) return;
+    autoStopTriggeredRef.current = true;
+    setWarningModal('Interview auto-stopped due to repeated proctoring warnings (3).');
+    handleEndInterview();
+  }, [criticalWarnings, voiceStarted, endingInterview]);
 
   const handleEndInterview = async () => {
     setEndingInterview(true);
@@ -540,6 +581,38 @@ const StudentInterview = ({
           <span>
             AI proctoring is active: stay on this tab in fullscreen, face the camera, and keep phones out of frame.
           </span>
+        </div>
+      )}
+      {latestCriticalWarning && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-red-900/60 bg-red-950/60 px-4 py-2 text-xs text-red-100">
+          <ShieldAlert className="h-4 w-4 shrink-0 text-red-400" aria-hidden />
+          <span>
+            {latestCriticalWarning.type === 'PHONE_DETECTED'
+              ? 'Warning: phone detected in frame. Remove it immediately.'
+              : 'Warning: multiple faces detected. Only the candidate should be visible.'}
+          </span>
+        </div>
+      )}
+      {warningModal && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 px-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-red-700 bg-red-950 px-6 py-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xl font-bold text-red-100">Proctoring Warning</p>
+                <p className="mt-2 text-base text-red-200">{warningModal}</p>
+                <p className="mt-3 text-sm text-red-300">
+                  Warnings: {criticalWarnings}/3
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setWarningModal(null)}
+                className="rounded-lg border border-red-500 px-3 py-1.5 text-sm font-semibold text-red-100 hover:bg-red-900/50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800/80 bg-[#252528] px-4">
