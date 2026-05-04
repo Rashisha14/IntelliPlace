@@ -2052,8 +2052,6 @@ router.post('/:jobId/generate-aptitude-questions', authenticateToken, authorizeC
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-
     const prompt = `
 Generate exactly ${count} multiple-choice questions for an aptitude test.
 The topic/section name is "${sectionName}".
@@ -2069,7 +2067,26 @@ Each object must have the following exact schema:
 Make sure all options are plain text. Do not output anything other than the JSON array.
 `;
 
-    const result = await model.generateContent(prompt);
+    const modelsToTry = ["gemini-2.0-flash", "gemini-pro-latest", "gemini-flash-latest"];
+    let result;
+    let lastError;
+
+    for (const modelName of modelsToTry) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        result = await model.generateContent(prompt);
+        if (result) break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`Gemini model ${modelName} failed, trying next...`);
+        continue;
+      }
+    }
+
+    if (!result) {
+      throw lastError || new Error('All Gemini models failed');
+    }
+
     let text = result.response.text();
     
     // Clean up potential markdown formatting
@@ -2115,8 +2132,6 @@ router.post('/:jobId/generate-coding-question', authenticateToken, authorizeComp
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-
     const prompt = `
 Generate 1 programming/coding problem based on this topic/difficulty: "${topic}".
 
@@ -2136,7 +2151,26 @@ The object must have the following exact schema:
 Ensure there are at least 3 test cases. The test cases and expectedOutputs arrays must be the same length. The output should be plain text formatting for input and output. Do not output anything other than the JSON object.
 `;
 
-    const result = await model.generateContent(prompt);
+    const modelsToTry = ["gemini-2.0-flash", "gemini-pro-latest", "gemini-flash-latest"];
+    let result;
+    let lastError;
+
+    for (const modelName of modelsToTry) {
+      try {
+        const model = genAI.getGenerativeModel({ model: modelName });
+        result = await model.generateContent(prompt);
+        if (result) break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`Gemini model ${modelName} failed, trying next...`);
+        continue;
+      }
+    }
+
+    if (!result) {
+      throw lastError || new Error('All Gemini models failed');
+    }
+
     let text = result.response.text();
     
     // Clean up potential markdown formatting

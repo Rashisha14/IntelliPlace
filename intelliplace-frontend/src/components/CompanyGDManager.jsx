@@ -382,13 +382,17 @@ export default function CompanyGDManager({
     }
   };
 
-  const submitEvaluations = async () => {
-    const payload = Object.entries(evaluations).map(([appId, status]) => ({
+  const submitEvaluations = async (manualEvals = null) => {
+    const sourceEvals = manualEvals || evaluations;
+    const payload = Object.entries(sourceEvals).map(([appId, status]) => ({
       applicationId: parseInt(appId, 10),
       status,
     }));
 
-    if (payload.length === 0) return;
+    if (payload.length === 0) {
+      if (!manualEvals) Swal.fire({ icon: 'info', title: 'No evaluations to save' });
+      return;
+    }
 
     try {
       const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/evaluate`, {
@@ -400,7 +404,7 @@ export default function CompanyGDManager({
         body: JSON.stringify({ evaluations: payload }),
       });
       if (res.ok) {
-        Swal.fire({ icon: 'success', title: 'Evaluations saved' });
+        if (!manualEvals) Swal.fire({ icon: 'success', title: 'Evaluations saved' });
         if (typeof onEvaluationsSaved === 'function') {
           await onEvaluationsSaved();
         }
@@ -445,6 +449,26 @@ export default function CompanyGDManager({
       }
       const rankings = Array.isArray(data?.data?.rankings) ? data.data.rankings : [];
       setAiRankings(rankings);
+
+      if (rankings.length > 0) {
+        const newEvals = { ...evaluations };
+        rankings.forEach((r) => {
+          if (r.applicationId) {
+            newEvals[r.applicationId] = r.suggestedStatus;
+          }
+        });
+        setEvaluations(newEvals);
+        
+        // Auto-save the evaluations to the database
+        await submitEvaluations(newEvals);
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'AI Evaluation Complete',
+          text: 'Rankings generated and evaluations saved successfully.',
+        });
+      }
+
       if (rankings.length === 0) {
         Swal.fire({ icon: 'info', title: 'No rankings produced' });
       } else if (data?.data?.source === 'fallback') {

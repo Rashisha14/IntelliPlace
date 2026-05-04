@@ -224,9 +224,9 @@ async def evaluate_resume(request: ResumeEvaluationRequest):
         if not passes_filters:
             decision = "REJECTED"
             final_score = min(final_score, 0.55)
-        elif final_score >= 0.68:
+        elif final_score >= 0.5:
             decision = "SHORTLISTED"
-        elif final_score >= 0.45:
+        elif final_score >= 0.4:
             decision = "REVIEW"
         else:
             decision = "REJECTED"
