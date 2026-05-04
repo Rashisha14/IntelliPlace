@@ -339,12 +339,25 @@ model GroupDiscussion {
   id            Int                          @id @default(autoincrement())
   jobId         Int                          @unique @map("job_id")
   topic         String
+<<<<<<< HEAD
   status        String                       @default("CREATED")
   prepDuration  Int                          @default(120)
   startedAt     DateTime?                    @map("started_at")
   prepStartedAt DateTime?                    @map("prep_started_at")
   createdAt     DateTime                     @default(now()) @map("created_at")
   updatedAt     DateTime                     @updatedAt @map("updated_at")
+=======
+  status        String         @default("CREATED") // CREATED, PREP, ACTIVE, COMPLETED
+  prepDuration  Int            @default(120) // in seconds
+  /// 0 = no automatic end; otherwise max live discussion length in seconds (5–120 min enforced in API)
+  discussionDurationSec Int    @default(0) @map("discussion_duration_sec")
+  startedAt     DateTime?      @map("started_at")
+  prepStartedAt DateTime?      @map("prep_started_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  
+  job           Job            @relation(fields: [jobId], references: [id])
+>>>>>>> 2a777afffe033b294ded11fd7bcfc85900daa12c
   participants  GroupDiscussionParticipant[]
   job           Job                          @relation(fields: [jobId], references: [id])
 
