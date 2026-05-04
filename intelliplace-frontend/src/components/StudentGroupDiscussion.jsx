@@ -16,14 +16,10 @@ import { API_BASE_URL, getRealtimeBaseUrl } from '../config';
 import { getCurrentUser } from '../utils/auth';
 import SelfCameraPreview from './SelfCameraPreview';
 
+/** Hard cap: mic stays open until release or this many ms (no silence-based early cut). */
 const MAX_HOLD_MS = 60_000;
 /** Server skips to next speaker if mic not opened within this window after floor is granted */
 const FLOOR_CLAIM_DEADLINE_SEC = 10;
-/** While holding PTT: if RMS stays near silence this long after last sound → auto-stop */
-const SILENCE_AUTO_STOP_MS = 12_000;
-/** Ignore silence detection briefly after starting mic */
-const SILENCE_ARM_MS = 3_500;
-const RMS_SILENT_BELOW = 1.85;
 
 /** Float32 mono (-1..1) → little-endian int16 PCM for Deepgram `linear16`. */
 function floatTo16BitLinearPcm(input) {
@@ -59,10 +55,8 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
   const audioChunksRef = useRef([]);
   const audioContextRef = useRef(null);
   const analyserRef = useRef(null);
-  const lastSoundRef = useRef(0);
-  const holdStartedAtRef = useRef(0);
   const holdingRef = useRef(false);
-  /** True while MediaRecorder gathering — used for reliable 90s cap */
+  /** True while MediaRecorder gathering — used for MAX_HOLD_MS cap */
   const recordingActiveRef = useRef(false);
   /** Prevent Space key default scroll */
   const pttEligibleRef = useRef(false);
@@ -414,8 +408,6 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
 
       mediaRecorderRef.current = recorder;
       recordingActiveRef.current = true;
-      holdStartedAtRef.current = Date.now();
-      lastSoundRef.current = Date.now();
       recorder.start();
       setIsSpeaking(true);
       if (Number.isFinite(jid)) {
@@ -458,15 +450,6 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
           }
           const avg = sum / dataArray.length;
           setAudioLevel(Math.min(1, avg / 48));
-          const now = Date.now();
-          if (now - holdStartedAtRef.current < SILENCE_ARM_MS) return;
-
-          if (avg > RMS_SILENT_BELOW) {
-            lastSoundRef.current = now;
-          } else if (now - lastSoundRef.current >= SILENCE_AUTO_STOP_MS) {
-            stopRecording();
-            showToast('No sound detected — turn ended.', 'info');
-          }
         }, 220);
       } catch (audioErr) {
         console.error(audioErr);
@@ -479,7 +462,9 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
       }
 
       recordingTimeoutRef.current = setTimeout(() => {
-        if (recordingActiveRef.current) stopRecording();
+        if (!recordingActiveRef.current) return;
+        void stopRecording();
+        showToast(`Maximum speaking time (${MAX_HOLD_MS / 1000}s) reached.`, 'info');
       }, MAX_HOLD_MS);
     } catch (err) {
       console.error(err);
@@ -911,8 +896,8 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
                         </p>
                       )}
                       <p className="mt-2 text-sm text-zinc-400">
-                        Hold Space or press and hold the green mic — max {MAX_HOLD_MS / 1000}s per hold. Release to
-                        finish. Extended silence ({SILENCE_AUTO_STOP_MS / 1000}s) ends your turn early.
+                        Hold Space or press and hold the green mic — up to {MAX_HOLD_MS / 1000}s per hold (then it
+                        stops automatically). Release anytime sooner to finish.
                       </p>
                     </div>
 
@@ -941,8 +926,8 @@ export default function StudentGroupDiscussion({ isOpen, onClose, jobId }) {
                                 {isSpeaking ? 'Live — release to send' : 'Mic armed'}
                               </p>
                               <p className="mt-1 max-w-[20rem] text-xs leading-relaxed text-zinc-500">
-                                Hold <kbd className="rounded border border-zinc-600 bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">Space</kbd> or press and hold the button below. Max{' '}
-                                {MAX_HOLD_MS / 1000}s; silence {SILENCE_AUTO_STOP_MS / 1000}s ends early.
+                                Hold <kbd className="rounded border border-zinc-600 bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] text-zinc-300">Space</kbd> or press and hold the button below. Stops
+                                automatically after {MAX_HOLD_MS / 1000}s.
                               </p>
                             </div>
                             <div
