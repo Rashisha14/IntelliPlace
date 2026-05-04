@@ -1,7 +1,116 @@
 import prisma from './prisma.js';
+import { GdDeepgramLiveSession } from './gdDeepgramLive.js';
 
 // Setup global state for GDs
 export const activeGDs = new Map();
+
+/** If the current speaker never opens the mic, skip to next after this many ms */
+export const FLOOR_OPEN_MIC_DEADLINE_MS = 10_000;
+
+const floorIdleTimers = new Map();
+
+export function clearGdFloorIdleTimer(jobId) {
+  const jid = resolveGdJobId(jobId);
+  if (jid == null) return;
+  const t = floorIdleTimers.get(jid);
+  if (t) clearTimeout(t);
+  floorIdleTimers.delete(jid);
+}
+
+function scheduleFloorIdleTimer(jid, io, expectedSid) {
+  clearGdFloorIdleTimer(jid);
+  if (expectedSid == null || !io) return;
+  const tid = setTimeout(() => {
+    floorIdleTimers.delete(jid);
+    const g = activeGDs.get(jid);
+    if (!g || g.status !== 'ACTIVE' || !g.activeSpeaker) return;
+    if (normalizeStudentId(g.activeSpeaker.studentId) !== expectedSid) return;
+    if (g.micHot) return;
+    advanceSpeaker(jid, io);
+  }, FLOOR_OPEN_MIC_DEADLINE_MS);
+  floorIdleTimers.set(jid, tid);
+}
+
+function deepgramApiKeyConfigured() {
+  let s = String(process.env.DEEPGRAM_API_KEY ?? '').trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  return s.length > 0;
+}
+
+function canHoldFloor(gd, sid) {
+  if (!gd || gd.status !== 'ACTIVE' || sid == null) return false;
+  ensureGdQueue(gd);
+  const floor = gd.activeSpeaker ? normalizeStudentId(gd.activeSpeaker.studentId) : null;
+  if (floor === sid) return true;
+  if (!gd.activeSpeaker && gd.queue.length > 0) {
+    return normalizeStudentId(gd.queue[0]?.studentId) === sid;
+  }
+  return false;
+}
+
+function ensureGdQueue(gd) {
+  if (!gd || typeof gd !== 'object') return;
+  if (!Array.isArray(gd.queue)) gd.queue = [];
+}
+
+/** Map keys must be numeric job ids — coerces string ids from routes/params */
+export function resolveGdJobId(jobId) {
+  const n = parseInt(String(jobId ?? ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** If discussion is live and the queue is waiting, give the floor to the next person */
+export function assignFirstSpeakerIfIdle(jobId, io) {
+  const jid = resolveGdJobId(jobId);
+  if (jid == null) return;
+  const gd = activeGDs.get(jid);
+  if (!gd || gd.status !== 'ACTIVE' || gd.activeSpeaker) return;
+  ensureGdQueue(gd);
+  if (gd.queue.length === 0) return;
+  advanceSpeaker(jid, io);
+}
+
+/**
+ * When prep window has ended (by wall clock), move room to ACTIVE and notify everyone.
+ * Used by: /gd/start setTimeout, join_gd (recover after restart), client gd_check_prep at 0:00.
+ */
+export async function transitionPrepToActiveIfElapsed(jobId, io) {
+  const jid = resolveGdJobId(jobId);
+  if (jid == null) return false;
+  const gd = activeGDs.get(jid);
+  if (!gd || gd.status !== 'PREP') return false;
+  if (gd.prepEndTime == null) return false;
+  const end = Number(gd.prepEndTime);
+  if (!Number.isFinite(end) || end <= 0 || Date.now() < end) return false;
+
+  gd.status = 'ACTIVE';
+  gd.discussionStartedAt = Date.now();
+  gd.micHot = null;
+  gd.prepEndTime = null;
+  gd.floorGrantedAt = null;
+  clearGdFloorIdleTimer(jid);
+
+  try {
+    await prisma.groupDiscussion.update({
+      where: { jobId: jid },
+      data: { status: 'ACTIVE', startedAt: new Date() },
+    });
+  } catch (e) {
+    console.error('[GD] prep→active DB update failed', e);
+  }
+
+  ensureGdQueue(gd);
+  assignFirstSpeakerIfIdle(jid, io);
+  if (io) {
+    io.to(`gd_${jid}`).emit('gd_state_update', gd);
+  }
+  return true;
+}
 
 export default function setupGDSockets(io) {
   io.on('connection', (socket) => {
@@ -33,11 +142,18 @@ export default function setupGDSockets(io) {
               invitedStudentIds: [],
               joinedStudentIds: [],
               joinedParticipants: [],
+              micHot: null,
+              discussionStartedAt: null,
+              floorGrantedAt: null,
             });
           } else {
           const gdDb = await gdDelegate.findUnique({ where: { jobId: parsedJobId } });
           if (gdDb) {
             const prepEndTime = gdDb.prepStartedAt ? new Date(gdDb.prepStartedAt).getTime() + (gdDb.prepDuration * 1000) : null;
+            const discussionStartedAt =
+              gdDb.status === 'ACTIVE' && gdDb.startedAt
+                ? new Date(gdDb.startedAt).getTime()
+                : null;
             activeGDs.set(parsedJobId, {
               status: gdDb.status,
               queue: [],
@@ -47,6 +163,9 @@ export default function setupGDSockets(io) {
               invitedStudentIds: [],
               joinedStudentIds: [],
               joinedParticipants: [],
+              micHot: null,
+              discussionStartedAt,
+              floorGrantedAt: null,
             });
           } else {
             activeGDs.set(parsedJobId, {
@@ -58,30 +177,47 @@ export default function setupGDSockets(io) {
               invitedStudentIds: [],
               joinedStudentIds: [],
               joinedParticipants: [],
+              micHot: null,
+              discussionStartedAt: null,
+              floorGrantedAt: null,
             });
           }
           }
         } catch (e) {
           console.error("Error fetching GD from DB on join:", e);
         }
+        if (!activeGDs.has(parsedJobId)) {
+          activeGDs.set(parsedJobId, {
+            status: 'CREATED',
+            queue: [],
+            activeSpeaker: null,
+            prepEndTime: null,
+            topic: '',
+            invitedStudentIds: [],
+            joinedStudentIds: [],
+            joinedParticipants: [],
+            micHot: null,
+            discussionStartedAt: null,
+            floorGrantedAt: null,
+          });
+        }
       }
 
-      // Send current state (never emit bare undefined to clients)
-      const currentState = activeGDs.get(parsedJobId) || {
-        status: 'CREATED',
-        queue: [],
-        activeSpeaker: null,
-        prepEndTime: null,
-        topic: '',
-        invitedStudentIds: [],
-        joinedStudentIds: [],
-        joinedParticipants: [],
-      };
+      // Always use the canonical Map entry (never a throwaway fallback object)
+      const currentState = activeGDs.get(parsedJobId);
+      if (!currentState) {
+        console.warn('[Socket] join_gd: missing GD state after init for job', parsedJobId);
+        return;
+      }
 
       socket.data.gdJobId = parsedJobId;
       socket.data.gdUserId = normalizeStudentId(userId);
       socket.data.gdRole = role;
       socket.data.gdUserName = userName || null;
+
+      ensureGdQueue(currentState);
+      await transitionPrepToActiveIfElapsed(parsedJobId, io);
+      assignFirstSpeakerIfIdle(parsedJobId, io);
 
       if (role === 'student' && currentState) {
         const sid = normalizeStudentId(userId);
@@ -131,24 +267,177 @@ export default function setupGDSockets(io) {
       socket.emit('gd_state_update', currentState);
     });
 
+    socket.on('gd_check_prep', async ({ jobId }) => {
+      const jid = resolveGdJobId(jobId);
+      if (jid == null) return;
+      await transitionPrepToActiveIfElapsed(jid, io);
+    });
+
     socket.on('request_speak', ({ jobId, studentId, studentName }) => {
-      const parsedJobId = parseInt(jobId);
+      const parsedJobId = parseInt(String(jobId ?? ''), 10);
+      if (!Number.isFinite(parsedJobId)) return;
       const gd = activeGDs.get(parsedJobId);
       if (!gd) return;
-      
-      // Allow multiple queue entries if they aren't back-to-back?
-      // For now, allow simple push as requested ("multiple time" allowed)
-      gd.queue.push({ studentId, name: studentName });
-      
-      // If nobody is speaking and status is ACTIVE, auto-assign
-      if (!gd.activeSpeaker && gd.status === 'ACTIVE' && gd.queue.length > 0) {
-        advanceSpeaker(parsedJobId, io);
+      ensureGdQueue(gd);
+
+      const sidN = normalizeStudentId(studentId);
+      if (sidN == null) return;
+
+      const maxQ =
+        Array.isArray(gd.invitedStudentIds) && gd.invitedStudentIds.length > 0
+          ? gd.invitedStudentIds.length
+          : 12;
+      if (gd.queue.length >= maxQ) {
+        socket.emit('gd_queue_full', {
+          message: 'The speaker queue is full. Wait until someone finishes their turn.',
+        });
+        return;
+      }
+      if (gd.queue.some((q) => normalizeStudentId(q.studentId) === sidN)) {
+        assignFirstSpeakerIfIdle(parsedJobId, io);
+        if (io) io.to(`gd_${parsedJobId}`).emit('gd_state_update', gd);
+        return;
+      }
+
+      gd.queue.push({
+        studentId: sidN,
+        name: studentName || `Student ${sidN}`,
+      });
+
+      assignFirstSpeakerIfIdle(parsedJobId, io);
+      if (io) io.to(`gd_${parsedJobId}`).emit('gd_state_update', gd);
+    });
+
+    socket.on('gd_ptt', ({ jobId, active }) => {
+      const jid = resolveGdJobId(jobId);
+      if (jid == null) return;
+      assignFirstSpeakerIfIdle(jid, io);
+      const gd = activeGDs.get(jid);
+      const sid = normalizeStudentId(socket.data?.gdUserId);
+      if (!gd || sid == null || gd.status !== 'ACTIVE') return;
+      if (!canHoldFloor(gd, sid)) return;
+      if (active) {
+        clearGdFloorIdleTimer(jid);
+        gd.micHot = {
+          studentId: sid,
+          name:
+            socket.data.gdUserName ||
+            gd.activeSpeaker?.name ||
+            `Student ${sid}`,
+        };
       } else {
-        io.to(`gd_${parsedJobId}`).emit('gd_state_update', gd);
+        gd.micHot = null;
+      }
+      if (io) io.to(`gd_${jid}`).emit('gd_state_update', gd);
+    });
+
+    socket.on('gd_live_start', async ({ jobId, sampleRate }, cb) => {
+      const jid = resolveGdJobId(jobId);
+      if (jid == null) {
+        cb?.({ ok: false, error: 'invalid_job' });
+        return;
+      }
+      if (!deepgramApiKeyConfigured()) {
+        cb?.({ ok: false, error: 'no_deepgram' });
+        return;
+      }
+      assignFirstSpeakerIfIdle(jid, io);
+      const gd = activeGDs.get(jid);
+      const sid = normalizeStudentId(socket.data?.gdUserId);
+      if (!gd || sid == null || gd.status !== 'ACTIVE') {
+        cb?.({ ok: false, error: 'inactive' });
+        return;
+      }
+      if (!canHoldFloor(gd, sid)) {
+        cb?.({ ok: false, error: 'no_floor' });
+        return;
+      }
+
+      try {
+        await socket.data.dgLive?.close?.();
+      } catch (_) {}
+      socket.data.dgLive = null;
+
+      const rawSr = parseInt(String(sampleRate ?? 48000), 10);
+      const sr =
+        Number.isFinite(rawSr) && rawSr >= 8000 && rawSr <= 48000 ? rawSr : 48000;
+
+      const hotName =
+        socket.data.gdUserName ||
+        gd.activeSpeaker?.name ||
+        `Student ${sid}`;
+
+      let session;
+      const emitLive = (extra) => {
+        if (!session) return;
+        io.to(`gd_${jid}`).emit('gd_live_transcript', {
+          jobId: jid,
+          studentId: sid,
+          name: hotName,
+          displayText: session.getDisplayText(),
+          ...extra,
+        });
+      };
+
+      session = new GdDeepgramLiveSession({
+        apiKey: process.env.DEEPGRAM_API_KEY,
+        sampleRate: sr,
+        onPartial: () => emitLive({ isFinal: false }),
+        onFinal: () => emitLive({ isFinal: true }),
+        onError: (err) => console.error('[GD Live]', err?.message || err),
+      });
+
+      try {
+        await session.connect();
+        socket.data.dgLive = session;
+        cb?.({ ok: true, sampleRate: sr });
+      } catch (e) {
+        console.error('[gd_live_start]', e);
+        try {
+          await session?.close?.();
+        } catch (_) {}
+        cb?.({ ok: false, error: e?.message || 'connect_failed' });
       }
     });
 
+    socket.on('gd_live_pcm', (buf) => {
+      const sess = socket.data.dgLive;
+      if (!sess || buf == null) return;
+      try {
+        const b = Buffer.isBuffer(buf) ? buf : Buffer.from(buf);
+        sess.sendPcmBuffer(b);
+      } catch (e) {
+        console.error('[gd_live_pcm]', e);
+      }
+    });
+
+    socket.on('gd_live_end', async ({ jobId: _jobId }, cb) => {
+      const sess = socket.data.dgLive;
+      socket.data.dgLive = null;
+      if (!sess) {
+        cb?.({ ok: true, fullText: '' });
+        return;
+      }
+      try {
+        await sess.close();
+      } catch (e) {
+        console.error('[gd_live_end]', e);
+      }
+      const fullText = sess.getFullText();
+      cb?.({ ok: true, fullText });
+    });
+
+    socket.on('gd_sync_floor', ({ jobId }) => {
+      const parsedJobId = resolveGdJobId(jobId);
+      if (parsedJobId == null) return;
+      assignFirstSpeakerIfIdle(parsedJobId, io);
+    });
+
     socket.on('disconnect', () => {
+      if (socket.data?.dgLive) {
+        socket.data.dgLive.close().catch(() => {});
+        socket.data.dgLive = null;
+      }
       const parsedJobId = Number(socket.data?.gdJobId);
       const userId = normalizeStudentId(socket.data?.gdUserId);
       const role = socket.data?.gdRole;
@@ -156,6 +445,8 @@ export default function setupGDSockets(io) {
       if (parsedJobId && role === 'student' && userId) {
         const gd = activeGDs.get(parsedJobId);
         if (gd) {
+          const hotSid = gd.micHot && normalizeStudentId(gd.micHot.studentId);
+          if (hotSid === userId) gd.micHot = null;
           const remaining = new Set(
             (gd.joinedStudentIds || []).map((x) => normalizeStudentId(x)).filter(Boolean)
           );
@@ -199,18 +490,36 @@ function buildRoomUpdatePayload(gd) {
 }
 
 export function advanceSpeaker(jobId, io) {
-  const gd = activeGDs.get(jobId);
-  if (!gd) return;
+  const jid = resolveGdJobId(jobId);
+  if (jid == null) return;
+  const gd = activeGDs.get(jid);
+  if (!gd) {
+    console.warn('[GD] advanceSpeaker: no in-memory GD for job', jid);
+    return;
+  }
+  ensureGdQueue(gd);
+  clearGdFloorIdleTimer(jid);
+
+  gd.micHot = null;
 
   if (gd.queue.length > 0) {
     const next = gd.queue.shift();
-    gd.activeSpeaker = next;
+    const sid = normalizeStudentId(next?.studentId);
+    gd.activeSpeaker =
+      sid != null
+        ? { studentId: sid, name: next.name || `Student ${sid}` }
+        : { ...next, studentId: next?.studentId };
+    gd.floorGrantedAt = Date.now();
+    const floorSid = normalizeStudentId(gd.activeSpeaker?.studentId);
+    scheduleFloorIdleTimer(jid, io, floorSid);
   } else {
     gd.activeSpeaker = null;
+    gd.floorGrantedAt = null;
   }
 
-  // Broadcast
-  io.to(`gd_${jobId}`).emit('gd_state_update', gd);
+  if (io) {
+    io.to(`gd_${jid}`).emit('gd_state_update', gd);
+  }
 }
 
 export function broadcastDeepgramOutput(jobId, io, transcriptData) {

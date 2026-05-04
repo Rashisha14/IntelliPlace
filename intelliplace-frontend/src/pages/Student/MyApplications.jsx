@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { Play, Code, RefreshCw, Video, Users, FileText, ChevronDown } from 'lucide-react';
@@ -333,7 +334,21 @@ const MyApplications = () => {
         onSubmitted={async () => {
           try { const r = await fetch(`${API_BASE_URL}/jobs/my-applications`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }); const j = await r.json(); if (r.ok) setApplications(j.data.applications || []); setNotice({ type: 'success', text: 'Coding test submitted!' }); } catch { /* noop */ }
         }} />
-      <StudentGroupDiscussion isOpen={isGDOpen && !!testJobId} onClose={() => { setIsGDOpen(false); setTestJobId(null); fetchApplications(); }} jobId={testJobId} applicationId={applications.find(a => a.jobId === testJobId)?.id} />
+      {isGDOpen &&
+        !!testJobId &&
+        createPortal(
+          <StudentGroupDiscussion
+            isOpen
+            onClose={() => {
+              setIsGDOpen(false);
+              setTestJobId(null);
+              fetchApplications();
+            }}
+            jobId={testJobId}
+            applicationId={applications.find((a) => a.jobId === testJobId)?.id}
+          />,
+          document.body
+        )}
       {interviewData && (
         <StudentInterview isOpen={isInterviewOpen} onClose={() => { setIsInterviewOpen(false); setInterviewData(null); fetchApplications(); }}
           jobId={interviewData.jobId} applicationId={interviewData.applicationId} session={interviewData.session} candidateDisplayName={interviewData.candidateDisplayName}

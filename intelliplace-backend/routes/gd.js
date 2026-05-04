@@ -2,7 +2,13 @@ import express from 'express';
 import multer from 'multer';
 import prisma from '../lib/prisma.js';
 import { authenticateToken, authorizeCompany, authorizeStudent } from '../middleware/auth.js';
-import { activeGDs, advanceSpeaker, broadcastDeepgramOutput } from '../lib/socket.js';
+import {
+  activeGDs,
+  advanceSpeaker,
+  broadcastDeepgramOutput,
+  clearGdFloorIdleTimer,
+  transitionPrepToActiveIfElapsed,
+} from '../lib/socket.js';
 import { DeepgramClient } from '@deepgram/sdk';
 
 const router = express.Router();
@@ -106,6 +112,9 @@ router.post('/:jobId/gd/initialize', authenticateToken, authorizeCompany, async 
       invitedStudentIds: selectedStudentIds,
       joinedStudentIds,
       joinedParticipants: oldJoinedParticipants.filter((p) => selectedStudentIds.includes(Number(p.studentId))),
+      micHot: null,
+      discussionStartedAt: null,
+      floorGrantedAt: null,
     };
     activeGDs.set(jobId, state);
 
@@ -175,6 +184,10 @@ router.post('/:jobId/gd/start', authenticateToken, authorizeCompany, async (req,
     state.prepEndTime = prepEndTime;
     state.queue = Array.isArray(state.queue) ? state.queue : [];
     state.activeSpeaker = null;
+    state.micHot = null;
+    state.discussionStartedAt = null;
+    state.floorGrantedAt = null;
+    clearGdFloorIdleTimer(jobId);
 
     await prisma.groupDiscussion.update({
       where: { jobId },
@@ -183,13 +196,8 @@ router.post('/:jobId/gd/start', authenticateToken, authorizeCompany, async (req,
 
     io?.to(`gd_${jobId}`).emit('gd_state_update', state);
 
-    setTimeout(async () => {
-      const liveState = activeGDs.get(jobId);
-      if (liveState && liveState.status === 'PREP') {
-        liveState.status = 'ACTIVE';
-        await prisma.groupDiscussion.update({ where: { jobId }, data: { status: 'ACTIVE', startedAt: new Date() } });
-        io?.to(`gd_${jobId}`).emit('gd_state_update', liveState);
-      }
+    setTimeout(() => {
+      void transitionPrepToActiveIfElapsed(jobId, io);
     }, prepDuration * 1000);
 
     res.json({ success: true, message: 'GD started', data: { room, status: 'PREP', prepEndTime } });
@@ -212,10 +220,14 @@ router.post('/:jobId/gd/stop', authenticateToken, authorizeCompany, async (req, 
     
     const gdState = activeGDs.get(jobId);
     if (gdState) {
+      clearGdFloorIdleTimer(jobId);
       gdState.status = 'COMPLETED';
       gdState.activeSpeaker = null;
       gdState.queue = [];
       gdState.prepEndTime = null;
+      gdState.micHot = null;
+      gdState.discussionStartedAt = null;
+      gdState.floorGrantedAt = null;
       if (req.io) req.io.to(`gd_${jobId}`).emit('gd_state_update', gdState);
     }
 
@@ -234,7 +246,9 @@ router.post('/:jobId/gd/pause', authenticateToken, authorizeCompany, async (req,
     
     const gdState = activeGDs.get(jobId);
     if (gdState && gdState.status === 'ACTIVE') {
+      clearGdFloorIdleTimer(jobId);
       gdState.status = 'PAUSED';
+      gdState.micHot = null;
       if (req.io) req.io.to(`gd_${jobId}`).emit('gd_state_update', gdState);
     }
     res.json({ success: true });
@@ -275,28 +289,23 @@ router.post('/:jobId/gd/transcribe-audio', authenticateToken, authorizeStudent, 
     }
 
     const client = new DeepgramClient({ apiKey });
-    const mimeType = stripEnvQuotes(req.file.mimetype) || 'audio/webm';
-    let result;
-    let error;
-    try {
-      ({ result, error } = await client.listen.prerecorded.transcribeFile(
-        { buffer: req.file.buffer, mimetype: mimeType },
-        { model: 'nova-2', smart_format: true }
-      ));
-    } catch (_) {
-      ({ result, error } = await client.listen.prerecorded.transcribeFile(req.file.buffer, {
-        model: 'nova-2',
-        smart_format: true,
-      }));
-    }
+    // @deepgram/sdk v5: prerecorded API → listen.v1.media.transcribeFile(uploadable, queryOptions)
+    const data = await client.listen.v1.media.transcribeFile(req.file.buffer, {
+      model: 'nova-2',
+      smart_format: true,
+    });
 
-    if (error) throw error;
-
-    const transcript = result?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
+    const transcript = data?.results?.channels?.[0]?.alternatives?.[0]?.transcript || '';
     res.json({ success: true, text: transcript });
   } catch (error) {
     console.error('Error transcribing audio:', error);
-    res.status(500).json({ success: false, message: 'Failed to transcribe audio', error: error.message });
+    const detail =
+      (typeof error?.body === 'string' && error.body) ||
+      error?.body?.err_msg ||
+      error?.body?.message ||
+      error?.message ||
+      'Failed to transcribe audio';
+    res.status(500).json({ success: false, message: detail, error: error.message });
   }
 });
 

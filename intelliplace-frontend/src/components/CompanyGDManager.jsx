@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { io } from 'socket.io-client';
 import {
   Play,
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { API_BASE_URL, getRealtimeBaseUrl } from '../config';
 import Swal from 'sweetalert2';
+import SelfCameraPreview from './SelfCameraPreview';
 
 function uniqueStudentIdsFromApplications(apps) {
   const seen = new Set();
@@ -66,6 +67,9 @@ function hydrateGdStateFromDb(gd) {
     invitedStudentIds: [],
     joinedStudentIds: [],
     joinedParticipants: [],
+    micHot: null,
+    discussionStartedAt: null,
+    floorGrantedAt: null,
   };
 }
 
@@ -83,6 +87,7 @@ export default function CompanyGDManager({
   const [prepTime, setPrepTime] = useState(Number(initialGd?.prepDuration) || 120);
   const [timeLeft, setTimeLeft] = useState(0);
   const [transcripts, setTranscripts] = useState([]);
+  const [liveCaption, setLiveCaption] = useState(null);
   const [evaluations, setEvaluations] = useState({});
   const [room, setRoom] = useState({
     invitedCount: 0,
@@ -97,6 +102,8 @@ export default function CompanyGDManager({
   const [isSetupOpen, setIsSetupOpen] = useState(false);
   const [inviteCount, setInviteCount] = useState(3);
   const [pickedStudentIds, setPickedStudentIds] = useState([]);
+  const socketRef = useRef(null);
+  const prepZeroSyncRef = useRef(false);
 
   const eligiblePoolIds = useMemo(
     () => uniqueStudentIdsFromApplications(applications),
@@ -136,6 +143,7 @@ export default function CompanyGDManager({
       reconnection: true,
       reconnectionDelay: 800,
     });
+    socketRef.current = newSocket;
 
     newSocket.on('connect', () => {
       setRealtimeConnected(true);
@@ -165,6 +173,16 @@ export default function CompanyGDManager({
       setTranscripts((prev) => [...prev, data]);
     });
 
+    newSocket.on('gd_live_transcript', (data) => {
+      if (!data) return;
+      setLiveCaption({
+        studentId: data.studentId,
+        name: data.name,
+        displayText: data.displayText || '',
+        isFinal: !!data.isFinal,
+      });
+    });
+
     newSocket.on('gd_room_update', (payload) => {
       if (payload) setRoom(payload);
     });
@@ -176,9 +194,14 @@ export default function CompanyGDManager({
     });
 
     return () => {
+      socketRef.current = null;
       newSocket.disconnect();
     };
   }, [jobId, token]);
+
+  useEffect(() => {
+    if (!gdState?.micHot) setLiveCaption(null);
+  }, [gdState?.micHot?.studentId]);
 
   useEffect(() => {
     if (!isSetupOpen) return undefined;
@@ -207,6 +230,41 @@ export default function CompanyGDManager({
     }
     return () => clearInterval(timer);
   }, [gdState?.status, gdState?.prepEndTime]);
+
+  useEffect(() => {
+    if (gdState?.status !== 'PREP') {
+      prepZeroSyncRef.current = false;
+      return;
+    }
+    if (timeLeft > 0) return;
+    if (prepZeroSyncRef.current) return;
+    prepZeroSyncRef.current = true;
+    const jid = parseInt(String(jobId), 10);
+    if (Number.isFinite(jid)) {
+      socketRef.current?.emit('gd_check_prep', { jobId: jid });
+    }
+  }, [gdState?.status, timeLeft, jobId]);
+
+  useEffect(() => {
+    prepZeroSyncRef.current = false;
+  }, [gdState?.prepEndTime, jobId]);
+
+  const [discussionElapsedSec, setDiscussionElapsedSec] = useState(0);
+  useEffect(() => {
+    if (
+      (gdState?.status !== 'ACTIVE' && gdState?.status !== 'PAUSED') ||
+      !gdState?.discussionStartedAt
+    ) {
+      setDiscussionElapsedSec(0);
+      return undefined;
+    }
+    const start = gdState.discussionStartedAt;
+    const tick = () =>
+      setDiscussionElapsedSec(Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [gdState?.status, gdState?.discussionStartedAt]);
 
   const handleInitializeGD = async () => {
     if (!topic.trim()) {
@@ -557,8 +615,9 @@ export default function CompanyGDManager({
 
         <div className="rounded-2xl border border-white/10 bg-[#0f1419] p-8 text-zinc-100 shadow-xl">
           <h3 className="text-2xl font-bold">GD Lobby</h3>
-          <p className="mt-2 text-zinc-400">
-            Topic: <strong className="text-zinc-200">{gdState.topic}</strong>
+          <p className="mt-2 text-sm text-zinc-400">
+            The discussion topic stays hidden from candidates until you click <strong className="text-zinc-200">Start GD</strong>.
+            Then preparation time runs and the topic is revealed.
           </p>
           <p className="mt-2 text-sm text-zinc-500">
             Candidates are joining the room. Start is enabled only when all invited candidates join and minimum 3 are present.
@@ -695,7 +754,11 @@ export default function CompanyGDManager({
       <div className="space-y-6">
         {pipelineChrome}
 
-        <div className="overflow-hidden rounded-2xl border border-white/10 bg-[#0b0f14] text-zinc-100 shadow-xl">
+        <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#0b0f14] text-zinc-100 shadow-xl">
+          <SelfCameraPreview
+            active={gdState.status === 'ACTIVE' || gdState.status === 'PAUSED'}
+            className="absolute bottom-3 right-3 z-20 w-36 sm:bottom-4 sm:right-4 sm:w-44"
+          />
           <header className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 bg-[#0f1419] px-5 py-4">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600/30 text-indigo-300">
@@ -715,6 +778,13 @@ export default function CompanyGDManager({
             </div>
 
             <div className="flex flex-wrap items-center justify-end gap-2">
+              <span
+                className="hidden font-mono text-xs tabular-nums text-zinc-400 sm:inline"
+                title="Time since discussion went live"
+              >
+                Discussion {Math.floor(discussionElapsedSec / 60)}:
+                {(discussionElapsedSec % 60).toString().padStart(2, '0')}
+              </span>
               {gdState.status === 'PAUSED' ? (
                 <span className="rounded-full bg-amber-500/20 px-3 py-1 text-xs font-bold text-amber-200 ring-1 ring-amber-500/40">
                   Paused
@@ -763,7 +833,27 @@ export default function CompanyGDManager({
                     {gdState.activeSpeaker.name?.charAt(0) ?? '?'}
                   </div>
                   <p className="text-lg font-bold text-white">{gdState.activeSpeaker.name}</p>
-                  <p className="mt-2 animate-pulse text-xs text-red-300">Push-to-talk window</p>
+                  {gdState.micHot ? (
+                    <>
+                      <p className="mt-2 flex items-center justify-center gap-2 text-xs font-semibold text-red-300">
+                        <span className="h-2 w-2 animate-pulse rounded-full bg-red-400" />
+                        Speaking (mic live)
+                      </p>
+                      {liveCaption?.displayText &&
+                        Number(liveCaption.studentId) === Number(gdState.micHot.studentId) && (
+                          <div className="mx-auto mt-4 max-w-[220px] rounded-lg border border-red-500/20 bg-black/40 px-3 py-2 text-left">
+                            <p className="text-[9px] font-semibold uppercase tracking-wider text-red-300/90">
+                              Live
+                            </p>
+                            <p className="mt-1 max-h-28 overflow-y-auto text-xs leading-relaxed text-zinc-100">
+                              {liveCaption.displayText}
+                            </p>
+                          </div>
+                        )}
+                    </>
+                  ) : (
+                    <p className="mt-2 text-xs text-zinc-500">Has the floor — hold Space to talk</p>
+                  )}
                   <button
                     type="button"
                     onClick={handleNextSpeaker}
@@ -808,6 +898,14 @@ export default function CompanyGDManager({
                 </span>
               </h4>
               <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+                {gdState?.micHot && liveCaption?.displayText && (
+                  <div className="rounded-lg border border-cyan-500/20 bg-cyan-950/25 p-3 text-sm">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400/90">
+                      Live · {liveCaption.name}
+                    </p>
+                    <p className="mt-1 leading-relaxed text-zinc-100">{liveCaption.displayText}</p>
+                  </div>
+                )}
                 {transcripts.map((t, idx) => (
                   <div key={idx} className="rounded-lg border border-white/5 bg-black/35 p-3 text-sm">
                     <strong className="block text-indigo-200">{t.name}</strong>
