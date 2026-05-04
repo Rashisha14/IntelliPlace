@@ -359,6 +359,7 @@ model GroupDiscussionParticipant {
   gdId          Int            @map("gd_id")
   studentId     Int            @map("student_id")
   status        String         @default("WAITING") // WAITING, IN_QUEUE, SPEAKING, DONE, FAILED, PASSED
+  violationCount Int           @default(0) @map("violation_count")
   joinedAt      DateTime       @default(now()) @map("joined_at")
   queuePosition Int?           @map("queue_position")
   audioUrl      String?        @map("audio_url")
