@@ -65,12 +65,18 @@ export function resolveGdJobId(jobId) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-/** 0 = no auto-end; else clamp to 5–120 minutes (seconds). */
+/** Prep window length in seconds (recruiter UI: 30–600). */
+export function clampPrepDurationSec(raw) {
+  const n = parseInt(String(raw ?? ''), 10);
+  if (!Number.isFinite(n)) return 120;
+  return Math.min(600, Math.max(30, n));
+}
+
+/** Total live GD time: clamp to 5–15 minutes (seconds). Invalid/missing → 15 min. */
 export function clampDiscussionDurationSec(raw) {
   const n = parseInt(String(raw ?? ''), 10);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  if (n === 0) return 0;
-  return Math.min(7200, Math.max(300, n));
+  if (!Number.isFinite(n) || n <= 0) return 900;
+  return Math.min(900, Math.max(300, n));
 }
 
 export function clearGdDiscussionEndTimer(jobId) {
@@ -212,7 +218,7 @@ export default function setupGDSockets(io) {
               joinedParticipants: [],
               micHot: null,
               discussionStartedAt: null,
-              discussionDurationSec: 0,
+              discussionDurationSec: 900,
               discussionEndTime: null,
               floorGrantedAt: null,
             });
@@ -258,7 +264,7 @@ export default function setupGDSockets(io) {
               joinedParticipants: [],
               micHot: null,
               discussionStartedAt: null,
-              discussionDurationSec: 0,
+              discussionDurationSec: 900,
               discussionEndTime: null,
               floorGrantedAt: null,
             });
@@ -279,7 +285,7 @@ export default function setupGDSockets(io) {
             joinedParticipants: [],
             micHot: null,
             discussionStartedAt: null,
-            discussionDurationSec: 0,
+            discussionDurationSec: 900,
             discussionEndTime: null,
             floorGrantedAt: null,
           });

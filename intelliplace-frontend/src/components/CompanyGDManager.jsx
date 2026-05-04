@@ -52,9 +52,27 @@ function pickedIdLabel(apps, studentId) {
   return `Student #${studentId}`;
 }
 
+const GD_DISCUSSION_MIN_SEC = 300;
+const GD_DISCUSSION_MAX_SEC = 900;
+
+function clampRecruiterDiscussionSec(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return GD_DISCUSSION_MAX_SEC;
+  return Math.min(GD_DISCUSSION_MAX_SEC, Math.max(GD_DISCUSSION_MIN_SEC, n));
+}
+
+const PREP_MIN_SEC = 30;
+const PREP_MAX_SEC = 600;
+
+function clampRecruiterPrepSec(v) {
+  const n = parseInt(String(v), 10);
+  if (!Number.isFinite(n)) return 120;
+  return Math.min(PREP_MAX_SEC, Math.max(PREP_MIN_SEC, n));
+}
+
 function hydrateGdStateFromDb(gd) {
   if (!gd) return null;
-  const prepDuration = Number(gd.prepDuration) || 120;
+  const prepDuration = clampRecruiterPrepSec(gd.prepDuration ?? 120);
   const prepEndTime = gd.prepStartedAt
     ? new Date(gd.prepStartedAt).getTime() + prepDuration * 1000
     : null;
@@ -64,7 +82,7 @@ function hydrateGdStateFromDb(gd) {
     queue: [],
     activeSpeaker: null,
     prepEndTime,
-    discussionDurationSec: Number(gd.discussionDurationSec) || 0,
+    discussionDurationSec: clampRecruiterDiscussionSec(gd.discussionDurationSec),
     discussionEndTime: null,
     invitedStudentIds: [],
     joinedStudentIds: [],
@@ -86,9 +104,11 @@ export default function CompanyGDManager({
 }) {
   const [gdState, setGdState] = useState(() => hydrateGdStateFromDb(initialGd));
   const [topic, setTopic] = useState(initialGd?.topic || '');
-  const [prepTime, setPrepTime] = useState(Number(initialGd?.prepDuration) || 120);
+  const [prepTime, setPrepTime] = useState(
+    clampRecruiterPrepSec(initialGd?.prepDuration ?? 120)
+  );
   const [discussionDurationSec, setDiscussionDurationSec] = useState(
-    Number(initialGd?.discussionDurationSec) || 0
+    clampRecruiterDiscussionSec(initialGd?.discussionDurationSec)
   );
   const [timeLeft, setTimeLeft] = useState(0);
   const [transcripts, setTranscripts] = useState([]);
@@ -314,8 +334,8 @@ export default function CompanyGDManager({
         },
         body: JSON.stringify({
           topic,
-          prepDuration: Number(prepTime) || 120,
-          discussionDurationSec: Number(discussionDurationSec) || 0,
+          prepDuration: clampRecruiterPrepSec(prepTime),
+          discussionDurationSec: clampRecruiterDiscussionSec(discussionDurationSec),
           selectedStudentIds,
         }),
       });
@@ -324,7 +344,7 @@ export default function CompanyGDManager({
       setRoom(data?.data?.room || room);
       const savedGd = data?.data?.gd;
       if (savedGd && savedGd.discussionDurationSec != null) {
-        setDiscussionDurationSec(Number(savedGd.discussionDurationSec) || 0);
+        setDiscussionDurationSec(clampRecruiterDiscussionSec(savedGd.discussionDurationSec));
       }
       setIsSetupOpen(false);
       Swal.fire({
@@ -346,8 +366,8 @@ export default function CompanyGDManager({
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          prepDuration: Number(prepTime) || 120,
-          discussionDurationSec: Number(discussionDurationSec) || 0,
+          prepDuration: clampRecruiterPrepSec(prepTime),
+          discussionDurationSec: clampRecruiterDiscussionSec(discussionDurationSec),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -427,15 +447,11 @@ export default function CompanyGDManager({
     }
   };
 
-  const prepPresets = [60, 90, 120];
-  /** 0 = no auto-end; otherwise seconds (server clamps to 5–120 min). */
+  const prepPresets = [60, 120];
   const discussionPresets = [
-    { sec: 0, label: 'No limit' },
+    { sec: 300, label: '5 min' },
+    { sec: 600, label: '10 min' },
     { sec: 900, label: '15 min' },
-    { sec: 1200, label: '20 min' },
-    { sec: 1800, label: '30 min' },
-    { sec: 2700, label: '45 min' },
-    { sec: 3600, label: '60 min' },
   ];
 
   const pipelineChrome = pipelineNotice ? (
@@ -520,7 +536,10 @@ export default function CompanyGDManager({
                   />
                 </div>
                 <div>
-                  <p className="mb-2 text-sm font-medium">Prep time (after you start GD)</p>
+                  <p className="mb-2 text-sm font-medium">Prep time (starts when you click Start GD)</p>
+                  <p className="mb-2 text-xs text-gray-600">
+                    Quick presets or enter any duration in seconds ({PREP_MIN_SEC}–{PREP_MAX_SEC}s).
+                  </p>
                   <div className="flex flex-wrap gap-2">
                     {prepPresets.map((s) => (
                       <button
@@ -537,23 +556,26 @@ export default function CompanyGDManager({
                       </button>
                     ))}
                   </div>
+                  <label className="mt-2 block text-xs font-medium text-gray-600">
+                    Manual (seconds)
+                  </label>
                   <input
                     type="number"
-                    min={30}
-                    max={300}
-                    className="mt-2 w-full rounded border p-2"
+                    min={PREP_MIN_SEC}
+                    max={PREP_MAX_SEC}
+                    className="mt-1 w-full rounded border p-2"
                     value={prepTime}
                     onChange={(e) =>
-                      setPrepTime(parseInt(e.target.value, 10) || 120)
+                      setPrepTime(clampRecruiterPrepSec(parseInt(e.target.value, 10)))
                     }
                   />
                 </div>
 
                 <div>
-                  <p className="mb-2 text-sm font-medium">Discussion time (live phase)</p>
+                  <p className="mb-2 text-sm font-medium">Total discussion time (live phase)</p>
                   <p className="mb-2 text-xs text-gray-600">
-                    After prep ends, the live discussion can end automatically at this limit. Recruiter can still end
-                    early. Minimum 5 minutes if a limit is set (server-enforced).
+                    The session ends automatically after this time (you can still end it early). Allowed range:{' '}
+                    <strong>5–15 minutes</strong> (enforced server-side).
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {discussionPresets.map(({ sec, label }) => (
@@ -571,16 +593,19 @@ export default function CompanyGDManager({
                       </button>
                     ))}
                   </div>
+                  <label className="mt-2 block text-xs font-medium text-gray-600">
+                    Manual (seconds, {GD_DISCUSSION_MIN_SEC}–{GD_DISCUSSION_MAX_SEC})
+                  </label>
                   <input
                     type="number"
-                    min={0}
-                    max={7200}
-                    step={60}
-                    className="mt-2 w-full rounded border p-2"
-                    placeholder="Seconds (0 = no limit)"
+                    min={GD_DISCUSSION_MIN_SEC}
+                    max={GD_DISCUSSION_MAX_SEC}
+                    className="mt-1 w-full rounded border p-2"
                     value={discussionDurationSec}
                     onChange={(e) =>
-                      setDiscussionDurationSec(parseInt(e.target.value, 10) || 0)
+                      setDiscussionDurationSec(
+                        clampRecruiterDiscussionSec(parseInt(e.target.value, 10))
+                      )
                     }
                   />
                 </div>
@@ -770,7 +795,7 @@ export default function CompanyGDManager({
           </div>
 
           <div className="mt-6 rounded-xl border border-white/10 bg-[#12171f] p-4">
-            <p className="text-sm font-semibold text-zinc-200">Discussion time limit</p>
+            <p className="text-sm font-semibold text-zinc-200">Total discussion time (5–15 min)</p>
             <p className="mt-1 text-xs text-zinc-500">
               Applies when the session goes live after prep. You can change this until you press Start GD.
             </p>
@@ -1123,12 +1148,12 @@ export default function CompanyGDManager({
                         status: 'CREATED',
                         topic: '',
                         prepDuration: 120,
-                        discussionDurationSec: 0,
+                        discussionDurationSec: GD_DISCUSSION_MAX_SEC,
                       })
                     );
                     setTopic('');
                     setPrepTime(120);
-                    setDiscussionDurationSec(0);
+                    setDiscussionDurationSec(GD_DISCUSSION_MAX_SEC);
                     setTranscripts([]);
                   }
                 });

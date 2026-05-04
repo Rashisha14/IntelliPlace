@@ -9,6 +9,7 @@ import {
   clearGdFloorIdleTimer,
   clearGdDiscussionEndTimer,
   scheduleGdDiscussionEnd,
+  clampPrepDurationSec,
   clampDiscussionDurationSec,
   transitionPrepToActiveIfElapsed,
 } from '../lib/socket.js';
@@ -80,7 +81,7 @@ router.post('/:jobId/gd/initialize', authenticateToken, authorizeCompany, async 
         data: {
           jobId,
           topic: String(topic).trim(),
-          prepDuration: parseInt(prepDuration) || 120,
+          prepDuration: clampPrepDurationSec(prepDuration),
           discussionDurationSec,
           // Keep DB status compatible with existing persisted values.
           status: 'CREATED',
@@ -92,7 +93,7 @@ router.post('/:jobId/gd/initialize', authenticateToken, authorizeCompany, async 
         where: { jobId },
         data: {
           topic: String(topic).trim(),
-          prepDuration: parseInt(prepDuration) || 120,
+          prepDuration: clampPrepDurationSec(prepDuration),
           discussionDurationSec,
           // Keep DB status compatible with existing persisted values.
           status: 'CREATED',
@@ -184,7 +185,7 @@ router.post('/:jobId/gd/start', authenticateToken, authorizeCompany, async (req,
       return res.status(400).json({ success: false, message: 'All invited candidates must join before starting GD', data: room });
     }
 
-    const prepDuration = Number(state.prepDuration || req.body?.prepDuration || 120);
+    const prepDuration = clampPrepDurationSec(state.prepDuration || req.body?.prepDuration || 120);
     const discussionDurationSec = clampDiscussionDurationSec(
       req.body?.discussionDurationSec ?? state.discussionDurationSec ?? 0
     );
