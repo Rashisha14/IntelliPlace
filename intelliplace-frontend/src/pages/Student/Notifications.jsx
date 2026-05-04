@@ -6,6 +6,7 @@ import DashboardLayout from '../../components/DashboardLayout';
 import CvPreviewModal from '../../components/CvPreviewModal';
 import Modal from '../../components/Modal';
 import { getCurrentUser } from '../../utils/auth';
+import { API_BASE_URL } from '../../config';
 
 const Notifications = () => {
   const navigate = useNavigate();
@@ -19,7 +20,7 @@ const Notifications = () => {
   const fetchNotifications = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/notifications', {
+      const res = await fetch(`${API_BASE_URL}/notifications`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
       const json = await res.json();
@@ -39,7 +40,7 @@ const Notifications = () => {
     if (!notifications.some(n => !n.read)) return;
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/notifications/mark-all-read', {
+      const res = await fetch(`${API_BASE_URL}/notifications/mark-all-read`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
@@ -50,7 +51,7 @@ const Notifications = () => {
 
   const markReadAndOpen = async (notif) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/notifications/${notif.id}/open`, {
+      const res = await fetch(`${API_BASE_URL}/notifications/${notif.id}/open`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
       const json = await res.json();
@@ -82,7 +83,7 @@ const Notifications = () => {
   const viewCV = async (cvUrl) => {
     const filename = cvUrl.split('/').pop();
     try {
-      const res = await fetch(`http://localhost:5000/api/jobs/cv/${filename}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      const res = await fetch(`${API_BASE_URL}/jobs/cv/${filename}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
       if (!res.ok) { setModal({ title: 'Error', text: 'Failed to fetch CV', type: 'error' }); return; }
       const blob = await res.blob();
       setPreview({ url: window.URL.createObjectURL(blob), name: filename });
@@ -163,7 +164,7 @@ const Notifications = () => {
                     className="text-xs text-indigo-500 hover:text-indigo-700 mt-1 underline"
                     onClick={async () => {
                       try {
-                        const res = await fetch(`http://localhost:5000/api/applications/${n.applicationId}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+                        const res = await fetch(`${API_BASE_URL}/applications/${n.applicationId}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
                         const json = await res.json();
                         if (!res.ok) throw new Error(json.message);
                         setReasons(prev => ({ ...prev, [n.id]: json.data.application?.decisionReason || 'No reason provided' }));

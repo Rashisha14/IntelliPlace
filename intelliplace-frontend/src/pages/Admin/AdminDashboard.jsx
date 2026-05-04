@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { getCurrentUser } from '../../utils/auth';
+import { API_BASE_URL } from '../../config';
 import UsersTable from './UsersTable';
 
 // Chart.js
@@ -49,7 +50,7 @@ const AdminDashboard = () => {
     setLoading(true);
     try {
       const res = await fetch(
-        `http://localhost:5000/api/dashboard/admin/${activeTab}?search=${query}&page=${page}&limit=10`,
+        `${API_BASE_URL}/dashboard/admin/${activeTab}?search=${query}&page=${page}&limit=10`,
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
       );
       const json = await res.json();
@@ -60,7 +61,7 @@ const AdminDashboard = () => {
 
   const fetchPendingJobs = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/jobs/admin/pending', {
+      const res = await fetch(`${API_BASE_URL}/jobs/admin/pending`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
       });
       const json = await res.json();
@@ -71,7 +72,7 @@ const AdminDashboard = () => {
   const handleApprove = async (jobId, approved) => {
     setApprovalLoading(prev => ({ ...prev, [jobId]: true }));
     try {
-      const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/admin-approve`, {
+      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/admin-approve`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -81,13 +82,23 @@ const AdminDashboard = () => {
       });
       if (res.ok) {
         fetchPendingJobs();
-      } else {
-        const errorData = await res.json();
-        alert(errorData.message || 'Failed to update job approval status');
+        return;
       }
+      const raw = await res.text();
+      let msg = `Request failed (${res.status})`;
+      try {
+        const errJson = JSON.parse(raw);
+        if (errJson?.message) msg = errJson.message;
+      } catch {
+        const trimmed = raw?.trim() || '';
+        if (trimmed.startsWith('<') || trimmed.includes('<!DOCTYPE')) {
+          msg = `Server returned an error (${res.status}). If you use a separate API host, ensure CORS allows PATCH.`;
+        } else if (trimmed) msg = trimmed.slice(0, 200);
+      }
+      alert(msg);
     } catch (error) {
       console.error('Error updating job approval:', error);
-      alert('An error occurred while communicating with the server.');
+      alert(error?.message || 'An error occurred while communicating with the server.');
     } finally {
       setApprovalLoading(prev => ({ ...prev, [jobId]: false }));
     }
@@ -100,7 +111,7 @@ const AdminDashboard = () => {
     // Stats
     (async () => {
       try {
-        const res = await fetch('http://localhost:5000/api/dashboard/admin/stats', { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+        const res = await fetch(`${API_BASE_URL}/dashboard/admin/stats`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
         if (!res.ok) return;
         const { data } = await res.json();
         setStats([
@@ -116,10 +127,10 @@ const AdminDashboard = () => {
     (async () => {
       try {
         const [jr, ar, ir, sr] = await Promise.all([
-          fetch('http://localhost:5000/api/dashboard/admin/analytics/jobs-by-status',          { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
-          fetch('http://localhost:5000/api/dashboard/admin/analytics/applications-by-status',  { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
-          fetch('http://localhost:5000/api/dashboard/admin/analytics/companies-by-industry',   { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
-          fetch('http://localhost:5000/api/dashboard/admin/analytics/students-stats',          { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
+          fetch(`${API_BASE_URL}/dashboard/admin/analytics/jobs-by-status`,          { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
+          fetch(`${API_BASE_URL}/dashboard/admin/analytics/applications-by-status`,  { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
+          fetch(`${API_BASE_URL}/dashboard/admin/analytics/companies-by-industry`,   { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
+          fetch(`${API_BASE_URL}/dashboard/admin/analytics/students-stats`,          { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
         ]);
         const [jd, ad, id_, sd] = await Promise.all([jr.json(), ar.json(), ir.json(), sr.json()]);
         setAnalytics({

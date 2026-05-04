@@ -1,18 +1,12 @@
 import express from 'express';
 import prisma from '../lib/prisma.js';
-import { authenticateToken } from '../middleware/auth.js';
+import { authenticateToken, authorizeAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(authenticateToken);
 
-// Admin authorization middleware
-const authorizeAdmin = (req, res, next) => {
-  if (req.user.userType !== 'admin') {
-    return res.status(403).json({ success: false, message: 'Admin access required' });
-  }
-  next();
-};
+
 
 // Get admin dashboard stats
 router.get('/admin/stats', authorizeAdmin, async (req, res) => {

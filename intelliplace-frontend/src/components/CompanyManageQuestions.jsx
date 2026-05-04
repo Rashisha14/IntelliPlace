@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { X, Trash } from 'lucide-react';
+import { API_BASE_URL } from '../config';
 
 const emptyQuestion = { section: '', questionText: '', options: ['', '', '', ''], correctIndex: 0, marks: 1 };
 
@@ -22,7 +23,7 @@ const CompanyManageQuestions = ({ isOpen, onClose, jobId, onUpdated }) => {
     if (!jobId) return;
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/aptitude-test/questions`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/aptitude-test/questions`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
       const data = await res.json();
       if (res.ok) {
         setQuestions(data.data.questions || []);
@@ -47,7 +48,7 @@ const CompanyManageQuestions = ({ isOpen, onClose, jobId, onUpdated }) => {
       if (!form.section || !form.questionText) throw new Error('Section and question text are required');
       if (!Array.isArray(form.options) || form.options.length !== 4 || form.options.some(o => !o)) throw new Error('All 4 options are required');
 
-      const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/aptitude-test/questions`, {
+      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/aptitude-test/questions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
         body: JSON.stringify(form)
@@ -70,7 +71,7 @@ const CompanyManageQuestions = ({ isOpen, onClose, jobId, onUpdated }) => {
     if (!confirm('Delete this question?')) return;
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/jobs/${jobId}/aptitude-test/questions/${qId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/aptitude-test/questions/${qId}`, { method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
       const data = await res.json();
       if (res.ok) {
         setMessage({ type: 'success', text: 'Question deleted' });

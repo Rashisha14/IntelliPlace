@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import DashboardLayout from '../../components/DashboardLayout';
 import { getCurrentUser } from '../../utils/auth';
+import { API_BASE_URL } from '../../config';
 import ApplicationsList from '../../components/ApplicationsList';
 import CompanyPostJob from '../../components/CompanyPostJob';
 import CompanyCreateTest from '../../components/CompanyCreateTest';
@@ -74,7 +75,7 @@ const CompanyDashboard = () => {
     if (!user || user.userType !== 'company') { navigate('/company/login'); return; }
     (async () => {
       try {
-        const res = await fetch(`http://localhost:5000/api/dashboard/company/stats/${user.id}`, {
+        const res = await fetch(`${API_BASE_URL}/dashboard/company/stats/${user.id}`, {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
         });
         if (!res.ok) return;
@@ -89,7 +90,7 @@ const CompanyDashboard = () => {
     if (!userId) return;
     setJobsLoading(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/jobs/my-jobs`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      const res = await fetch(`${API_BASE_URL}/jobs/my-jobs`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
       const json = await res.json();
       if (res.ok && Array.isArray(json.data?.jobs)) {
         setJobs(json.data.jobs);
@@ -97,8 +98,8 @@ const CompanyDashboard = () => {
         await Promise.all(json.data.jobs.map(async job => {
           try {
             const [ar, cr] = await Promise.all([
-              fetch(`http://localhost:5000/api/jobs/${job.id}/aptitude-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
-              fetch(`http://localhost:5000/api/jobs/${job.id}/coding-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
+              fetch(`${API_BASE_URL}/jobs/${job.id}/aptitude-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
+              fetch(`${API_BASE_URL}/jobs/${job.id}/coding-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }),
             ]);
             if (ar.ok) { const d = await ar.json(); if (d.data?.test || d.data) apt[job.id] = d.data?.test || d.data; }
             if (cr.ok) { const d = await cr.json(); if (d.data) cod[job.id] = d.data; }
@@ -122,8 +123,8 @@ const CompanyDashboard = () => {
     setStartLoading(true);
     try {
       const ep = startingJob.isCoding
-        ? `http://localhost:5000/api/jobs/${startingJob.id}/coding-test/start`
-        : `http://localhost:5000/api/jobs/${startingJob.id}/aptitude-test/start`;
+        ? `${API_BASE_URL}/jobs/${startingJob.id}/coding-test/start`
+        : `${API_BASE_URL}/jobs/${startingJob.id}/aptitude-test/start`;
       const res = await fetch(ep, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
       const d = await res.json();
       if (!res.ok) { alert(d.message || 'Failed to start test'); return; }
@@ -139,8 +140,8 @@ const CompanyDashboard = () => {
     setStopLoading(true);
     try {
       const ep = stoppingJob.isCoding
-        ? `http://localhost:5000/api/jobs/${stoppingJob.id}/coding-test/stop`
-        : `http://localhost:5000/api/jobs/${stoppingJob.id}/aptitude-test/stop`;
+        ? `${API_BASE_URL}/jobs/${stoppingJob.id}/coding-test/stop`
+        : `${API_BASE_URL}/jobs/${stoppingJob.id}/aptitude-test/stop`;
       const res = await fetch(ep, { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
       const d = await res.json();
       if (!res.ok) { alert(d.message || 'Failed to stop test'); return; }
@@ -290,7 +291,7 @@ const CompanyDashboard = () => {
         onCreated={async () => {
           setIsCreateTestOpen(false);
           try {
-            const r = await fetch(`http://localhost:5000/api/jobs/${testJobId}/aptitude-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+            const r = await fetch(`${API_BASE_URL}/jobs/${testJobId}/aptitude-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
             if (r.ok) { const d = await r.json(); setTestsMap(prev => ({ ...prev, [testJobId]: d.data.test })); }
           } catch { /* noop */ }
           setTestJobId(null);
@@ -303,7 +304,7 @@ const CompanyDashboard = () => {
         onCreated={async () => {
           setIsCreateCodingTestOpen(false);
           try {
-            const r = await fetch(`http://localhost:5000/api/jobs/${testJobId}/coding-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+            const r = await fetch(`${API_BASE_URL}/jobs/${testJobId}/coding-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
             if (r.ok) { const d = await r.json(); setCodingTestsMap(prev => ({ ...prev, [testJobId]: d.data })); }
           } catch { /* noop */ }
           setTestJobId(null);
@@ -320,7 +321,7 @@ const CompanyDashboard = () => {
           const eid = editingCodingTestJobId;
           setEditingCodingTestJobId(null);
           try {
-            const r = await fetch(`http://localhost:5000/api/jobs/${eid}/coding-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+            const r = await fetch(`${API_BASE_URL}/jobs/${eid}/coding-test`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
             if (r.ok) { const d = await r.json(); setCodingTestsMap(prev => ({ ...prev, [eid]: d.data })); }
           } catch { /* noop */ }
           if (user) fetchJobs(user.id);

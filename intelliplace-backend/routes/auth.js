@@ -2,6 +2,7 @@ import express from 'express';
 import prisma from '../lib/prisma.js';
 import jwt from 'jsonwebtoken';
 import { authenticateToken } from '../middleware/auth.js';
+import bcrypt from 'bcryptjs';
 
 const router = express.Router();
 
@@ -213,7 +214,21 @@ router.post('/login/admin', async (req, res) => {
       where: { username },
     });
 
-    if (!admin || admin.password !== password) {
+    if (!admin) {
+      return res.status(401).json({ success: false, message: 'Invalid credentials' });
+    }
+
+    // Check if password is hashed (bcrypt hashes start with $2)
+    const isHashed = admin.password.startsWith('$2');
+    let isMatch = false;
+
+    if (isHashed) {
+      isMatch = await bcrypt.compare(password, admin.password);
+    } else {
+      isMatch = admin.password === password;
+    }
+
+    if (!isMatch) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
