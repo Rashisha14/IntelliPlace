@@ -693,6 +693,9 @@ const RecruitmentProcess = () => {
                 job={job}
                 jobId={jobId}
                 applications={gdEligibleApplications}
+                onEvaluationsSaved={async () => {
+                  await fetchJobAndTests(false);
+                }}
                 onSkip={
                   pipeline.gdDone
                     ? undefined
@@ -1463,7 +1466,7 @@ const CodingSubmissionsSection = ({ jobId, applications }) => {
   );
 };
 
-const GDContent = ({ job, jobId, applications, onSkip }) => {
+const GDContent = ({ job, jobId, applications, onSkip, onEvaluationsSaved }) => {
   return (
     <CompanyGDManager
       jobId={jobId}
@@ -1479,6 +1482,7 @@ const GDContent = ({ job, jobId, applications, onSkip }) => {
           Invite list is fixed to candidates who cleared coding (minimum 3 to run a GD).
         </p>
       }
+      onEvaluationsSaved={onEvaluationsSaved}
     />
   );
 };

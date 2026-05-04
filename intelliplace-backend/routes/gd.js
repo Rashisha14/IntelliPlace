@@ -448,21 +448,47 @@ router.post('/:jobId/gd/next-speaker', authenticateToken, authorizeCompany, asyn
 // Company: Evaluate GD Results
 router.post('/:jobId/gd/evaluate', authenticateToken, authorizeCompany, async (req, res) => {
   try {
-    const jobId = parseInt(req.params.jobId);
+    const jobId = parseInt(req.params.jobId, 10);
     const { evaluations } = req.body; // Array of { applicationId, status: 'GD_PASSED' | 'GD_FAILED' }
 
     if (!Array.isArray(evaluations)) {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
     }
 
-    for (const evalObj of evaluations) {
-      await prisma.application.update({
-        where: { id: evalObj.applicationId },
-        data: { status: evalObj.status }
+    const job = await prisma.job.findUnique({ where: { id: jobId }, select: { companyId: true } });
+    if (!job || job.companyId !== req.user.id) {
+      return res.status(404).json({ success: false, message: 'Job not found or access denied' });
+    }
+
+    const normalized = evaluations
+      .map((e) => ({
+        applicationId: Number(e?.applicationId),
+        status: String(e?.status || '').toUpperCase(),
+      }))
+      .filter((e) => Number.isFinite(e.applicationId) && ['GD_PASSED', 'GD_FAILED'].includes(e.status));
+    if (normalized.length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid evaluations provided' });
+    }
+
+    for (const evalObj of normalized) {
+      await prisma.application.updateMany({
+        where: { id: evalObj.applicationId, jobId },
+        data: {
+          status: evalObj.status,
+          decisionReason:
+            evalObj.status === 'GD_PASSED'
+              ? 'Passed Group Discussion by recruiter evaluation'
+              : 'Did not clear Group Discussion by recruiter evaluation',
+        },
       });
     }
 
-    res.json({ success: true });
+    await prisma.job.update({
+      where: { id: jobId },
+      data: { pipelineGdDone: true },
+    });
+
+    res.json({ success: true, data: { updatedCount: normalized.length } });
   } catch (error) {
     console.error('Error evaluating GD:', error);
     res.status(500).json({ success: false, message: 'Failed to save evaluations' });

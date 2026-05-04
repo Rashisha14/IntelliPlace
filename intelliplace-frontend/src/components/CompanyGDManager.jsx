@@ -81,6 +81,7 @@ export default function CompanyGDManager({
   eligibleList,
   onSkip,
   pipelineNotice,
+  onEvaluationsSaved,
 }) {
   const [gdState, setGdState] = useState(() => hydrateGdStateFromDb(initialGd));
   const [topic, setTopic] = useState(initialGd?.topic || '');
@@ -400,9 +401,15 @@ export default function CompanyGDManager({
       });
       if (res.ok) {
         Swal.fire({ icon: 'success', title: 'Evaluations saved' });
+        if (typeof onEvaluationsSaved === 'function') {
+          await onEvaluationsSaved();
+        }
+      } else {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.message || 'Evaluation failed');
       }
     } catch (err) {
-      Swal.fire({ icon: 'error', title: 'Evaluation failed' });
+      Swal.fire({ icon: 'error', title: err?.message || 'Evaluation failed' });
     }
   };
 
