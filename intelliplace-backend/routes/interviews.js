@@ -1415,6 +1415,7 @@ router.get('/:jobId/interviews/:applicationId/student-session', authenticateToke
     });
 
     const candidateDisplayName = normalizeCandidateDisplayName(application.student?.name);
+    const proctoringLive = await getLiveProctoringWarnings(interview.id);
 
     res.json({
       success: true,
@@ -1428,6 +1429,7 @@ router.get('/:jobId/interviews/:applicationId/student-session', authenticateToke
         job: application.job,
         techQuestionCap: getMaxQuestionsForSession(session),
         candidateDisplayName,
+        proctoringLive,
       },
     });
   } catch (error) {
@@ -1503,6 +1505,8 @@ router.get('/:jobId/interviews/:applicationId/session', authenticateToken, autho
       };
     });
 
+    const proctoringLive = await getLiveProctoringWarnings(interview.id);
+
     res.json({
       success: true,
       data: {
@@ -1512,6 +1516,7 @@ router.get('/:jobId/interviews/:applicationId/session', authenticateToken, autho
           questions: questionsWithAnswers,
           overallEvaluation: safeJsonParse(session.overallEvaluation, null),
         },
+        proctoringLive,
       },
     });
   } catch (error) {
@@ -1553,6 +1558,31 @@ router.post('/:jobId/interviews/:applicationId/complete', authenticateToken, aut
     }
 
     const session = interview.sessions[0];
+    const fullInterview = await prisma.interview.findUnique({
+      where: { id: interview.id },
+      include: {
+        application: { include: { student: true } },
+        job: true,
+      },
+    });
+
+    if (!fullInterview) {
+      return res.status(404).json({ success: false, message: 'Interview not found' });
+    }
+
+    // Evaluate transcript answers first so score is available immediately after completion.
+    const persisted = await persistGeminiEvaluationForSession(
+      prisma,
+      session,
+      fullInterview,
+      fullInterview.job,
+      fullInterview.application
+    );
+
+    let completedSession = session;
+    if (persisted.ok && persisted.sessionRow) {
+      completedSession = persisted.sessionRow;
+    }
 
     // Update session to completed
     await prisma.interviewSession.update({
@@ -1571,15 +1601,237 @@ router.post('/:jobId/interviews/:applicationId/complete', authenticateToken, aut
       },
     });
 
+    const refreshed = await prisma.interviewSession.findUnique({
+      where: { id: session.id },
+    });
+    const sessionForClient = mergeSessionQuestionsWithAnswers(refreshed || completedSession);
+
     res.json({
       success: true,
       data: {
-        message: 'Interview session completed',
+        message: persisted.ok
+          ? 'Interview completed and transcript evaluated'
+          : process.env.GEMINI_API_KEY
+            ? 'Interview completed. Evaluation could not be generated for this session.'
+            : 'Interview completed. Set GEMINI_API_KEY to generate transcript score.',
+        session: sessionForClient,
+        overallEvaluation: sessionForClient?.overallEvaluation || undefined,
       },
     });
   } catch (error) {
     console.error('Error completing interview:', error);
     res.status(500).json({ success: false, message: 'Failed to complete interview' });
+  }
+});
+
+function inferInterviewDecisionFromOverall(overall) {
+  const verdict = String(overall?.verdict || '').toLowerCase();
+  const recommendation = String(overall?.recommendation || '').toLowerCase();
+  const rationale = String(overall?.hiringRationale || '').toLowerCase();
+  const summary = String(overall?.executiveSummary || '').toLowerCase();
+  const score = Number(overall?.overallScore);
+  const merged = `${recommendation} ${rationale} ${summary}`;
+
+  if (['strong_fit', 'moderate_fit'].includes(verdict)) return 'select';
+  if (['weak_fit', 'insufficient_signal'].includes(verdict)) return 'reject';
+  if (/\b(hire|select|proceed|recommended|strong fit)\b/.test(merged)) return 'select';
+  if (/\b(reject|not recommended|insufficient|weak fit|do not proceed)\b/.test(merged)) return 'reject';
+  if (Number.isFinite(score)) return score >= 7 ? 'select' : 'reject';
+  return 'reject';
+}
+
+router.post('/:jobId/interviews/:applicationId/decision', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+    const applicationId = parseInt(req.params.applicationId);
+    const { decision } = req.body || {};
+    const normalized = String(decision || '').toLowerCase();
+
+    if (!['select', 'reject'].includes(normalized)) {
+      return res.status(400).json({ success: false, message: 'Decision must be select or reject' });
+    }
+
+    const app = await prisma.application.findFirst({
+      where: { id: applicationId, jobId },
+      include: {
+        job: true,
+        student: true,
+      },
+    });
+
+    if (!app || app.job?.companyId !== companyId) {
+      return res.status(404).json({ success: false, message: 'Application not found' });
+    }
+
+    const interview = await prisma.interview.findUnique({
+      where: { applicationId },
+      include: {
+        sessions: {
+          where: { status: { in: ['COMPLETED', 'STOPPED'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!interview?.sessions?.length) {
+      return res.status(400).json({ success: false, message: 'Complete the interview before making a decision' });
+    }
+
+    const newStatus = normalized === 'select' ? 'SELECTED' : 'INTERVIEW_FAILED';
+    await prisma.application.update({
+      where: { id: applicationId },
+      data: {
+        status: newStatus,
+        decisionReason:
+          normalized === 'select'
+            ? 'Selected after interview evaluation'
+            : 'Rejected after interview evaluation',
+      },
+    });
+
+    try {
+      await prisma.notification.create({
+        data: {
+          studentId: app.studentId,
+          title: normalized === 'select' ? 'Interview Selected' : 'Interview Result',
+          message:
+            normalized === 'select'
+              ? `Congratulations! You have been selected for "${app.job?.title || 'this role'}".`
+              : `Your interview for "${app.job?.title || 'this role'}" was not selected.`,
+          applicationId: app.id,
+          jobId,
+        },
+      });
+    } catch (notifErr) {
+      console.error('[Interview] decision notification failed:', notifErr);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        applicationId,
+        status: newStatus,
+      },
+      message: normalized === 'select' ? 'Candidate marked as SELECTED' : 'Candidate marked as INTERVIEW_FAILED',
+    });
+  } catch (error) {
+    console.error('Error applying interview decision:', error);
+    return res.status(500).json({ success: false, message: 'Failed to apply interview decision' });
+  }
+});
+
+router.post('/:jobId/interviews/:applicationId/decision/ai', authenticateToken, authorizeCompany, async (req, res) => {
+  try {
+    const companyId = req.user.id;
+    const jobId = parseInt(req.params.jobId);
+    const applicationId = parseInt(req.params.applicationId);
+
+    const app = await prisma.application.findFirst({
+      where: { id: applicationId, jobId },
+      include: {
+        job: true,
+        student: true,
+      },
+    });
+
+    if (!app || app.job?.companyId !== companyId) {
+      return res.status(404).json({ success: false, message: 'Application not found' });
+    }
+
+    const interview = await prisma.interview.findUnique({
+      where: { applicationId },
+      include: {
+        application: { include: { student: true } },
+        job: true,
+        sessions: {
+          where: { status: { in: ['ACTIVE', 'STOPPED', 'COMPLETED'] } },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    if (!interview?.sessions?.length) {
+      return res.status(400).json({ success: false, message: 'No interview session found' });
+    }
+
+    let sessionRow = interview.sessions[0];
+    let overall = safeJsonParse(sessionRow.overallEvaluation, null);
+
+    if (!overall) {
+      const persisted = await persistGeminiEvaluationForSession(
+        prisma,
+        sessionRow,
+        interview,
+        interview.job,
+        interview.application
+      );
+      if (!persisted.ok) {
+        return res.status(400).json({
+          success: false,
+          message: persisted.message || 'No answers to evaluate',
+        });
+      }
+      sessionRow = persisted.sessionRow || sessionRow;
+      overall = safeJsonParse(sessionRow.overallEvaluation, null);
+    }
+
+    if (!overall) {
+      return res.status(400).json({
+        success: false,
+        message: 'AI evaluation is unavailable for this interview transcript',
+      });
+    }
+
+    const aiDecision = inferInterviewDecisionFromOverall(overall);
+    const newStatus = aiDecision === 'select' ? 'SELECTED' : 'INTERVIEW_FAILED';
+
+    await prisma.application.update({
+      where: { id: applicationId },
+      data: {
+        status: newStatus,
+        decisionReason:
+          aiDecision === 'select'
+            ? 'AI transcript evaluation recommended selection'
+            : 'AI transcript evaluation recommended rejection',
+      },
+    });
+
+    try {
+      await prisma.notification.create({
+        data: {
+          studentId: app.studentId,
+          title: aiDecision === 'select' ? 'Interview Selected' : 'Interview Result',
+          message:
+            aiDecision === 'select'
+              ? `Congratulations! You have been selected for "${app.job?.title || 'this role'}".`
+              : `Your interview for "${app.job?.title || 'this role'}" was not selected.`,
+          applicationId: app.id,
+          jobId,
+        },
+      });
+    } catch (notifErr) {
+      console.error('[Interview] AI decision notification failed:', notifErr);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        applicationId,
+        aiDecision,
+        status: newStatus,
+        overallEvaluation: overall,
+      },
+      message:
+        aiDecision === 'select'
+          ? 'AI decision: candidate selected'
+          : 'AI decision: candidate rejected',
+    });
+  } catch (error) {
+    console.error('Error applying AI interview decision:', error);
+    return res.status(500).json({ success: false, message: 'Failed to apply AI decision' });
   }
 });
 
@@ -1834,6 +2086,44 @@ function computeProctorAggregate(violations) {
   return { score, counts, penaltyTotal: penalty };
 }
 
+async function getLiveProctoringWarnings(interviewId) {
+  const focusedTypes = ['PHONE_DETECTED', 'MULTIPLE_FACES'];
+  const recent = await prisma.interviewProctorViolation.findMany({
+    where: {
+      interviewId,
+      type: { in: focusedTypes },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 12,
+    select: {
+      type: true,
+      createdAt: true,
+      metadata: true,
+    },
+  });
+
+  const [phoneDetectedCount, multipleFacesCount] = await Promise.all([
+    prisma.interviewProctorViolation.count({
+      where: { interviewId, type: 'PHONE_DETECTED' },
+    }),
+    prisma.interviewProctorViolation.count({
+      where: { interviewId, type: 'MULTIPLE_FACES' },
+    }),
+  ]);
+
+  return {
+    counts: {
+      PHONE_DETECTED: phoneDetectedCount,
+      MULTIPLE_FACES: multipleFacesCount,
+    },
+    recent: recent.map((r) => ({
+      type: r.type,
+      createdAt: r.createdAt,
+      metadata: safeJsonParse(r.metadata, r.metadata || null),
+    })),
+  };
+}
+
 router.post(
   '/:jobId/interviews/:applicationId/proctoring/violation',
   authenticateToken,
@@ -1898,6 +2188,42 @@ router.post(
     } catch (e) {
       console.error('[Interview] proctoring violation:', e);
       res.status(500).json({ success: false, message: 'Failed to record violation' });
+    }
+  }
+);
+
+router.post(
+  '/:jobId/interviews/:applicationId/proctoring/reset',
+  authenticateToken,
+  authorizeStudent,
+  async (req, res) => {
+    try {
+      const studentId = req.user.id;
+      const jobId = parseInt(req.params.jobId, 10);
+      const applicationId = parseInt(req.params.applicationId, 10);
+
+      const application = await prisma.application.findFirst({
+        where: { id: applicationId, studentId, jobId },
+      });
+      if (!application) {
+        return res.status(404).json({ success: false, message: 'Application not found' });
+      }
+
+      const interview = await prisma.interview.findUnique({
+        where: { applicationId },
+      });
+      if (!interview) {
+        return res.status(404).json({ success: false, message: 'Interview not found' });
+      }
+
+      await prisma.interviewProctorViolation.deleteMany({
+        where: { interviewId: interview.id, studentId },
+      });
+
+      res.json({ success: true, message: 'Proctoring counters reset' });
+    } catch (e) {
+      console.error('[Interview] proctoring reset:', e);
+      res.status(500).json({ success: false, message: 'Failed to reset proctoring counters' });
     }
   }
 );

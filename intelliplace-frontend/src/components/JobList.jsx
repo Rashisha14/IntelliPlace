@@ -34,7 +34,8 @@ const getStatusBadgeClasses = (status) => {
     case 'FAILED CODING':
     case 'CODING_FAILED': return 'bg-red-100 text-red-700 border border-red-300';
     case 'INTERVIEW FAIL':
-    case 'FAILED INTERVIEW': return 'bg-red-100 text-red-800 border border-red-400';
+    case 'FAILED INTERVIEW':
+    case 'INTERVIEW_FAILED': return 'bg-red-100 text-red-800 border border-red-400';
     case 'SELECTED': 
     case 'HIRED': 
     case 'OFFERED': return 'bg-green-100 text-green-800 border border-green-200';
@@ -62,7 +63,8 @@ const getCardClasses = (status) => {
     case 'FAILED CODING':
     case 'CODING_FAILED': return 'border-red-400 bg-red-50/30';
     case 'INTERVIEW FAIL':
-    case 'FAILED INTERVIEW': return 'border-red-600 bg-red-50/30';
+    case 'FAILED INTERVIEW':
+    case 'INTERVIEW_FAILED': return 'border-red-600 bg-red-50/30';
     case 'SELECTED': 
     case 'HIRED': 
     case 'OFFERED': return 'border-green-600 bg-green-50/30';

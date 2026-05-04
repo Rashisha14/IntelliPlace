@@ -10,6 +10,7 @@ import {
   Loader,
   Settings,
   Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 import { API_BASE_URL } from '../config.js';
 
@@ -25,6 +26,9 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
   const [showControls, setShowControls] = useState(true);
   const [evaluatingAi, setEvaluatingAi] = useState(false);
   const [aiEval, setAiEval] = useState(null);
+  const [proctoringLive, setProctoringLive] = useState(null);
+  const [decisionLoading, setDecisionLoading] = useState(false);
+  const [aiDecisionLoading, setAiDecisionLoading] = useState(false);
 
   useEffect(() => {
     if (isOpen && applicationId) {
@@ -68,9 +72,11 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
             setCurrentQuestion(questionsList[questionsList.length - 1]);
           }
         }
+        setProctoringLive(data.data?.proctoringLive || null);
       } else if (res.status === 404) {
         setSession(null);
         setInterviewStatus('STOPPED');
+        setProctoringLive(null);
       }
     } catch (err) {
       console.error('Error fetching session:', err);
@@ -193,12 +199,21 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
 
       const data = await res.json();
       if (res.ok) {
-        setMessage({ type: 'success', text: 'Interview completed!' });
+        if (data.data?.session) {
+          const s = data.data.session;
+          setSession(s);
+          const qList = Array.isArray(s.questions) ? s.questions : JSON.parse(s.questions || '[]');
+          setQuestions(qList);
+          const oe =
+            s.overallEvaluation && typeof s.overallEvaluation === 'object' ? s.overallEvaluation : null;
+          if (oe) setAiEval(oe);
+        }
+        setMessage({
+          type: 'success',
+          text: data.data?.message || 'Interview completed and evaluated.',
+        });
         setInterviewStatus('COMPLETED');
         if (onRefresh) onRefresh();
-        setTimeout(() => {
-          onClose();
-        }, 1500);
       } else {
         setMessage({ type: 'error', text: data.message || 'Failed to complete interview' });
       }
@@ -206,6 +221,73 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
       setMessage({ type: 'error', text: 'Failed to complete interview' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDecision = async (decision) => {
+    if (!window.confirm(decision === 'select' ? 'Mark candidate as selected?' : 'Mark candidate as interview failed?')) {
+      return;
+    }
+    setDecisionLoading(true);
+    setMessage(null);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/decision`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ decision }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setMessage({ type: 'success', text: data.message || 'Decision saved' });
+        if (onRefresh) onRefresh();
+      } else {
+        setMessage({ type: 'error', text: data.message || 'Failed to save decision' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Failed to save decision' });
+    } finally {
+      setDecisionLoading(false);
+    }
+  };
+
+  const handleAiDecision = async () => {
+    if (!window.confirm('Let AI evaluate transcript and apply Select/Reject automatically?')) {
+      return;
+    }
+    setAiDecisionLoading(true);
+    setMessage(null);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(
+        `${API_BASE_URL}/jobs/${jobId}/interviews/${applicationId}/decision/ai`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (data.data?.overallEvaluation && typeof data.data.overallEvaluation === 'object') {
+          setAiEval(data.data.overallEvaluation);
+        }
+        setMessage({ type: 'success', text: data.message || 'AI decision applied' });
+        if (onRefresh) onRefresh();
+      } else {
+        setMessage({ type: 'error', text: data.message || 'Failed to apply AI decision' });
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: 'Failed to apply AI decision' });
+    } finally {
+      setAiDecisionLoading(false);
     }
   };
 
@@ -254,6 +336,15 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
     (interviewStatus === 'COMPLETED' || interviewStatus === 'STOPPED');
 
   if (!isOpen) return null;
+
+  const phoneWarningCount = Number(proctoringLive?.counts?.PHONE_DETECTED || 0);
+  const multiFaceWarningCount = Number(proctoringLive?.counts?.MULTIPLE_FACES || 0);
+  const hasProctorWarnings = phoneWarningCount > 0 || multiFaceWarningCount > 0;
+  const latestCriticalWarning = Array.isArray(proctoringLive?.recent)
+    ? proctoringLive.recent.find(
+        (x) => x?.type === 'PHONE_DETECTED' || x?.type === 'MULTIPLE_FACES'
+      )
+    : null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -388,6 +479,23 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
                 </div>
               </div>
 
+              {hasProctorWarnings && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 flex gap-3 items-start">
+                  <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                  <div className="text-sm text-red-900">
+                    <p className="font-medium">Live proctoring warning</p>
+                    <p className="text-red-800/90 mt-1">
+                      Phone detections: {phoneWarningCount} | Multiple-face detections: {multiFaceWarningCount}
+                    </p>
+                    {latestCriticalWarning?.type && (
+                      <p className="text-xs text-red-700 mt-1">
+                        Latest: {latestCriticalWarning.type === 'PHONE_DETECTED' ? 'Phone detected' : 'Multiple faces detected'}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {canRunAiEval && (
                 <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -458,6 +566,44 @@ const CompanyStartInterview = ({ isOpen, onClose, jobId, applicationId, applicat
                       )}
                     </div>
                   )}
+                </div>
+              )}
+
+              {interviewStatus === 'COMPLETED' && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-4 space-y-3">
+                  <p className="font-medium text-emerald-900">Final hiring decision</p>
+                  <p className="text-sm text-emerald-800/90">
+                    Based on transcript score and evaluation, choose the final interview outcome.
+                  </p>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={handleAiDecision}
+                      disabled={aiDecisionLoading}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-violet-700 text-white rounded-lg hover:bg-violet-800 disabled:opacity-50"
+                    >
+                      {aiDecisionLoading ? <Loader className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                      AI Decide (Transcript)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDecision('select')}
+                      disabled={decisionLoading || aiDecisionLoading}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {decisionLoading ? <Loader className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+                      Select (Recruited)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDecision('reject')}
+                      disabled={decisionLoading || aiDecisionLoading}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {decisionLoading ? <Loader className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
+                      Reject (Interview Failed)
+                    </button>
+                  </div>
                 </div>
               )}
 

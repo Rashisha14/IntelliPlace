@@ -541,7 +541,8 @@ const ApplicationsList = ({
       case 'FAILED CODING':
       case 'CODING_FAILED': return '#EF4444'; // red-500 (medium red)
       case 'INTERVIEW FAIL':
-      case 'FAILED INTERVIEW': return '#DC2626'; // red-600
+      case 'FAILED INTERVIEW':
+      case 'INTERVIEW_FAILED': return '#DC2626'; // red-600
       case 'SELECTED':
       case 'HIRED':
       case 'OFFERED': return '#16A34A'; // green-600
@@ -569,7 +570,8 @@ const ApplicationsList = ({
       case 'FAILED CODING':
       case 'CODING_FAILED': return 'bg-red-100 text-red-700 border border-red-300';
       case 'INTERVIEW FAIL':
-      case 'FAILED INTERVIEW': return 'bg-red-100 text-red-800 border border-red-400';
+      case 'FAILED INTERVIEW':
+      case 'INTERVIEW_FAILED': return 'bg-red-100 text-red-800 border border-red-400';
       case 'SELECTED':
       case 'HIRED':
       case 'OFFERED': return 'bg-green-100 text-green-800 border border-green-200';
