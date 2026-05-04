@@ -343,6 +343,8 @@ model GroupDiscussion {
   topic         String
   status        String         @default("CREATED") // CREATED, PREP, ACTIVE, COMPLETED
   prepDuration  Int            @default(120) // in seconds
+  /// 0 = no automatic end; otherwise max live discussion length in seconds (5–120 min enforced in API)
+  discussionDurationSec Int    @default(0) @map("discussion_duration_sec")
   startedAt     DateTime?      @map("started_at")
   prepStartedAt DateTime?      @map("prep_started_at")
   createdAt     DateTime       @default(now()) @map("created_at")
