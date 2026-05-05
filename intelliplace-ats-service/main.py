@@ -30,6 +30,21 @@ app = FastAPI(
     version="1.0.0" 
 )
 
+# Decision bands on weighted final_score (0–1). Tuned so solid CVs are not all REJECTED.
+# Env override: ATS_SHORTLIST_MIN=0.52 ATS_REVIEW_MIN=0.30
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+SHORTLIST_SCORE_MIN = _env_float("ATS_SHORTLIST_MIN", 0.52)
+REVIEW_SCORE_MIN = _env_float("ATS_REVIEW_MIN", 0.30)
+
 
 class ResumeEvaluationRequest(BaseModel):
     resume_text: str = Field(..., description="Full text content of the resume")
@@ -125,6 +140,11 @@ async def evaluate_resume(request: ResumeEvaluationRequest):
         # Light title blend — JD similarity stays primary.
         semantic_score = min(1.0, max(0.0, (0.92 * semantic_score) + (0.08 * role_similarity)))
 
+        min_exp = request.min_experience_years
+        if min_exp is None:
+            min_exp = 0.0
+        is_fresher_role = min_exp <= 0.0
+
         # STEP 3: Feature Engineering
         normalized_resume_skills = skill_normalizer.normalize_skills(parsed_resume.get('skills', []))
         normalized_required_skills = skill_normalizer.normalize_skills(request.required_skills)
@@ -137,7 +157,10 @@ async def evaluate_resume(request: ResumeEvaluationRequest):
             resume_lower, request.required_skills or [], skill_normalizer
         )
         sem_skill_align = semantic_skill_alignment(
-            semantic_matcher, request.resume_text, request.required_skills or []
+            semantic_matcher,
+            request.resume_text,
+            request.required_skills or [],
+            skill_normalizer,
         )
         required_nonempty = bool(normalized_required_skills)
         skill_match_ratio = blend_skill_match(
@@ -145,12 +168,14 @@ async def evaluate_resume(request: ResumeEvaluationRequest):
             text_cov,
             sem_skill_align,
             required_nonempty,
+            fresher_role=is_fresher_role,
         )
 
-        min_exp = request.min_experience_years
-        if min_exp is None:
-            min_exp = 0.0
-        is_fresher_role = min_exp <= 0
+        # Fresher CVs are short vs long JDs — cosine similarity undershoots even when keywords align.
+        skill_evidence = max(list_skill_ratio, text_cov, sem_skill_align)
+        semantic_scored = float(semantic_score)
+        if is_fresher_role:
+            semantic_scored = min(1.0, 0.38 * semantic_score + 0.62 * skill_evidence)
 
         experience_score = scoring_engine.calculate_experience_score(
             parsed_resume.get('experience_years', 0),
@@ -171,6 +196,7 @@ async def evaluate_resume(request: ResumeEvaluationRequest):
             parsed_resume.get('internship_count', 0),
             project_relevance=project_relevance,
             signal_score=signal_score,
+            is_fresher=is_fresher_role,
         )
         
         education_score = scoring_engine.calculate_education_match(
@@ -193,7 +219,7 @@ async def evaluate_resume(request: ResumeEvaluationRequest):
 
         # STEP 4: Weighted Scoring
         internal_scores = InternalFeatureScores(
-            semantic_score=semantic_score,
+            semantic_score=semantic_scored,
             skill_match_ratio=skill_match_ratio,
             experience_score=experience_score,
             project_score=project_score,
@@ -224,9 +250,9 @@ async def evaluate_resume(request: ResumeEvaluationRequest):
         if not passes_filters:
             decision = "REJECTED"
             final_score = min(final_score, 0.55)
-        elif final_score >= 0.68:
+        elif final_score >= SHORTLIST_SCORE_MIN:
             decision = "SHORTLISTED"
-        elif final_score >= 0.45:
+        elif final_score >= REVIEW_SCORE_MIN:
             decision = "REVIEW"
         else:
             decision = "REJECTED"
@@ -241,7 +267,7 @@ async def evaluate_resume(request: ResumeEvaluationRequest):
                 refined_10, feedback = reranked
                 refined_score = refined_10 / 10.0
                 gemini_weight = 0.35
-                if 0.42 <= final_score <= 0.78:
+                if REVIEW_SCORE_MIN <= final_score <= 0.82:
                     gemini_weight = 0.42
                 final_score = min(
                     1.0,
@@ -249,15 +275,15 @@ async def evaluate_resume(request: ResumeEvaluationRequest):
                 )
                 gemini_data = {"refined_score_10": refined_10, "feedback": feedback}
                 if passes_filters:
-                    if final_score >= 0.68:
+                    if final_score >= SHORTLIST_SCORE_MIN:
                         decision = "SHORTLISTED"
-                    elif final_score >= 0.45:
+                    elif final_score >= REVIEW_SCORE_MIN:
                         decision = "REVIEW"
                     else:
                         decision = "REJECTED"
 
         external_scores = FeatureScores(
-            semantic=semantic_score,
+            semantic=semantic_scored,
             skills=skill_match_ratio,
             experience=experience_score,
             projects=project_score,

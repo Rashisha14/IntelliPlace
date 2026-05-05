@@ -449,7 +449,8 @@ router.post('/:jobId/gd/next-speaker', authenticateToken, authorizeCompany, asyn
 router.post('/:jobId/gd/evaluate', authenticateToken, authorizeCompany, async (req, res) => {
   try {
     const jobId = parseInt(req.params.jobId, 10);
-    const { evaluations } = req.body; // Array of { applicationId, status: 'GD_PASSED' | 'GD_FAILED' }
+    const { evaluations, finalizePipeline } = req.body; // Array of { applicationId, status }; finalizePipeline defaults true
+    const shouldFinalizePipeline = finalizePipeline !== false;
 
     if (!Array.isArray(evaluations)) {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
@@ -483,12 +484,17 @@ router.post('/:jobId/gd/evaluate', authenticateToken, authorizeCompany, async (r
       });
     }
 
-    await prisma.job.update({
-      where: { id: jobId },
-      data: { pipelineGdDone: true },
-    });
+    if (shouldFinalizePipeline) {
+      await prisma.job.update({
+        where: { id: jobId },
+        data: { pipelineGdDone: true },
+      });
+    }
 
-    res.json({ success: true, data: { updatedCount: normalized.length } });
+    res.json({
+      success: true,
+      data: { updatedCount: normalized.length, finalized: shouldFinalizePipeline },
+    });
   } catch (error) {
     console.error('Error evaluating GD:', error);
     res.status(500).json({ success: false, message: 'Failed to save evaluations' });

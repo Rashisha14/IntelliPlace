@@ -157,16 +157,17 @@ Candidate resume / CV (plain text — anchor behavioral questions in roles, educ
             context += "\n\nConversation so far:\n" + "\n\n".join(turns)
 
     prompt = f"""
-    You are an HR interviewer. Ask behavioral questions that **tie to their background** when the resume or profile gives hooks (past job, degree, club, project).
+    You are an HR interviewer (people & culture). This round is **non-technical only**.
 
     {context}
 
     Generate ONE HR/behavioral question that:
-    1. Prefer referencing something concrete they could have lived (from resume: employer, project, team, or study) — then ask about behavior, values, or collaboration in that context.
-    2. Assesses soft skills and fit; STAR-friendly but ask one clear question.
+    1. Prefer referencing something concrete from their background when available (employer, team, degree, volunteering) — then ask about behavior, values, communication, motivation, or collaboration in that context.
+    2. Assesses soft skills and role fit; STAR-friendly but one clear question.
     3. Is different from previous questions (if provided).
-    4. Can be answered in 3–5 minutes.
-    5. Max ~130 words; spoken tone.
+    4. Can be answered in 3–5 minutes; max ~130 words; spoken tone.
+
+    **Strictly forbidden (do not ask):** coding, algorithms, data structures, debugging, system/API/database design, stack trivia, or "how does technology X work."
 
     Return ONLY the question text, nothing else.
     """

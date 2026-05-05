@@ -208,7 +208,7 @@ export function buildJobInterviewContextBlock(ctx) {
 - At least **one situational** or **system design** question appropriate to the seniority implied by the role.
 - At least **one behavioral** question (ownership, conflict, learning from failure).
 - **Do not** skip resume-based follow-ups if the resume excerpt has content.`
-      : 'Focus on communication, motivation, teamwork, and situational judgment relevant to this role.';
+      : `For **HR mode** this is a **non-technical** screening only: motivation, culture fit, communication, teamwork, ethics, career goals, and situational judgment. **Never** ask coding, algorithms, data structures, system/API design, stack trivia, or "how does X technology work."`;
 
   return `#Job-specific context (mandatory — highest priority)
 You are conducting ONE real hiring interview for THIS job only. **Every question** must be relevant to:
@@ -235,7 +235,9 @@ ${requiredSkillsText}
 **Candidate stated skills:**
 ${candidateSkillsText}
 
-**Resume / CV excerpt (plain text — ask concrete follow-ups about employers, projects, stack, impact they mention):**
+${
+    mode === 'TECH'
+      ? `**Resume / CV excerpt (plain text — ask concrete follow-ups about employers, projects, stack, impact they mention):**
 ${resumeExcerpt || '(No readable resume text on file — rely on job description, application skills, and their spoken answers.)'}
 
 **Question arc (like a professional interview):**
@@ -245,7 +247,16 @@ ${resumeExcerpt || '(No readable resume text on file — rely on job description
 4. One **situational or logical problem-solving** question realistic for this job.
 5. One **behavioral** question.
 6. Short follow-ups only to clarify weak answers — stay on-topic.
-7. Close professionally; ask if they have questions for you.
+7. Close professionally; ask if they have questions for you.`
+      : `**Resume excerpt (behavioral hooks only — roles, teams, education; not a technical spec):**
+${resumeExcerpt || '(No readable resume text on file — rely on job description and their spoken answers.)'}
+
+**Question arc (HR — non-technical):**
+1. Brief rapport + ask them to introduce themselves in light of this role.
+2. Several **behavioral / situational** questions tied to their background and this job's expectations (communication, teamwork, conflict, ownership, learning, values).
+3. Short follow-ups only to clarify weak answers — stay non-technical.
+4. Close professionally; ask if they have questions for you.`
+  }
 
 Rules: One question at a time. No markdown or bullet symbols when you speak. Do not reveal scoring. Do not give answers to your own questions.`;
 }

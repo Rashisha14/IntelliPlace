@@ -19,9 +19,10 @@ class ScoringEngine:
         "education_score": 0.05,
     }
     FRESHER_WEIGHTS = {
-        "semantic_score": 0.34,
-        "skill_match_ratio": 0.30,
-        "experience_score": 0.08,
+        # Slightly more weight on explicit skills vs JD embedding (short CV vs long JD gap).
+        "semantic_score": 0.30,
+        "skill_match_ratio": 0.36,
+        "experience_score": 0.06,
         "project_score": 0.23,
         "education_score": 0.05,
     }
@@ -79,9 +80,14 @@ class ScoringEngine:
         internship_count: int,
         project_relevance: float | None = None,
         signal_score: float = 0.0,
+        *,
+        is_fresher: bool = False,
     ) -> float:
         """Project/internship score (0-1); optional JD relevance and resume signals."""
         count_score = self._count_component(project_count, internship_count)
+        if is_fresher and (project_count or 0) + (internship_count or 0) == 0:
+            # Coursework / undetected bullets are common; avoid dragging the whole score down.
+            count_score = max(count_score, 0.50)
         sig = max(0.0, min(1.0, signal_score or 0.0))
         if project_relevance is None:
             return float(min(1.0, 0.82 * count_score + 0.18 * sig))

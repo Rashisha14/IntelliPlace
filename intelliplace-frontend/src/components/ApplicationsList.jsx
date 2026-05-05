@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { FileCheck, Download, Mail, Phone, ChevronDown, ChevronUp, User, FileDown, Sparkles, XCircle, Code, ClipboardList } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { FileCheck, Download, Mail, Phone, ChevronDown, ChevronUp, User, UserCheck, FileDown, Sparkles, XCircle, Code, ClipboardList } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import Swal from 'sweetalert2';
 import { API_BASE_URL } from '../config.js';
@@ -39,33 +39,21 @@ const ApplicationsList = ({
   const [closeLoading, setCloseLoading] = useState(false);
   const [shortlistAllLoading, setShortlistAllLoading] = useState(false);
 
-  // Fetch applications for a job
-  const fetchApplications = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/applicants`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-      });
-      const json = await res.json();
-      if (res.ok) {
-        const apps = json.data.applications || [];
-        setApplications(apps);
-        await fetchAllCodingSnapshots();
-        onDataChanged?.();
-      } else {
-        setError(json.message || 'Failed to fetch applications');
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+  const normalizeAppStatus = (s) => String(s ?? '').trim().toUpperCase();
+  const isReviewStatus = (s) => {
+    const u = normalizeAppStatus(s);
+    return u === 'REVIEW' || u === 'REVIEWING';
   };
 
-  const fetchAllCodingSnapshots = async () => {
+  /** @type {React.MutableRefObject<{ appId: number | null, studentId: number | null }>} */
+  const expandedPollContextRef = useRef({ appId: null, studentId: null });
+  /** Parent callback changes identity each render if inline; ref avoids refetch loops. */
+  const onDataChangedRef = useRef(onDataChanged);
+  useEffect(() => {
+    onDataChangedRef.current = onDataChanged;
+  }, [onDataChanged]);
+
+  const fetchAllCodingSnapshots = useCallback(async () => {
     try {
       const res = await fetch(
         `${API_BASE_URL}/jobs/${jobId}/coding-test/submissions/recruiter`,
@@ -78,30 +66,84 @@ const ApplicationsList = ({
     } catch (err) {
       console.error('Failed to fetch coding snapshots:', err);
     }
-  };
+  }, [jobId]);
+
+  // Fetch applications for a job (`silent`: no full-page spinner; skip parent refresh & heavy snapshot fetch)
+  const fetchApplications = useCallback(async (options = {}) => {
+    const silent = options.silent === true;
+    const refreshSnapshots = options.refreshSnapshots !== false && !silent;
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
+    try {
+      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/applicants`, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+      });
+      const json = await res.json();
+      if (res.ok) {
+        const apps = json.data.applications || [];
+        setApplications(apps);
+        if (refreshSnapshots) {
+          await fetchAllCodingSnapshots();
+        }
+        if (!silent) {
+          onDataChangedRef.current?.();
+        }
+      } else if (!silent) {
+        setError(json.message || 'Failed to fetch applications');
+      }
+    } catch (err) {
+      if (!silent) {
+        setError(err.message);
+      } else {
+        console.warn('Applications background refresh failed:', err);
+      }
+    } finally {
+      if (!silent) {
+        setLoading(false);
+      }
+    }
+  }, [jobId, fetchAllCodingSnapshots]);
 
   useEffect(() => {
     if (jobId) fetchApplications();
-  }, [jobId]);
+  }, [jobId, fetchApplications]);
 
   useEffect(() => {
     if (initialJobStatus) setJobStatus(initialJobStatus);
   }, [initialJobStatus]);
 
   useEffect(() => {
+    if (!expandedApp) {
+      expandedPollContextRef.current = { appId: null, studentId: null };
+      return;
+    }
+    const app = applications.find((a) => a.id === expandedApp);
+    expandedPollContextRef.current = {
+      appId: expandedApp,
+      studentId: app?.student?.id ?? null,
+    };
+  }, [expandedApp, applications]);
+
+  useEffect(() => {
     if (!jobId) return;
-    const interval = setInterval(() => {
-      fetchApplications();
-      if (expandedApp) {
-        const app = applications.find(a => a.id === expandedApp);
-        if (app?.student?.id) {
-          fetchCodingSubmissions(app, true);
-          fetchAptitudeSubmissions(app, true);
-        }
+    const POLL_MS = 45000;
+    const runPoll = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      fetchApplications({ silent: true });
+      const { appId, studentId } = expandedPollContextRef.current;
+      if (appId != null && studentId != null) {
+        const stub = { id: appId, student: { id: studentId } };
+        fetchCodingSubmissions(stub, true);
+        fetchAptitudeSubmissions(stub, true);
       }
-    }, 5000);
+    };
+    const interval = setInterval(runPoll, POLL_MS);
     return () => clearInterval(interval);
-  }, [jobId, expandedApp, applications]);
+  }, [jobId, fetchApplications]);
 
   // Auto-fetch submissions when user expands an application
   useEffect(() => {
@@ -471,8 +513,7 @@ const ApplicationsList = ({
   };
 
   const handleManualShortlist = async (app) => {
-    const status = String(app?.status || '').toUpperCase();
-    if (status !== 'REVIEW' && status !== 'REVIEWING') {
+    if (!isReviewStatus(app?.status)) {
       return;
     }
 
@@ -628,8 +669,9 @@ const ApplicationsList = ({
               </h2>
               {embedded && (
                 <p className="mt-1 text-xs text-gray-600">
-                  Use ATS Shortlist / Shortlist all / manual decisions. The Aptitude stage unlocks once at least one
-                  applicant is shortlisted; use <strong>Close applications</strong> when you want to stop new
+                  Use ATS Shortlist / Shortlist all. For <strong>REVIEW</strong> candidates, use the row{' '}
+                  <strong>Shortlist</strong> button (or expand → Shortlist from review). The Aptitude stage unlocks
+                  once at least one applicant is shortlisted; use <strong>Close applications</strong> to stop new
                   applicants.
                 </p>
               )}
@@ -790,10 +832,20 @@ const ApplicationsList = ({
               {/* Analytics Summary */}
               <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm flex flex-col md:flex-row gap-8 items-center justify-between">
                 <div className="flex-1 w-full">
-                  <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-indigo-500" />
-                    Application Summary
-                  </h3>
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+                    <h3 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
+                      <Sparkles className="w-5 h-5 text-indigo-500" />
+                      Application Summary
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() => fetchApplications({ silent: false, refreshSnapshots: true })}
+                      disabled={loading}
+                      className="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-50"
+                    >
+                      Refresh
+                    </button>
+                  </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                     <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 shadow-sm">
                       <p className="text-sm text-indigo-600 font-semibold uppercase tracking-wider">Total Applied</p>
@@ -850,16 +902,31 @@ const ApplicationsList = ({
                               <p className="text-xs text-gray-500">Backlog</p>
                               <p className="text-sm font-medium text-gray-800">{displayBacklog}</p>
                             </div>
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-end gap-2 flex-wrap">
+                              {isReviewStatus(app.status) && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleManualShortlist(app);
+                                  }}
+                                  disabled={actionLoading}
+                                  title="Move from review to shortlisted"
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                                >
+                                  <UserCheck className="w-3.5 h-3.5" />
+                                  Shortlist
+                                </button>
+                              )}
                               <span
                                 className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${getStatusBadgeClasses(app.status)}`}
                               >
                                 {app.status}
                               </span>
                               {isExpanded ? (
-                                <ChevronUp className="w-5 h-5 text-gray-400" />
+                                <ChevronUp className="w-5 h-5 text-gray-400 shrink-0" />
                               ) : (
-                                <ChevronDown className="w-5 h-5 text-gray-400" />
+                                <ChevronDown className="w-5 h-5 text-gray-400 shrink-0" />
                               )}
                             </div>
                           </div>
@@ -1097,8 +1164,7 @@ const ApplicationsList = ({
                                   Call
                                 </button>
                               )}
-                              {(String(app.status || '').toUpperCase() === 'REVIEW' ||
-                                String(app.status || '').toUpperCase() === 'REVIEWING') && (
+                              {isReviewStatus(app.status) && (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -1107,8 +1173,8 @@ const ApplicationsList = ({
                                     disabled={actionLoading}
                                     className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                   >
-                                    <User className="w-4 h-4" />
-                                    Manual Shortlist
+                                    <UserCheck className="w-4 h-4" />
+                                    Shortlist from review
                                   </button>
                                 )}
                             </div>

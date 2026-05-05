@@ -465,6 +465,7 @@ async function runInterviewQuestionGeneration(prisma, jobId, applicationId, opti
     }
 
     const session = interview.sessions[0];
+    const modeUpper = String(session.mode || 'TECH').toUpperCase();
     const questions = JSON.parse(session.questions || '[]');
     const maxQuestions = getMaxQuestionsForSession(session);
 
@@ -521,7 +522,7 @@ async function runInterviewQuestionGeneration(prisma, jobId, applicationId, opti
     const candidateDisplayName = normalizeCandidateDisplayName(student?.name) || 'Candidate';
 
     const requestData = {
-      mode: session.mode,
+      mode: modeUpper,
       job_title: job.title,
       job_description: job.description,
       required_skills: requiredSkills,
@@ -535,10 +536,23 @@ async function runInterviewQuestionGeneration(prisma, jobId, applicationId, opti
 
     let questionText;
 
-    if (process.env.GEMINI_API_KEY) {
+    const tryInterviewService = async () => {
+      const interviewServiceResponse = await axios.post(
+        `${INTERVIEW_SERVICE_URL}/generate-question`,
+        requestData,
+        { timeout: 30000 }
+      );
+      if (!interviewServiceResponse.data?.success) {
+        return null;
+      }
+      return interviewServiceResponse.data.question;
+    };
+
+    const tryGemini = async () => {
+      if (!process.env.GEMINI_API_KEY) return null;
       try {
-        questionText = await generateInterviewQuestionGemini({
-          mode: session.mode,
+        return await generateInterviewQuestionGemini({
+          mode: modeUpper,
           jobTitle: job.title,
           jobDescription: job.description || '',
           requiredSkills,
@@ -551,31 +565,50 @@ async function runInterviewQuestionGeneration(prisma, jobId, applicationId, opti
         });
       } catch (geminiErr) {
         console.error('[Interview] Gemini question generation failed:', geminiErr.message || geminiErr);
+        return null;
+      }
+    };
+
+    // HR: prefer interview microservice (behavioral-only prompts); TECH: keep Gemini-first to avoid changing technical flow.
+    if (modeUpper === 'HR') {
+      try {
+        questionText = await tryInterviewService();
+      } catch (httpErr) {
+        console.error('[Interview] HR interview service error:', httpErr.message || httpErr);
         questionText = null;
+      }
+      if (!questionText) {
+        questionText = await tryGemini();
+      }
+    } else {
+      questionText = await tryGemini();
+      if (!questionText) {
+        try {
+          questionText = await tryInterviewService();
+        } catch (httpErr) {
+          console.error('[Interview] External service error:', httpErr.message || httpErr);
+          return {
+            ok: false,
+            message:
+              process.env.GEMINI_API_KEY
+                ? 'Failed to generate question (Gemini and interview service unavailable)'
+                : 'Failed to generate question. Set GEMINI_API_KEY in .env or run the interview microservice.',
+          };
+        }
+        if (!questionText) {
+          return { ok: false, message: 'Failed to generate question' };
+        }
       }
     }
 
-    if (!questionText) {
-      try {
-        const interviewServiceResponse = await axios.post(
-          `${INTERVIEW_SERVICE_URL}/generate-question`,
-          requestData,
-          { timeout: 30000 }
-        );
-        if (!interviewServiceResponse.data?.success) {
-          return { ok: false, message: 'Failed to generate question' };
-        }
-        questionText = interviewServiceResponse.data.question;
-      } catch (httpErr) {
-        console.error('[Interview] External service error:', httpErr.message || httpErr);
-        return {
-          ok: false,
-          message:
-            process.env.GEMINI_API_KEY
-              ? 'Failed to generate question (Gemini and interview service unavailable)'
-              : 'Failed to generate question. Set GEMINI_API_KEY in .env or run the interview microservice.',
-        };
-      }
+    if (modeUpper === 'HR' && !questionText) {
+      return {
+        ok: false,
+        message:
+          process.env.GEMINI_API_KEY
+            ? 'Failed to generate HR question (interview service and Gemini unavailable)'
+            : 'Failed to generate HR question. Run the interview microservice on INTERVIEW_SERVICE_URL or set GEMINI_API_KEY.',
+      };
     }
 
     const newQuestion = {
@@ -654,8 +687,9 @@ router.post('/:jobId/interviews/:applicationId/start', authenticateToken, author
     const jobId = parseInt(req.params.jobId);
     const applicationId = parseInt(req.params.applicationId);
     const { mode } = req.body; // "TECH" or "HR"
+    const modeNorm = String(mode || '').trim().toUpperCase();
 
-    if (!mode || !['TECH', 'HR'].includes(mode.toUpperCase())) {
+    if (!modeNorm || !['TECH', 'HR'].includes(modeNorm)) {
       return res.status(400).json({ success: false, message: 'Mode must be TECH or HR' });
     }
 
@@ -692,14 +726,14 @@ router.post('/:jobId/interviews/:applicationId/start', authenticateToken, author
           applicationId,
           jobId,
           date: new Date(),
-          type: mode,
+          type: modeNorm,
           status: 'IN_PROGRESS',
         },
       });
     } else {
       interview = await prisma.interview.update({
         where: { id: interview.id },
-        data: { status: 'IN_PROGRESS' },
+        data: { status: 'IN_PROGRESS', type: modeNorm },
       });
     }
 
@@ -707,25 +741,28 @@ router.post('/:jobId/interviews/:applicationId/start', authenticateToken, author
     const session = await prisma.interviewSession.create({
       data: {
         interviewId: interview.id,
-        mode: mode.toUpperCase(),
+        mode: modeNorm,
         status: 'ACTIVE',
         questions: JSON.stringify([]),
         currentQuestionIndex: 0,
       },
     });
 
-    // Send notification to student
+    // Send notification to student (title/message must be recognizable as "interview" for client routing)
     try {
+      const isHr = modeNorm === 'HR';
       await prisma.notification.create({
         data: {
           studentId: application.studentId,
-          title: 'Interview Started',
-          message: `A ${mode === 'TECH' ? 'Technical' : 'HR'} interview for "${job.title}" has started. Click to join the interview.`,
+          title: isHr ? 'HR interview started' : 'Interview started',
+          message: isHr
+            ? `Your HR interview for "${job.title}" is ready. Open My Applications to join — this round is behavioral only (no coding or technical trivia).`
+            : `Your technical interview for "${job.title}" has started. Open My Applications to join when you are ready.`,
           jobId: jobId,
           applicationId: applicationId,
         },
       });
-      console.log(`[Interview Start] Notification sent to student ${application.studentId}`);
+      console.log(`[Interview Start] Notification sent to student ${application.studentId} (${modeNorm})`);
     } catch (notifError) {
       console.error(`[Interview Start] Failed to send notification:`, notifError);
       // Don't fail the request if notification fails

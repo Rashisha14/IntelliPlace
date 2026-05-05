@@ -104,6 +104,7 @@ export default function CompanyGDManager({
   const [aiRankings, setAiRankings] = useState([]);
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [runningAiEval, setRunningAiEval] = useState(false);
+  const [savingGdAppId, setSavingGdAppId] = useState(null);
   const [isSetupOpen, setIsSetupOpen] = useState(false);
   const [inviteCount, setInviteCount] = useState(3);
   const [pickedStudentIds, setPickedStudentIds] = useState([]);
@@ -122,6 +123,20 @@ export default function CompanyGDManager({
     }
     return m;
   }, [applications]);
+
+  /** After GD, prefer adjudicating only people who appear in the saved transcript (invitees who spoke). */
+  const manualEvalApplications = useMemo(() => {
+    const apps = applications || [];
+    const ids = new Set(
+      (savedConversation || [])
+        .map((t) => Number(t.studentId))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    );
+    if (ids.size === 0) return apps;
+    const filtered = apps.filter((a) => ids.has(Number(a.studentId || a.student?.id)));
+    if (filtered.length === 0 && savedConversation.length > 0) return apps;
+    return filtered;
+  }, [applications, savedConversation]);
 
   const openSetupModal = useCallback(() => {
     const pool = uniqueStudentIdsFromApplications(applications);
@@ -382,13 +397,70 @@ export default function CompanyGDManager({
     }
   };
 
-  const submitEvaluations = async () => {
-    const payload = Object.entries(evaluations).map(([appId, status]) => ({
-      applicationId: parseInt(appId, 10),
-      status,
-    }));
+  const saveGdOutcome = async (app, status, { finalizePipeline } = { finalizePipeline: false }) => {
+    if (!app?.id || !['GD_PASSED', 'GD_FAILED'].includes(status)) return;
+    setSavingGdAppId(app.id);
+    try {
+      const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/evaluate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          evaluations: [{ applicationId: app.id, status }],
+          finalizePipeline,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || 'Save failed');
+      setEvaluations((prev) => ({ ...prev, [app.id]: status }));
+      if (finalizePipeline) {
+        Swal.fire({ icon: 'success', title: 'All decisions saved', text: 'GD round finalized for this job.' });
+      } else {
+        Swal.fire({ icon: 'success', title: 'Saved', text: `${app.student?.name || 'Candidate'} marked ${status === 'GD_PASSED' ? 'passed' : 'not passed'}.`, timer: 2200, showConfirmButton: false });
+      }
+      if (typeof onEvaluationsSaved === 'function') {
+        await onEvaluationsSaved();
+      }
+    } catch (err) {
+      Swal.fire({ icon: 'error', title: err?.message || 'Save failed' });
+    } finally {
+      setSavingGdAppId(null);
+    }
+  };
 
-    if (payload.length === 0) return;
+  const submitEvaluations = async () => {
+    const apps = manualEvalApplications;
+    if (apps.length === 0) {
+      Swal.fire({ icon: 'info', title: 'No candidates', text: 'There is no cohort to finalize for this GD.' });
+      return;
+    }
+    const payload = apps
+      .map((app) => {
+        const st = evaluations[app.id] || app.status;
+        if (st === 'GD_PASSED' || st === 'GD_FAILED') {
+          return { applicationId: app.id, status: st };
+        }
+        return null;
+      })
+      .filter(Boolean);
+
+    if (payload.length === 0) {
+      Swal.fire({ icon: 'info', title: 'No decisions to save', text: 'Use Pass or Fail for each candidate first.' });
+      return;
+    }
+    if (payload.length < apps.length) {
+      const r = await Swal.fire({
+        icon: 'warning',
+        title: 'Not everyone decided',
+        text: `${apps.length - payload.length} candidate(s) have no pass/fail choice. Finalize anyway with only the selected decisions?`,
+        showCancelButton: true,
+        confirmButtonText: 'Finalize partial',
+        cancelButtonText: 'Go back',
+      });
+      if (!r.isConfirmed) return;
+    }
 
     try {
       const res = await fetch(`${API_BASE_URL}/jobs/${jobId}/gd/evaluate`, {
@@ -397,10 +469,10 @@ export default function CompanyGDManager({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ evaluations: payload }),
+        body: JSON.stringify({ evaluations: payload, finalizePipeline: true }),
       });
       if (res.ok) {
-        Swal.fire({ icon: 'success', title: 'Evaluations saved' });
+        Swal.fire({ icon: 'success', title: 'Evaluations saved', text: 'Pipeline advanced for this GD round.' });
         if (typeof onEvaluationsSaved === 'function') {
           await onEvaluationsSaved();
         }
@@ -1010,9 +1082,15 @@ export default function CompanyGDManager({
             Topic: <strong className="text-zinc-200">{gdState.topic}</strong>
           </p>
 
-          <h4 className="mb-4 mt-10 text-lg font-semibold">Evaluate candidates</h4>
+          <h4 className="mb-4 mt-10 text-lg font-semibold">Manual pass / fail</h4>
           <p className="mb-6 text-sm text-zinc-500">
-            Passed candidates can move forward in your pipeline configuration.
+            Mark each participant, then use <strong>Pass &amp; save</strong> or <strong>Fail &amp; save</strong> to store
+            immediately. When everyone is decided, click <strong>Finalize GD round</strong> to advance the job pipeline.
+            {manualEvalApplications.length < (applications || []).length ? (
+              <span className="mt-2 block text-amber-200/90">
+                Showing {manualEvalApplications.length} candidate(s) linked to the saved transcript.
+              </span>
+            ) : null}
           </p>
 
           <div className="mb-8 rounded-xl border border-white/10 bg-[#12171f] p-4">
@@ -1066,55 +1144,98 @@ export default function CompanyGDManager({
             </div>
             {aiRankings.length > 0 && (
               <div className="mt-3 max-h-56 space-y-2 overflow-y-auto pr-1">
-                {aiRankings.map((r) => (
-                  <div key={r.studentId} className="rounded-lg border border-indigo-500/20 bg-black/25 px-3 py-2">
-                    <p className="text-sm font-semibold text-indigo-100">
-                      Rank #{r.rank} · {appByStudentId.get(Number(r.studentId))?.student?.name || `Student ${r.studentId}`} · Score {r.score}/10
-                    </p>
-                    <p className="mt-1 text-xs text-zinc-300">{r.reason}</p>
-                    <p className="mt-1 text-[11px] text-zinc-500">Suggested: {r.suggestedStatus}</p>
-                  </div>
-                ))}
+                {aiRankings.map((r) => {
+                  const rankedApp = appByStudentId.get(Number(r.studentId));
+                  const busy = rankedApp && savingGdAppId === rankedApp.id;
+                  return (
+                    <div key={r.studentId} className="rounded-lg border border-indigo-500/20 bg-black/25 px-3 py-2">
+                      <p className="text-sm font-semibold text-indigo-100">
+                        Rank #{r.rank} · {rankedApp?.student?.name || `Student ${r.studentId}`} · Score {r.score}/10
+                      </p>
+                      <p className="mt-1 text-xs text-zinc-300">{r.reason}</p>
+                      <p className="mt-1 text-[11px] text-zinc-500">Suggested: {r.suggestedStatus}</p>
+                      {rankedApp && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => saveGdOutcome(rankedApp, 'GD_PASSED', { finalizePipeline: false })}
+                            className="rounded-md bg-emerald-700 px-2 py-1 text-[11px] font-bold text-white hover:bg-emerald-600 disabled:opacity-50"
+                          >
+                            Pass &amp; save
+                          </button>
+                          <button
+                            type="button"
+                            disabled={busy}
+                            onClick={() => saveGdOutcome(rankedApp, 'GD_FAILED', { finalizePipeline: false })}
+                            className="rounded-md bg-red-800 px-2 py-1 text-[11px] font-bold text-white hover:bg-red-700 disabled:opacity-50"
+                          >
+                            Fail &amp; save
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
 
           <div className="mb-10 max-h-[420px] space-y-2 overflow-y-auto pr-2">
-            {(applications || []).map((app) => (
-              <div
-                key={app.id}
-                className="flex items-center justify-between rounded-xl border border-white/10 bg-[#12171f] px-4 py-4"
-              >
-                <div>
-                  <p className="font-medium">{app.student?.name}</p>
-                  <p className="mt-1 text-xs text-zinc-500">Status · {app.status}</p>
+            {(manualEvalApplications || []).map((app) => {
+              const busy = savingGdAppId === app.id;
+              const passed = evaluations[app.id] === 'GD_PASSED' || app.status === 'GD_PASSED';
+              const failed = evaluations[app.id] === 'GD_FAILED' || app.status === 'GD_FAILED';
+              return (
+                <div
+                  key={app.id}
+                  className="flex flex-col gap-3 rounded-xl border border-white/10 bg-[#12171f] px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div>
+                    <p className="font-medium">{app.student?.name}</p>
+                    <p className="mt-1 text-xs text-zinc-500">Application status · {app.status}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setEvaluations((prev) => ({ ...prev, [app.id]: 'GD_PASSED' }))}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                        passed ? 'bg-emerald-600 text-white' : 'border border-emerald-500/50 text-emerald-300 hover:bg-emerald-950/80'
+                      }`}
+                    >
+                      <Check className="mr-1 inline-block h-3.5 w-3.5" /> Pass
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => setEvaluations((prev) => ({ ...prev, [app.id]: 'GD_FAILED' }))}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                        failed ? 'bg-red-600 text-white' : 'border border-red-500/50 text-red-300 hover:bg-red-950/80'
+                      }`}
+                    >
+                      <X className="mr-1 inline-block h-3.5 w-3.5" /> Fail
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => saveGdOutcome(app, 'GD_PASSED', { finalizePipeline: false })}
+                      className="rounded-lg bg-emerald-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-600 disabled:opacity-50"
+                    >
+                      {busy ? '…' : 'Pass & save'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => saveGdOutcome(app, 'GD_FAILED', { finalizePipeline: false })}
+                      className="rounded-lg bg-red-700 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-600 disabled:opacity-50"
+                    >
+                      {busy ? '…' : 'Fail & save'}
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setEvaluations((prev) => ({ ...prev, [app.id]: 'GD_PASSED' }))}
-                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
-                      evaluations[app.id] === 'GD_PASSED' || app.status === 'GD_PASSED'
-                        ? 'bg-emerald-600 text-white'
-                        : 'border border-emerald-500/50 text-emerald-300 hover:bg-emerald-950/80'
-                    }`}
-                  >
-                    <Check className="mr-1 inline-block h-3.5 w-3.5" /> Pass
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEvaluations((prev) => ({ ...prev, [app.id]: 'GD_FAILED' }))}
-                    className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition ${
-                      evaluations[app.id] === 'GD_FAILED' || app.status === 'GD_FAILED'
-                        ? 'bg-red-600 text-white'
-                        : 'border border-red-500/50 text-red-300 hover:bg-red-950/80'
-                    }`}
-                  >
-                    <X className="mr-1 inline-block h-3.5 w-3.5" /> Fail
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="flex flex-wrap gap-4">
@@ -1123,7 +1244,7 @@ export default function CompanyGDManager({
               onClick={submitEvaluations}
               className="rounded-xl bg-indigo-600 px-8 py-3 text-sm font-bold hover:bg-indigo-500"
             >
-              Save evaluations
+              Finalize GD round
             </button>
             <button
               type="button"

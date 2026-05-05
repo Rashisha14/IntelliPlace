@@ -156,6 +156,9 @@ export async function generateInterviewQuestion({
     throw new Error('GEMINI_API_KEY is not configured. Add it to your .env file.');
   }
 
+  const modeNorm = String(mode || 'TECH').toUpperCase();
+  const isHr = modeNorm === 'HR';
+
   const skillsStr = Array.isArray(requiredSkills) && requiredSkills.length
     ? requiredSkills.join(', ')
     : 'Not specified';
@@ -180,24 +183,35 @@ export async function generateInterviewQuestion({
   const resumeTrim = resumeExcerpt ? resumeExcerpt.trim().slice(0, 12000) : '';
   const hasResumeText = resumeTrim.length > 0;
   const resumeBlock = hasResumeText
-    ? `\n\n--- Candidate resume / CV (plain-text excerpt — mine this for employers, roles, projects, stack, education, certifications) ---\n${resumeTrim}`
-    : '\n\n(No plain-text resume excerpt on file — use **Candidate stated skills** and the job description; ask how their listed skills map to real work.)';
+    ? isHr
+      ? `\n\n--- Candidate resume / CV (plain text — use only for **behavioral context**: roles, teams, education, volunteering, career story. Do not treat as a technical spec.) ---\n${resumeTrim}`
+      : `\n\n--- Candidate resume / CV (plain-text excerpt — mine this for employers, roles, projects, stack, education, certifications) ---\n${resumeTrim}`
+    : isHr
+      ? '\n\n(No resume excerpt — ask HR/behavioral questions using job context and candidate name only; stay non-technical.)'
+      : '\n\n(No plain-text resume excerpt on file — use **Candidate stated skills** and the job description; ask how their listed skills map to real work.)';
 
   const hasTranscript =
     Array.isArray(conversationHistory) && conversationHistory.some((t) => t?.answer?.trim());
 
-  const resumeGrounding = hasResumeText
-    ? `RESUME-GROUNDED QUESTIONS (mandatory when the excerpt has content):
+  const resumeGrounding = isHr
+    ? hasResumeText
+      ? `HR RESUME CONTEXT (non-technical):
+- Use employers, roles, clubs, or education only as **hooks for behavior**: teamwork, conflict, leadership, communication, ethics, time management, handling feedback, motivation, culture fit.
+- Do **not** ask them to explain code, algorithms, system design, APIs, databases, frameworks, debugging, or "how X technology works."`
+      : `HR CONTEXT (no resume excerpt):
+- Ask classic HR/behavioral questions grounded in the **job title and company-facing role** at a high level (expectations, collaboration, learning), without technical trivia.`
+    : hasResumeText
+      ? `RESUME-GROUNDED QUESTIONS (mandatory when the excerpt has content):
 - Draw from **work experience** (employers, titles, dates), **projects** (name, tech, outcome), **skills** (languages, frameworks, tools), and **education** listed above.
 - Prefer questions that mention something concrete they wrote in the resume (a company, project, or stack) rather than only generic "tell me about yourself."
 - Rotate topics across the interview: experience → projects → depth on a skill → education/certifications → fit for this role — so you are not stuck in one lane.
 - If they listed multiple projects, explore different ones across turns; follow up on impact, tradeoffs, and what they personally built vs collaborated on.`
-    : `RESUME-GROUNDED QUESTIONS (no full excerpt — skills-only mode):
+      : `RESUME-GROUNDED QUESTIONS (no full excerpt — skills-only mode):
 - Use **Candidate stated skills** and the job’s required skills; ask for examples of where they used those skills in practice (coursework, internships, personal projects, or work).`;
 
   const arcInstructions = (() => {
     const i = nextQuestionIndex;
-    if (mode === 'HR') {
+    if (isHr) {
       if (i <= 2) {
         return `INTERVIEW ARC (HR — opening): Warm, conversational. Still **tie the question to their resume or stated background** when possible — e.g. a past role, degree, volunteer work, or skill they listed — then ask about motivation, teamwork, communication, or values in that context.`;
       }
@@ -220,17 +234,39 @@ export async function generateInterviewQuestion({
     return `INTERVIEW ARC (Technical — depth): Role-specific technical depth — implementation, constraints, failure modes, testing. Tie questions to **what they claimed on the resume or in the transcript** when you can (e.g. "You mentioned X — how would you…?").`;
   })();
 
-  const followUpRule = hasTranscript
-    ? `FOLLOW-UP DISCIPLINE (transcript is non-empty): A strong real interview often picks up the thread from what they JUST said or from an earlier answer. Unless you are explicitly in the very first question of the session, prefer a question that either: (a) drills deeper into something they claimed, with a concrete hook from their words, or (b) bridges from their answer into slightly more technical or role-specific territory — not a random new topic every time.`
-    : `The candidate has not answered anything yet — this question stands alone (opening or early rapport).`;
+  const followUpRule = isHr
+    ? hasTranscript
+      ? `FOLLOW-UP DISCIPLINE (HR): Build on their prior answers with **behavioral** follow-ups (situation, actions, outcome, reflection). Never pivot into coding, stack quizzes, or technical design.`
+      : `The candidate has not answered yet — one standalone HR/behavioral question.`
+    : hasTranscript
+      ? `FOLLOW-UP DISCIPLINE (transcript is non-empty): A strong real interview often picks up the thread from what they JUST said or from an earlier answer. Unless you are explicitly in the very first question of the session, prefer a question that either: (a) drills deeper into something they claimed, with a concrete hook from their words, or (b) bridges from their answer into slightly more technical or role-specific territory — not a random new topic every time.`
+      : `The candidate has not answered anything yet — this question stands alone (opening or early rapport).`;
 
   const techCap = parseInt(process.env.INTERVIEW_TECH_MAX_QUESTIONS || '12', 10);
   const finalQuestionNote =
-    mode === 'TECH' && nextQuestionIndex >= techCap - 1
+    !isHr && modeNorm === 'TECH' && nextQuestionIndex >= techCap - 1
       ? `\n- **Last question of session** (technical cap ≈ ${techCap}): Cover any remaining job-critical angle; sound like a natural closing probe — do not imply that more questions will follow.`
       : '';
 
-  const prompt = `You are a senior interviewer running a real conversation, not a quiz. Pace matters: learn the person through **their real experience and resume**, then deepen.
+  const rolePreamble = isHr
+    ? `You are an **HR / people** interviewer. This session is **non-technical**: no coding, no algorithms, no data structures, no system or API design, and no "explain how technology X works."`
+    : `You are a senior interviewer running a real conversation, not a quiz. Pace matters: learn the person through **their real experience and resume**, then deepen.`;
+
+  const jobSkillsLine = isHr
+    ? `**Role context (high level only):** ${jobTitle}\n**Organization / role summary (do not mine for tech stack to quiz them):**\n${jobDescription}`
+    : `**Job title:** ${jobTitle}
+
+**Job description (use more as the arc progresses; tie examples to it when relevant):**
+${jobDescription}
+
+**Required skills for the role:** ${skillsStr}`;
+
+  const candidateSkillsLine = isHr
+    ? `**Candidate name:** ${candidateName}\n(Stated skills on file are for context only — do **not** turn them into a technical interview.)`
+    : `**Candidate name:** ${candidateName}
+**Candidate stated skills (from application — cross-check with resume excerpt):** ${candSkillsStr}`;
+
+  const prompt = `${rolePreamble}
 
 ${resumeGrounding}
 
@@ -238,17 +274,11 @@ ${arcInstructions}
 
 ${followUpRule}
 
-**Interview mode:** ${mode}
+**Interview mode:** ${modeNorm}
 
-**Job title:** ${jobTitle}
+${jobSkillsLine}
 
-**Job description (use more as the arc progresses; tie examples to it when relevant):**
-${jobDescription}
-
-**Required skills for the role:** ${skillsStr}
-
-**Candidate name:** ${candidateName}
-**Candidate stated skills (from application — cross-check with resume excerpt):** ${candSkillsStr}
+${candidateSkillsLine}
 ${resumeBlock}
 ${transcript}
 ${prevTitles}
@@ -256,8 +286,11 @@ ${prevTitles}
 Rules:
 - One clear question only; no "Question 5:" preamble; no numbering in the text; max 130 words.
 - Sound spoken and natural, not like a form field.
-- Address the candidate by name **${candidateName}** exactly as written (same spelling and spacing) when you use their name in the question. If the name is literally "Candidate" or empty, do not force a fake name.
-- When resume text or skills list gives you hooks, **use them by name or clear reference** (company, project, tool, course) — do not ignore listed experience, projects, or skills unless you already exhausted them in prior questions.${finalQuestionNote}
+- Address the candidate by name **${candidateName}** exactly as written (same spelling and spacing) when you use their name in the question. If the name is literally "Candidate" or empty, do not force a fake name.${
+    isHr
+      ? '\n- **HR only:** forbid coding, whiteboard, stack trivia, and "how would you implement…" style questions.'
+      : '\n- When resume text or skills list gives you hooks, **use them by name or clear reference** (company, project, tool, course) — do not ignore listed experience, projects, or skills unless you already exhausted them in prior questions.'
+  }${finalQuestionNote}
 - Return ONLY valid JSON with shape: {"question":"<the question text>"}`;
 
   const makeRequest = async (url) => {
