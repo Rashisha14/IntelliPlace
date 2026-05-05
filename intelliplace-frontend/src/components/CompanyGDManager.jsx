@@ -418,7 +418,13 @@ export default function CompanyGDManager({
       if (finalizePipeline) {
         Swal.fire({ icon: 'success', title: 'All decisions saved', text: 'GD round finalized for this job.' });
       } else {
-        Swal.fire({ icon: 'success', title: 'Saved', text: `${app.student?.name || 'Candidate'} marked ${status === 'GD_PASSED' ? 'passed' : 'not passed'}.`, timer: 2200, showConfirmButton: false });
+        Swal.fire({
+          icon: 'success',
+          title: 'Saved',
+          text: `${app.student?.name || 'Candidate'} marked ${status === 'GD_PASSED' ? 'passed' : 'not passed'}.`,
+          timer: 2200,
+          showConfirmButton: false,
+        });
       }
       if (typeof onEvaluationsSaved === 'function') {
         await onEvaluationsSaved();
@@ -430,36 +436,65 @@ export default function CompanyGDManager({
     }
   };
 
-  const submitEvaluations = async () => {
-    const apps = manualEvalApplications;
-    if (apps.length === 0) {
-      Swal.fire({ icon: 'info', title: 'No candidates', text: 'There is no cohort to finalize for this GD.' });
-      return;
-    }
-    const payload = apps
-      .map((app) => {
-        const st = evaluations[app.id] || app.status;
-        if (st === 'GD_PASSED' || st === 'GD_FAILED') {
-          return { applicationId: app.id, status: st };
-        }
-        return null;
-      })
-      .filter(Boolean);
+  /** Pass optional map from AI (`applicationId` → status) to bulk-save; omit arg for manual “Finalize GD round”. */
+  const submitEvaluations = async (manualEvalsOverride = null) => {
+    const isAiBulk =
+      manualEvalsOverride !== null &&
+      typeof manualEvalsOverride === 'object' &&
+      !Array.isArray(manualEvalsOverride);
 
-    if (payload.length === 0) {
-      Swal.fire({ icon: 'info', title: 'No decisions to save', text: 'Use Pass or Fail for each candidate first.' });
-      return;
-    }
-    if (payload.length < apps.length) {
-      const r = await Swal.fire({
-        icon: 'warning',
-        title: 'Not everyone decided',
-        text: `${apps.length - payload.length} candidate(s) have no pass/fail choice. Finalize anyway with only the selected decisions?`,
-        showCancelButton: true,
-        confirmButtonText: 'Finalize partial',
-        cancelButtonText: 'Go back',
-      });
-      if (!r.isConfirmed) return;
+    let payload;
+    if (isAiBulk) {
+      payload = Object.entries(manualEvalsOverride)
+        .map(([appId, status]) => ({
+          applicationId: parseInt(appId, 10),
+          status: String(status || '').toUpperCase(),
+        }))
+        .filter(
+          (e) =>
+            Number.isFinite(e.applicationId) &&
+            ['GD_PASSED', 'GD_FAILED'].includes(e.status)
+        );
+      if (payload.length === 0) return;
+    } else {
+      const apps = manualEvalApplications;
+      if (apps.length === 0) {
+        Swal.fire({
+          icon: 'info',
+          title: 'No candidates',
+          text: 'There is no cohort to finalize for this GD.',
+        });
+        return;
+      }
+      payload = apps
+        .map((app) => {
+          const st = evaluations[app.id] || app.status;
+          if (st === 'GD_PASSED' || st === 'GD_FAILED') {
+            return { applicationId: app.id, status: st };
+          }
+          return null;
+        })
+        .filter(Boolean);
+
+      if (payload.length === 0) {
+        Swal.fire({
+          icon: 'info',
+          title: 'No decisions to save',
+          text: 'Use Pass or Fail for each candidate first.',
+        });
+        return;
+      }
+      if (payload.length < apps.length) {
+        const r = await Swal.fire({
+          icon: 'warning',
+          title: 'Not everyone decided',
+          text: `${apps.length - payload.length} candidate(s) have no pass/fail choice. Finalize anyway with only the selected decisions?`,
+          showCancelButton: true,
+          confirmButtonText: 'Finalize partial',
+          cancelButtonText: 'Go back',
+        });
+        if (!r.isConfirmed) return;
+      }
     }
 
     try {
@@ -472,7 +507,13 @@ export default function CompanyGDManager({
         body: JSON.stringify({ evaluations: payload, finalizePipeline: true }),
       });
       if (res.ok) {
-        Swal.fire({ icon: 'success', title: 'Evaluations saved', text: 'Pipeline advanced for this GD round.' });
+        if (!isAiBulk) {
+          Swal.fire({
+            icon: 'success',
+            title: 'Evaluations saved',
+            text: 'Pipeline advanced for this GD round.',
+          });
+        }
         if (typeof onEvaluationsSaved === 'function') {
           await onEvaluationsSaved();
         }
@@ -517,6 +558,26 @@ export default function CompanyGDManager({
       }
       const rankings = Array.isArray(data?.data?.rankings) ? data.data.rankings : [];
       setAiRankings(rankings);
+
+      if (rankings.length > 0) {
+        const newEvals = { ...evaluations };
+        rankings.forEach((r) => {
+          if (r.applicationId) {
+            newEvals[r.applicationId] = r.suggestedStatus;
+          }
+        });
+        setEvaluations(newEvals);
+        
+        // Auto-save the evaluations to the database
+        await submitEvaluations(newEvals);
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'AI Evaluation Complete',
+          text: 'Rankings generated and evaluations saved successfully.',
+        });
+      }
+
       if (rankings.length === 0) {
         Swal.fire({ icon: 'info', title: 'No rankings produced' });
       } else if (data?.data?.source === 'fallback') {
